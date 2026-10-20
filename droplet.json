@@ -1,0 +1,47 @@
+{
+  "id": "pixpaw",
+  "name": "Pixpaw",
+  "version": "1.0.0",
+  "summary": "A pixel cat that lives on your desktop and talks to you",
+  "description": "A little pixel cat lives on your desktop. It wanders the whole screen, just the bottom edge, or the bottom edge and the tops of your open windows, riding along when you move one. It grooms, purrs when you click it, stalks and pounces on files you drag, gets hungry and eats from a bowl you put down. It also tells you things in a speech bubble: notifications from your other apps, calendar events about to start, song changes (and it dances to the music), your coding agents finishing or needing you, volume and brightness changes, headphones connecting, the battery and finished downloads. It meows, purrs and crunches, reminds you to take breaks, earns happiness points that unlock pixel hats and collars, and can bring a friend along. Hold on it for a menu to feed it, have it nap, or play with a yarn ball or a feather teaser. Drag it anywhere, pick from six coats on the shelf, and turn on Follow the cursor in its settings to have it chase your pointer.",
+  "category": "System",
+  "kit": {
+    "abi": 1,
+    "minAPI": "1.11.0"
+  },
+  "minAppVersion": "15.3.0",
+  "capabilities": [
+    "global-shortcuts",
+    "accessibility",
+    "calendars"
+  ],
+  "surfaces": [
+    "shelf-widget",
+    "live-activity",
+    "settings-pane"
+  ],
+  "icon": "Pixpaw.icon",
+  "creator": {
+    "name": "Josak Cat",
+    "kind": "community",
+    "avatar": "Creator.png",
+    "gitlab": "your-gitlab-username"
+  },
+  "source": {
+    "repository": "https://gitlab.com/droppyformac1/droplets/-/tree/main/droplets/pixpaw",
+    "license": "MIT"
+  },
+  "screenshots": [
+    "Screenshot-1.png",
+    "Screenshot-2.png",
+    "Screenshot-3.png",
+    "Screenshot-4.png"
+  ],
+  "keywords": [
+    "cat",
+    "pet",
+    "desktop pet",
+    "neko",
+    "pixel"
+  ]
+}

@@ -1,0 +1,14 @@
+.build/
+.swiftpm/
+.DS_Store
+Package.resolved
+# Harness pictures, rebuilt by `droppykit run -- --shots ./shots`.
+shots/
+# Kept outside the package (../pixpaw-extras) so submit never copies them.
+Design/
+Tools/__pycache__/
+# Agent wiring written by `droppykit agent`: absolute paths for one Mac.
+AGENTS.md
+CLAUDE.md
+.mcp.json
+.cursor/
