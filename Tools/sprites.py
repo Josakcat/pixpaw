@@ -318,6 +318,14 @@ HEADPHONES = {
         "bbb....",
         "bbb....",
     ],
+    # Over a small head seen from the front: the conure picked up.
+    "small": [
+        ".bbbbbbb.",
+        "b.......b",
+        "bb.....bb",
+        "bb.....bb",
+        "bb.....bb",
+    ],
     "bee": [
         ".bbbb.",
         "b....b",
@@ -367,7 +375,12 @@ ANCHORS = {
 # Palette per character, in the coat letters plus l for a wing's shine.
 KIND_COLORS = {
     "bee": dict(o="2a1d16", f="ffcf3a", s="2f2733", w="d9f0ff", l="ffffff", e="1d140c", p="ff8fa3"),
-    "parrot": dict(o="1f2a1a", f="5dbb3c", s="2e7d32", w="b9e45f", p="e8432c", e="111111", b="f5a623", g="8a8f99", t="2f9e8f"),
+    # A peach-fronted conure: G body, D wing, H head, C crown, P the orange
+    # patch over the beak, E the pale ring round the eye, K the eye, W the
+    # beak, T the olive throat, L the yellow-green belly, B the blue flight
+    # feathers, O the tail, F the feet.
+    "parrot": dict(o="16201a", G="5aa838", D="2f7d2c", H="3b8540", C="2f7a62", P="f26a3d", E="f1e9a6", K="16161a",
+                   W="ead9c8", T="7c8a3a", L="bccf3a", B="2b4a8c", O="4f9a30", F="8f8a86"),
     "dino": dict(o="1d2b1a", f="6cc24a", s="4a9a33", w="d8f0a0", p="ffa53c", e="111111"),
     "dog": dict(o="2b1a10", f="e0a35a", s="8a5a2b", w="fff3dd", p="ff7f9a", e="1a1110"),
     "hamster": dict(o="3a2414", f="f2a65a", s="d4823a", w="fff6ea", p="ff9fb2", e="1a1110"),
@@ -456,11 +469,14 @@ BEE_FRAMES, PARROT_FRAMES, DINO_FRAMES, DOG_FRAMES, HAMSTER_FRAMES, CHICKEN_FRAM
 # Hat anchors (no collar: a bee has no neck) and headphones, per frame.
 def _bee_dy(frame):
     return 1 if frame.startswith(("sleep", "eat", "crouch")) else 0
-# Where the parrot's head is: how far each perched frame lowers it (body
-# drop + head drop); flying frames carry it level at row 6.
-_PARROT_HEAD_DROP = {"sleep1": 2, "sleep2": 3, "eat1": 4, "eat2": 3, "groom1": 1, "groom2": 1, "crouch1": 1, "crouch2": 1}
-def _parrot_flying(frame):
-    return frame.startswith(("walk", "run"))
+# Where the conure's head is: its crown, or the orange patch where it faces
+# you. A hat sits on the top row of it; headphones go over it from two rows
+# higher, a cup behind the eye, or round its face when it is picked up.
+def _parrot_head(frame):
+    rows = PARROT_FRAMES[frame]
+    top = min(y for y, row in enumerate(rows) if "C" in row or "P" in row)
+    xs = [x for x, ch in enumerate(rows[top]) if ch in "CP"]
+    return sum(xs) / len(xs) + 0.5, top
 # How far down the dinosaur's and the dog's frames carry the head.
 _HEAD_DROP = {"groom1": 1, "groom2": 1, "sleep1": 5, "sleep2": 5, "eat1": 4, "eat2": 4, "crouch1": 1, "crouch2": 1}
 def _dino_head(frame):
@@ -476,8 +492,7 @@ def _chicken_comb(frame):
     return rows[y].index("p"), y
 KIND_ANCHORS = {
     "bee": {f: (14.5, 6 + _bee_dy(f), None, None) for f in BEE_FRAMES},
-    "parrot": {f: (15.5, 6, None, None) if _parrot_flying(f) else (13.5, 2 + _PARROT_HEAD_DROP.get(f, 0), None, None)
-               for f in PARROT_FRAMES},
+    "parrot": {f: (*_parrot_head(f), None, None) for f in PARROT_FRAMES},
     "dino": {f: (15.5, 2 + _dino_head(f), None, None) for f in DINO_FRAMES},
     "dog": {f: (14.5, 2 + _dog_head(f), None, None) for f in DOG_FRAMES},
     "hamster": {f: (13.0, _hamster_top(f), None, None) for f in HAMSTER_FRAMES},
@@ -485,8 +500,9 @@ KIND_ANCHORS = {
 }
 KIND_HEADPHONES_AT = {
     "bee": {f: ("bee", 11, 4 + _bee_dy(f)) for f in BEE_FRAMES if not f.startswith("sleep")},
-    "parrot": {f: ("side", 12, 5) if _parrot_flying(f) else ("side", 11, _PARROT_HEAD_DROP.get(f, 0))
-               for f in PARROT_FRAMES if not f.startswith("sleep")},
+    # None while its head is down in the bowl, as for the cat.
+    "parrot": {f: ("small" if f.startswith("held") else "side", round(_parrot_head(f)[0] - 4.5), _parrot_head(f)[1] - 2)
+               for f in PARROT_FRAMES if not f.startswith(("sleep", "eat"))},
     "dino": {f: ("side", 12, 1 + _dino_head(f)) for f in DINO_FRAMES if not f.startswith("sleep")},
     "dog": {f: ("side", 11, 1 + _dog_head(f)) for f in DOG_FRAMES if not f.startswith("sleep")},
     "hamster": {f: ("side", 10, _hamster_top(f)) for f in HAMSTER_FRAMES if not f.startswith("sleep")},
