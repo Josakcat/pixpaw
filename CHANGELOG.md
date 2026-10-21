@@ -1,6 +1,8 @@
 # Changelog
 
-## [Unreleased]
+## [1.2.1] - 2026-10-21
+
+The parrot is now a peach-fronted conure, drawn by a community member. Focus sessions keep a countdown over your pet's head, and the characters are PNG sprite sheets you can draw your own from.
 
 ### Changed
 
