@@ -2,11 +2,11 @@
 
 ## [1.2.1] - 2026-10-21
 
-The parrot is now a peach-fronted conure, drawn by a community member. Focus sessions keep a countdown over your pet's head, and the characters are PNG sprite sheets you can draw your own from.
+The parrot is now an orange-fronted conure, drawn by a community member. Focus sessions keep a countdown over your pet's head, and the characters are PNG sprite sheets you can draw your own from.
 
 ### Changed
 
-- The parrot is now a peach-fronted conure, drawn a pixel at a time from photographs by [@diazdesandi](https://github.com/diazdesandi): orange patch over its pale beak, blue-green crown, blue flight feathers and a long tail. It sleeps with its head tucked into its wing, pecks at its food and lets its tail hang when you pick it up. (Thank you!)
+- The parrot is now an orange-fronted conure, drawn a pixel at a time from photographs by [@diazdesandi](https://github.com/diazdesandi): orange patch over its pale beak, blue-green crown, blue flight feathers and a long tail. It sleeps with its head tucked into its wing, pecks at its food and lets its tail hang when you pick it up. (Thank you!)
 - The characters are now PNG sprite sheets in `Art/`, one per pet, so you can draw your own in Aseprite, Piskel or any pixel editor. `Art/README.md` has the layout and colours. (Thanks for the idea!)
 - During a focus session your pet keeps a countdown in its speech bubble, so you can see the time left at a glance. It no longer goes quiet while you focus: a song change, an agent update or any other news still shows, then the clock comes back. It stays silent (no meows), and break reminders wait for the session to end.
 

@@ -375,7 +375,7 @@ ANCHORS = {
 # Palette per character, in the coat letters plus l for a wing's shine.
 KIND_COLORS = {
     "bee": dict(o="2a1d16", f="ffcf3a", s="2f2733", w="d9f0ff", l="ffffff", e="1d140c", p="ff8fa3"),
-    # A peach-fronted conure: G body, D wing, H head, C crown, P the orange
+    # An orange-fronted conure: G body, D wing, H head, C crown, P the orange
     # patch over the beak, E the pale ring round the eye, K the eye, W the
     # beak, T the olive throat, L the yellow-green belly, B the blue flight
     # feathers, O the tail, F the feet.
