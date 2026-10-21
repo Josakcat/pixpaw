@@ -711,7 +711,6 @@ BEE_FRAMES = {
     "held1": bee("up", "happy", legs=True), "held2": bee("down", "happy", legs=True),
 }
 
-# The parrot: perched upright, and level in flight for every moving frame.
 def put(g, x, y, ch):
     if 0 <= x < W and 0 <= y < H: g[y][x] = ch
 
@@ -720,68 +719,272 @@ def line(g, x0, y0, x1, y1, ch):
     for i in range(n + 1):
         put(g, round(x0 + (x1 - x0) * i / n), round(y0 + (y1 - y0) * i / n), ch)
 
-def beak(g, x, y):
-    """A hooked beak, its top-left at (x, y): solid orange, the hook dark."""
-    put(g, x, y, "b"); put(g, x + 1, y, "b"); put(g, x + 2, y, "o")
-    put(g, x, y + 1, "b"); put(g, x + 1, y + 1, "b"); put(g, x + 2, y + 1, "b")
-    put(g, x + 1, y + 2, "b"); put(g, x + 2, y + 2, "o")
-    put(g, x + 1, y + 3, "o")
+# The parrot: a peach-fronted conure, the one on getthaw.app, a pixel at a time and drawn
+# from photographs of a real one. Each pose is drawn with its long tail hanging from a
+# perch; here it is moved into the frame with its feet on the bottom row and its tail laid
+# along the floor, and outlined like the other pets. Letters: G body, D wing, H head,
+# C crown, P the orange patch over the beak, E the pale ring round the eye, K the eye,
+# W the beak, T the olive throat, L the yellow-green belly, B the blue flight feathers,
+# O the tail, F the feet, o the outline.
+CONURE = {
+    "perched": [
+        "........................",
+        "........................",
+        "............CCP.........",
+        "...........HEKPW........",
+        "...........HHTTW........",
+        "..........GGTTT.........",
+        ".........DGGLLT.........",
+        ".........DDGLLL.........",
+        "........DDDGLLL.........",
+        "........DDDGLL..........",
+        ".......BDDDGL...........",
+        ".......ODDGF.F..........",
+        "......OODD.F.F..........",
+        "......OOD...............",
+        "......OO................",
+        ".....OO.................",
+        ".....OO.................",
+        ".....OO.................",
+        "....OO..................",
+        "....O...................",
+    ],
+    "looking": [
+        "........................",
+        "........................",
+        "..........PCC...........",
+        ".........WPKEH..........",
+        ".........WTTHH..........",
+        "..........GGTTT.........",
+        ".........DGGLLT.........",
+        ".........DDGLLL.........",
+        "........DDDGLLL.........",
+        "........DDDGLL..........",
+        ".......BDDDGL...........",
+        ".......ODDGF.F..........",
+        "......OODD.F.F..........",
+        "......OOD...............",
+        "......OO................",
+        ".....OO.................",
+        ".....OO.................",
+        ".....OO.................",
+        "....OO..................",
+        "....O...................",
+    ],
+    "bobUp": [
+        "........................",
+        "............CCP.........",
+        "...........HEKPW........",
+        "...........HHTTW........",
+        "...........GGTT.........",
+        "..........GGTTT.........",
+        ".........DGGLLT.........",
+        ".........DDGLLL.........",
+        "........DDDGLLL.........",
+        "........DDDGLL..........",
+        ".......BDDDGL...........",
+        ".......ODDGF.F..........",
+        "......OODD.F.F..........",
+        "......OOD...............",
+        "......OO................",
+        ".....OO.................",
+        ".....OO.................",
+        ".....OO.................",
+        "....OO..................",
+        "....O...................",
+    ],
+    "facing": [
+        "........................",
+        "........................",
+        "...........HPPPH........",
+        "...........EKWKE........",
+        "...........HTWTH........",
+        "..........GGTTT.........",
+        ".........DGGLLT.........",
+        ".........DDGLLL.........",
+        "........DDDGLLL.........",
+        "........DDDGLL..........",
+        ".......BDDDGL...........",
+        ".......ODDGF.F..........",
+        "......OODD.F.F..........",
+        "......OOD...............",
+        "......OO................",
+        ".....OO.................",
+        ".....OO.................",
+        ".....OO.................",
+        "....OO..................",
+        "....O...................",
+    ],
+    "faceUp": [
+        "........................",
+        "...........HPPPH........",
+        "...........EKWKE........",
+        "...........HTWTH........",
+        "...........GGTT.........",
+        "..........GGTTT.........",
+        ".........DGGLLT.........",
+        ".........DDGLLL.........",
+        "........DDDGLLL.........",
+        "........DDDGLL..........",
+        ".......BDDDGL...........",
+        ".......ODDGF.F..........",
+        "......OODD.F.F..........",
+        "......OOD...............",
+        "......OO................",
+        ".....OO.................",
+        ".....OO.................",
+        ".....OO.................",
+        "....OO..................",
+        "....O...................",
+    ],
+    "pecking": [
+        "........................",
+        "........................",
+        "........................",
+        "....O...................",
+        "....OO..................",
+        ".....OO.................",
+        ".....OO.................",
+        "......ODGG..............",
+        "......DDDGGG............",
+        "......BDDGGLGG..........",
+        ".......DGGLLTGG.........",
+        ".........F.F.THCCP......",
+        ".........F.F..TEKPW.....",
+        "..................W.....",
+    ],
+    "tugging": [
+        "........................",
+        "........................",
+        "........................",
+        "....O...................",
+        "....OO..................",
+        ".....OO.................",
+        ".....OO.................",
+        "......ODGG..............",
+        "......DDDGGG............",
+        "......BDDGGLGG..........",
+        ".......DGGLLTGG.........",
+        ".........F.F.THCCP......",
+        ".........F.F..TEKPW.....",
+    ],
+    "wingsUp": [
+        "........DD..............",
+        ".......DDDD.............",
+        "......BDDDD.............",
+        ".....BBDDDG.............",
+        ".OOOOOODDGGGGGHCCP......",
+        "OOOOOO..GGGLLLTEKPW.....",
+        "........GGLLLLTT..W.....",
+        ".........LLLL...........",
+        "..........F.F...........",
+    ],
+    "wingsMid": [
+        "........................",
+        "........................",
+        "........................",
+        ".......BDDDDD...........",
+        ".OOOOOODDGGGGGHCCP......",
+        "OOOOOO..GGGLLLTEKPW.....",
+        "........GGLLLLTT..W.....",
+        ".........LLLL...........",
+        "..........F.F...........",
+    ],
+    "wingsDown": [
+        "........................",
+        "........................",
+        "........................",
+        "........................",
+        ".OOOOO..GGGGGGHCCP......",
+        "OOOOOOOGGGGLLLTEKPW.....",
+        "..OOOOODGGLLLLTT..W.....",
+        ".......DDDLLL.F.........",
+        "......BDDDD.............",
+        "......BBDDD.............",
+        ".......BDD..............",
+        "........D...............",
+    ],
+}
 
-def perched(eyes="open", dy=0, wing="down", head_dy=0, beak_open=False):
+def _conure(pose, dx, dy):
     g = _blank()
-    # Long tail, down and back to the left.
-    line(g, 9, 12 + dy, 4, 15, "o"); line(g, 10, 12 + dy, 5, 15, "t"); line(g, 10, 13 + dy, 6, 15, "o")
-    line(g, 9, 13 + dy, 5, 15, "t")
-    # Body: a plump upright egg, belly lighter on the right.
-    blob(g, 12.4, 9.8 + dy, 3.9, 4.4, "f", paint=lambda x, y: "w" if x >= 13 and y >= 9 + dy else "f")
-    # Wing folded on its side, or lifted.
-    if wing == "down":
-        blob(g, 10.9, 10.2 + dy, 2.0, 3.0, "s")
-    else:
-        blob(g, 9.2, 7.6 + dy, 3.0, 2.0, "s")
-    # Head with a red face.
-    hy = 4.4 + dy + head_dy
-    blob(g, 13.8, hy, 3.2, 3.0, "f", paint=lambda x, y: "p" if x >= 14 and y >= int(hy) - 1 else "f")
-    ey = int(hy) - 1
-    if eyes == "open": put(g, 14, ey, "e")
-    elif eyes == "closed": put(g, 14, ey, "o"); put(g, 15, ey, "o")
-    elif eyes == "happy": put(g, 14, ey, "e"); put(g, 15, ey - 1, "e")
-    beak(g, 16, int(hy) - 1)
-    if beak_open: put(g, 16, int(hy) + 1, ".")
-    # Feet on the floor.
-    fy = min(15, 14 + dy)
-    for x in (11, 12, 14, 15): put(g, x, fy, "g")
-    return ["".join(r) for r in g]
+    for y, row in enumerate(CONURE[pose]):
+        for x, ch in enumerate(row):
+            if ch != ".": put(g, x + dx, y + dy, ch)
+    return g
 
-def flying(wings="up", eyes="open"):
-    g = _blank()
-    # Tail streaming back.
-    line(g, 6, 9, 0, 11, "o"); line(g, 6, 10, 1, 12, "t"); line(g, 6, 11, 1, 13, "o")
-    # Body, level and plump.
-    blob(g, 10.0, 10.2, 5.2, 2.9, "f", paint=lambda x, y: "w" if y >= 11 and x >= 9 else "f")
-    # Head with the red face, and the beak.
-    blob(g, 15.2, 8.6, 2.9, 2.8, "f", paint=lambda x, y: "p" if x >= 15 and y >= 8 else "f")
-    if eyes == "open": put(g, 15, 7, "e")
-    else: put(g, 15, 7, "e"); put(g, 16, 6, "e")
-    beak(g, 17, 7)
-    # Wings: up, level, down.
-    if wings == "up":
-        blob(g, 9.0, 6.0, 4.0, 2.6, "s")
-    elif wings == "mid":
-        blob(g, 8.4, 8.6, 4.6, 1.6, "s")
-    else:
-        blob(g, 9.0, 13.4, 3.8, 2.2, "s")
-    return ["".join(r) for r in g]
+def _floor_tail(g):
+    """The tail, where it reaches the floor, laid back along it: thick where it leaves the
+    body, a single feather's width at the tip."""
+    for y, more in ((H - 1, 5), (H - 2, 2)):
+        xs = [x for x in range(W) if g[y][x] == "O"]
+        if xs:
+            for x in range(min(xs) - more, min(xs)):
+                if g[y][x] == ".": put(g, x, y, "O")
+    return g
+
+def _conure_eyes(g, eyes):
+    """Closed, the eye and its ring become a dark line; happy, the line bends up."""
+    for y in range(H):
+        for x in range(W - 1):
+            if {g[y][x], g[y][x + 1]} == {"E", "K"}:
+                g[y][x] = g[y][x + 1] = "o"
+                if eyes == "happy": put(g, x + 1, y - 1, "o"); g[y][x + 1] = "H"
+    return g
+
+def _head_down(g, n, rows=3):
+    """The top rows of the bird, its head, lowered over its body."""
+    top = min(y for y in range(H) if any(ch != "." for ch in g[y]))
+    head = [g[y][:] for y in range(top, top + rows)]
+    for y in range(top, top + n): g[y] = ["."] * W
+    for i, row in enumerate(head):
+        for x, ch in enumerate(row):
+            if ch != ".": g[top + i + n][x] = ch
+    return g
+
+def _sink(g, n):
+    """Lowered n rows, the legs folded under; the tail stays on the floor."""
+    out = _blank()
+    for y in range(H - 1 - n): out[y + n] = g[y][:]
+    out[H - 1] = [ch if ch == "O" else out[H - 1][x] for x, ch in enumerate(g[H - 1])]
+    return out
+
+def _outline(g):
+    out = [row[:] for row in g]
+    for y in range(H):
+        for x in range(W):
+            if g[y][x] == "." and any(0 <= x + a < W and 0 <= y + b < H and g[y + b][x + a] not in ".o"
+                                      for a, b in ((1, 0), (-1, 0), (0, 1), (0, -1))):
+                out[y][x] = "o"
+    return ["".join(row) for row in out]
+
+def sitting(pose="perched", eyes="open", head_dy=0, dy=0):
+    g = _floor_tail(_conure(pose, 3, 3))
+    if eyes != "open": _conure_eyes(g, eyes)
+    if head_dy: _head_down(g, head_dy)
+    if dy: g = _sink(g, dy)
+    return _outline(g)
+
+def flying(pose):
+    return _outline(_conure(pose, 1, 4))
+
+def pecking(pose):
+    return _outline(_conure(pose, 1, 3))
+
+def held(pose):
+    """Lifted off the floor, its long tail hanging straight down, as when it is picked up."""
+    return _outline(_conure(pose, 1, 0))
 
 PARROT_FRAMES = {
-    "sit": perched(), "blink": perched("closed"), "happy": perched("happy", wing="up"),
-    "walk1": flying("up"), "walk2": flying("mid"), "walk3": flying("down"),
-    "run1": flying("up"), "run2": flying("down"),
-    "groom1": perched(head_dy=1), "groom2": perched(head_dy=1, wing="up"),
-    "sleep1": perched("closed", dy=1, head_dy=1), "sleep2": perched("closed", dy=1, head_dy=2),
-    "eat1": perched(dy=1, head_dy=3), "eat2": perched(dy=1, head_dy=2, beak_open=True),
-    "crouch1": perched(dy=1), "crouch2": perched(dy=1, wing="up"),
-    "held1": perched("happy", wing="up"), "held2": perched("happy"),
+    "sit": sitting(), "blink": sitting(eyes="closed"), "happy": sitting("bobUp", eyes="happy"),
+    "walk1": flying("wingsUp"), "walk2": flying("wingsMid"), "walk3": flying("wingsDown"),
+    "run1": flying("wingsUp"), "run2": flying("wingsDown"),
+    "groom1": sitting("looking"), "groom2": sitting("looking", head_dy=1),
+    # Asleep as a conure sleeps: head turned back and tucked down into its wing.
+    "sleep1": sitting("looking", eyes="closed", head_dy=1, dy=1), "sleep2": sitting("looking", eyes="closed", head_dy=2, dy=1),
+    "eat1": pecking("pecking"), "eat2": pecking("tugging"),
+    "crouch1": sitting(dy=1), "crouch2": sitting("looking", dy=1),
+    "held1": held("facing"), "held2": held("faceUp"),
 }
 
 # The dinosaur: a little T-rex with spikes on its back, walking like the cat.
@@ -1044,7 +1247,8 @@ KINDS = {"bee": BEE_FRAMES, "parrot": PARROT_FRAMES, "dino": DINO_FRAMES, "dog":
 # Palette per character, in the coat letters plus l for a wing's shine.
 KIND_COLORS = {
     "bee": dict(o="2a1d16", f="ffcf3a", s="2f2733", w="d9f0ff", l="ffffff", e="1d140c", p="ff8fa3"),
-    "parrot": dict(o="1f2a1a", f="5dbb3c", s="2e7d32", w="b9e45f", p="e8432c", e="111111", b="f5a623", g="8a8f99", t="2f9e8f"),
+    "parrot": dict(o="16201a", G="5aa838", D="2f7d2c", H="3b8540", C="2f7a62", P="f26a3d", E="f1e9a6", K="16161a",
+                   W="ead9c8", T="7c8a3a", L="bccf3a", B="2b4a8c", O="4f9a30", F="8f8a86"),
     "dino": dict(o="1d2b1a", f="6cc24a", s="4a9a33", w="d8f0a0", p="ffa53c", e="111111"),
     "dog": dict(o="2b1a10", f="e0a35a", s="8a5a2b", w="fff3dd", p="ff7f9a", e="1a1110"),
     "hamster": dict(o="3a2414", f="f2a65a", s="d4823a", w="fff6ea", p="ff9fb2", e="1a1110"),
@@ -1053,15 +1257,16 @@ KIND_COLORS = {
 # Hat anchors (no collar: a bee has no neck) and headphones, per frame.
 def _bee_dy(frame):
     return 1 if frame.startswith(("sleep", "eat", "crouch")) else 0
-# Where the parrot's head is: how far each perched frame lowers it (body
-# drop + head drop); flying frames carry it level at row 6.
-_PARROT_HEAD_DROP = {"sleep1": 2, "sleep2": 3, "eat1": 4, "eat2": 3, "groom1": 1, "groom2": 1, "crouch1": 1, "crouch2": 1}
-def _parrot_flying(frame):
-    return frame.startswith(("walk", "run"))
+# Where the conure's head is: its crown, or the orange patch where it faces you. A hat
+# sits on the top row of it; headphones go over it from two rows higher, a cup behind the eye.
+def _parrot_head(frame):
+    rows = PARROT_FRAMES[frame]
+    top = min(y for y, row in enumerate(rows) if "C" in row or "P" in row)
+    xs = [x for x, ch in enumerate(rows[top]) if ch in "CP"]
+    return sum(xs) / len(xs) + 0.5, top
 KIND_ANCHORS = {
     "bee": {f: (14.5, 6 + _bee_dy(f), None, None) for f in BEE_FRAMES},
-    "parrot": {f: (15.5, 6, None, None) if _parrot_flying(f) else (13.5, 2 + _PARROT_HEAD_DROP.get(f, 0), None, None)
-               for f in PARROT_FRAMES},
+    "parrot": {f: (*_parrot_head(f), None, None) for f in PARROT_FRAMES},
     "dino": {f: (15.5, 2 + _dino_head(f), None, None) for f in DINO_FRAMES},
     "dog": {f: (14.5, 2 + _dog_head(f), None, None) for f in DOG_FRAMES},
     "hamster": {f: (13.0, _hamster_top(f), None, None) for f in HAMSTER_FRAMES},
@@ -1069,7 +1274,7 @@ KIND_ANCHORS = {
 }
 KIND_HEADPHONES_AT = {
     "bee": {f: ("bee", 11, 4 + _bee_dy(f)) for f in BEE_FRAMES if not f.startswith("sleep")},
-    "parrot": {f: ("side", 12, 5) if _parrot_flying(f) else ("side", 11, _PARROT_HEAD_DROP.get(f, 0))
+    "parrot": {f: ("side", round(_parrot_head(f)[0] - 4.5), _parrot_head(f)[1] - 2)
                for f in PARROT_FRAMES if not f.startswith("sleep")},
     "dino": {f: ("side", 12, 1 + _dino_head(f)) for f in DINO_FRAMES if not f.startswith("sleep")},
     "dog": {f: ("side", 11, 1 + _dog_head(f)) for f in DOG_FRAMES if not f.startswith("sleep")},
