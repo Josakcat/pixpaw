@@ -420,12 +420,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     private func applyQuiet() {
         let reason: String? = quietByHand ? "turned on by you"
-            : focusEndsAt != nil ? "while you focus"
             : (quietsAutomatically ? autoQuietReason?.rawValue : nil)
         cat?.setQuiet(reason)
         friend?.setQuiet(reason)
-        // A quiet cat makes no sound either.
-        CatSounds.shared.isEnabled = soundsOn && reason == nil
+        // A quiet cat makes no sound either, and nor does one keeping you
+        // company while you focus: its news still shows, then the clock.
+        CatSounds.shared.isEnabled = soundsOn && reason == nil && focusEndsAt == nil
         refreshFestival()
     }
 
@@ -539,14 +539,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     func toggleFocus() { focusEndsAt == nil ? startFocus() : stopFocus() }
 
-    /// A focus session: the pet sits by you without a word, the time left
-    /// shows beside the notch, and when it is up the pet comes to say so.
+    /// A focus session: the pet sits by you without a sound, the time left
+    /// shows over its head (between anything else it has to tell you) and
+    /// beside the notch, and when it is up the pet comes to say so.
     func startFocus(minutes: Int? = nil) {
         if !isOut { setOut(true) }
         let length = TimeInterval((minutes ?? focusMinutes) * 60)
         focusStartedAt = Date()
         focusEndsAt = Date().addingTimeInterval(length)
         cat?.focusing = true
+        if let focusEndsAt { cat?.keepSaying(CatWords.focusing(until: focusEndsAt)) }
         focusTimer?.invalidate()
         focusTimer = Timer.scheduledTimer(withTimeInterval: length, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.finishFocus() }
@@ -561,6 +563,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         focusStartedAt = nil
         focusEndsAt = nil
         cat?.focusing = false
+        cat?.keepSaying(nil)
         applyQuiet()
         publishActivity()
     }
@@ -690,7 +693,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                     cat?.callOver()
                     cat?.say(line)
                 }
-                coach.canRemind = { [weak cat] in cat?.quietReason == nil }
+                // A focus session ends with its own break.
+                coach.canRemind = { [weak self, weak cat] in cat?.quietReason == nil && self?.focusEndsAt == nil }
                 health = coach
             }
             health?.start()
@@ -1648,7 +1652,7 @@ private struct PixpawSettings: View {
                     }
                     DropletGroupedPickerRow(
                         title: "Focus session",
-                        subtitle: "Start one from the timer on the shelf or by holding your pet. It sits by you without a word, the time left shows beside the notch, and it comes over when it's time for a break."
+                        subtitle: "Start one from the timer on the shelf or by holding your pet. It sits by you without a sound, keeps the time left over its head and beside the notch, and comes over when it's time for a break."
                     ) {
                         Picker("Focus session", selection: Binding(get: { droplet.focusMinutes }, set: { droplet.setFocusMinutes($0) })) {
                             ForEach([15, 25, 45, 50], id: \.self) { minutes in

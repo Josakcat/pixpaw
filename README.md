@@ -23,7 +23,7 @@ your desktop and talks to you. A Droplet for
 - Strikes a pose when you take a screenshot.
 - Stroke it with the pointer to pet it; shake it about and it lands dizzy.
 - Treats, a little gift for you once a day, and a photo of your pet to keep or share.
-- Focus sessions: it keeps you company quietly, with a countdown beside the notch.
+- Focus sessions: it keeps you company quietly, with a countdown over its head and beside the notch.
 - Festival hats, and Loy Krathong and Chinese New Year among the festivals.
 - The shelf widget counts your days together, pets, meals and games.
 - Six coats, and an optional friend cat that sits with it and plays tag.
@@ -102,9 +102,12 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
 
 ## Art
 
-All sprites are text grids in `Tools/sprites.py`, which also previews them
-(`python3 Tools/sprites.py preview out.png`, `… wear out.png`) and writes
-`Sources/Pixpaw/CatSprites.generated.swift` (`python3 Tools/sprites.py swift`).
+Every character is a PNG sprite sheet in `Art/`, ready to open in any pixel
+editor; [Art/README.md](Art/README.md) has the layout and the colours.
+`Tools/sprites.py` reads the sheets, keeps the effects, hats and headphones as
+small text grids, previews it all (`python3 Tools/sprites.py preview out.png`,
+`… wear out.png`) and writes `Sources/Pixpaw/CatSprites.generated.swift`
+(`python3 Tools/sprites.py swift`).
 `Tools/store-art.swift` draws the screenshots and the creator avatar from
 the same sprites.
 

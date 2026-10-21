@@ -22,6 +22,9 @@ enum CatWords {
     static let hungry = "I'm hungry!"
     static let full = "So full. Thanks!"
     static let caught = "Got it!"
+    static func focusing(until end: Date) -> CatLine {
+        CatLine(text: "Focus time · ", symbol: "timer", until: end)
+    }
     static func focusDone(minutes: Int) -> CatLine {
         CatLine(text: "Time for a break! \(minutes) minutes of focus done.", symbol: "cup.and.saucer.fill", seconds: 5)
     }

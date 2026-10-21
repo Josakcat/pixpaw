@@ -365,6 +365,13 @@ final class CatController: ObservableObject {
         if line.key == nil { CatSounds.shared.play(.meow, voice: kind) }
     }
 
+    /// A line that stays over its head between the others (a focus clock),
+    /// quiet or not; nil takes it down.
+    func keepSaying(_ line: CatLine?) {
+        guard !isFriend else { return }
+        bubble.keep(line)
+    }
+
     /// The cat's own remarks, when it is chatty.
     private func remark(_ text: String) {
         if chatty { say(CatLine(text: text)) }

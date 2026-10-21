@@ -1,5 +1,12 @@
 # Changelog
 
+## [Unreleased]
+
+### Changed
+
+- The characters are now PNG sprite sheets in `Art/`, one per pet, so you can draw your own in Aseprite, Piskel or any pixel editor. `Art/README.md` has the layout and colours. (Thanks for the idea!)
+- During a focus session your pet keeps a countdown in its speech bubble, so you can see the time left at a glance. It no longer goes quiet while you focus: a song change, an agent update or any other news still shows, then the clock comes back. It stays silent (no meows), and break reminders wait for the session to end.
+
 ## [1.2.0] - 2026-10-21
 
 Your pet dances to YouTube, chases a laser dot, poses for your screenshots, celebrates your birthday, says good morning, leaves you gifts, keeps you company while you focus, swings its legs when you carry it and puts on a nightcap after midnight. And the shelf widget counts your days together.

@@ -4,7 +4,8 @@
 //
 //  The speech bubble the cat talks through: a small click-through panel that
 //  sits over the cat's head (or under the notch while it sleeps there), shows
-//  one line at a time and works through a short queue.
+//  one line at a time and works through a short queue. A kept line (a focus
+//  countdown) stays up whenever there is nothing else to say.
 //
 
 import AppKit
@@ -20,6 +21,8 @@ struct CatLine: Equatable {
     var key: String?
     /// How long it stays up, when two seconds is too short (a reminder).
     var seconds: Double?
+    /// A clock counting down to this moment, shown after the text.
+    var until: Date?
 }
 
 @MainActor
@@ -32,6 +35,10 @@ final class CatBubble {
     private var queue: [CatLine] = []
     private var current: CatLine?
     private var hideAt: Date?
+    /// Shown whenever the queue is empty, until it is taken away.
+    private var kept: CatLine?
+    /// What the panel shows now, and which way its tail points.
+    private var shown: (line: CatLine, pointsUp: Bool)?
 
     /// Where the bubble points: the top of the cat's head, or the bottom of
     /// the notch with `pointsUp`.
@@ -40,7 +47,12 @@ final class CatBubble {
         var pointsUp: Bool
     }
 
-    var isShowing: Bool { current != nil }
+    var isShowing: Bool { current != nil || kept != nil }
+
+    /// A line that stays up between the others, or nil to take it down.
+    func keep(_ line: CatLine?) {
+        kept = line
+    }
 
     func say(_ line: CatLine) {
         if let key = line.key {
@@ -73,15 +85,19 @@ final class CatBubble {
             current = queue.isEmpty ? nil : queue.removeFirst()
             self.hideAt = nil
         }
-        guard let current else {
+        guard let line = current ?? kept else {
             panel?.orderOut(nil)
+            shown = nil
             return
         }
-        if hideAt == nil {
+        if let current, hideAt == nil {
             // About two seconds a line; a level being changed goes a bit sooner.
             let reading = current.seconds ?? (current.key == nil ? 2.0 : 1.5)
             hideAt = Date().addingTimeInterval(reading)
-            show(current, pointsUp: anchor.pointsUp)
+        }
+        if shown?.line != line || shown?.pointsUp != anchor.pointsUp {
+            show(line, pointsUp: anchor.pointsUp)
+            shown = (line, anchor.pointsUp)
         }
         place(at: anchor)
     }
@@ -90,6 +106,7 @@ final class CatBubble {
         queue = []
         current = nil
         hideAt = nil
+        shown = nil
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
@@ -100,7 +117,9 @@ final class CatBubble {
         // Measure the line so short ones hug their text and long ones wrap at
         // the bubble's widest.
         let font = NSFont.systemFont(ofSize: 12.5, weight: .semibold)
-        let natural = ceil((line.text as NSString).size(withAttributes: [.font: font]).width) + 4
+        // A clock is measured at its widest, so the bubble keeps its size as it ticks.
+        let clock = line.until.map { $0.timeIntervalSinceNow >= 3600 ? "0:00:00" : "00:00" } ?? ""
+        let natural = ceil((line.text + clock as NSString).size(withAttributes: [.font: font]).width) + 4
         let room = Self.maxWidth - 20 - (line.symbol == nil ? 0 : 17)
         let view = CatBubbleView(line: line, pointsUp: pointsUp, textWidth: min(natural, room))
         if let hosting {
@@ -146,7 +165,8 @@ struct CatBubbleView: View {
                 Image(systemName: symbol)
                     .font(.system(size: 11, weight: .semibold))
             }
-            Text(line.text)
+            (Text(line.text) + (line.until.map { Text($0, style: .timer) } ?? Text("")))
+                .monospacedDigit()
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .lineLimit(3)
                 .frame(width: textWidth, alignment: .leading)
