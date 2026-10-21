@@ -287,6 +287,82 @@ EFFECTS = {
         ".occcco.oo",
         "..oooo...o",
     ],
+    # Loy Krathong: a krathong with its candle, and a sky lantern.
+    "krathong": [
+        ".....n.....",
+        ".....G.....",
+        "..r..G..r..",
+        ".rrr.G.rrr.",
+        "rrrrrrrrrrr",
+        "qqqqqqqqqqq",
+        ".qqqqqqqqq.",
+    ],
+    "skyLantern": [
+        ".aaa.",
+        "aAAAa",
+        "aAAAa",
+        "aAAAa",
+        ".aaa.",
+        "..n..",
+    ],
+    # Chinese New Year: a red lantern on its string.
+    "redLantern": [
+        "...d...",
+        "...d...",
+        "..nnn..",
+        ".CCCCC.",
+        "CCnCnCC",
+        "CCnCnCC",
+        "CCnCnCC",
+        ".CCCCC.",
+        "..nnn..",
+        "..n.n..",
+        "..n.n..",
+    ],
+    # Little gifts it leaves you now and then.
+    "giftFlower": [
+        ".rr.rr.",
+        "rrnnnrr",
+        ".rnnnr.",
+        "rrnnnrr",
+        ".rr.rr.",
+        "...q...",
+        "..qq...",
+        "...q...",
+    ],
+    "giftBone": [
+        "G.......GG.",
+        ".G.G.G.GGGG",
+        "GGGGGGGGGoG",
+        ".G.G.G.GGGG",
+        "G.......GG.",
+    ],
+    "giftBall": [
+        ".oooo.",
+        "obbhbo",
+        "obhbbo",
+        "obbbbo",
+        "obbbbo",
+        ".oooo.",
+    ],
+    "giftFeather": [
+        "......qq",
+        ".....qqq",
+        "....qqq.",
+        "...qqq..",
+        "..qqq...",
+        ".qqq....",
+        "d.......",
+    ],
+    # A fish-shaped biscuit, on the bowl's canvas so it sits where a bowl would.
+    "treat": [
+        "............",
+        "....ooo..o..",
+        "...okkkooko.",
+        "..okokkkkko.",
+        "...okkkooko.",
+        "....ooo..o..",
+    ],
     "bowl": [
         "...kkkkkk...",
         ".kkkkkkkkkk.",
@@ -325,6 +401,14 @@ EFFECTS = {
         "...d...",
         "...d...",
         "...d...",
+    ],
+    # The laser pointer's dot: a hot centre in a red glow.
+    "laser": [
+        ".xxx.",
+        "xRRRx",
+        "xRWRx",
+        "xRRRx",
+        ".xxx.",
     ],
     "note": [
         "...nn.",
@@ -368,7 +452,8 @@ COATS = {
     "calico": dict(o="2a1d16", f="ffffff", s="e3892e", w="ffffff", p="f59aa8", e="2a1d16"),
 }
 EFFECT_COLORS = dict(r="ff5b7f", z="cfd8ff", o="1d1a24", c="8fc3ff", b="4f86e8", h="a9c8ff", k="b9733a",
-                     y="e8577a", l="ffa3bb", q="3fc4b8", d="8b5a2b", n="ffe08a", G="f4f4ff")
+                     y="e8577a", l="ffa3bb", q="3fc4b8", d="8b5a2b", n="ffe08a", G="f4f4ff",
+                     R="f0141e", x="ff7a7a", W="fff0f0", a="ff9a3c", A="ffd27a", C="e0242e")
 
 
 def rotate_ccw(rows):
@@ -417,6 +502,23 @@ def sway(rows, first=14):
 ROTATED = {"held1": HELD, "held2": sway(HELD)}
 
 
+# Dizzy: three little stars circling over the head, a step further round in
+# each frame.
+def _orbit(turn):
+    import math
+    rows = [["." for _ in range(13)] for _ in range(7)]
+    for k in range(3):
+        a = math.radians(turn + k * 120)
+        x, y = round(6 + 5 * math.cos(a)), round(3 + 2 * math.sin(a))
+        for dx, dy in ((0, 0), (1, 0), (-1, 0), (0, 1), (0, -1)):
+            if 0 <= x + dx < 13 and 0 <= y + dy < 7:
+                rows[y + dy][x + dx] = "n"
+    return ["".join(r) for r in rows]
+
+
+for _i, _turn in enumerate((0, 40, 80)):
+    EFFECTS[f"dizzy{_i + 1}"] = _orbit(_turn)
+
 EFFECTS["yarn2"] = [
     "".join(EFFECTS["yarn1"][len(EFFECTS["yarn1"]) - 1 - r][c] for r in range(len(EFFECTS["yarn1"])))
     for c in range(len(EFFECTS["yarn1"][0]))
@@ -456,6 +558,15 @@ ACCESSORIES = {
         "..rrrr.",
         ".rrrrr.",
         "wwwwwww",
+    ],
+    # Worn by itself late at night (not one to unlock): a floppy cap whose
+    # tip droops over to one side, with a pompom.
+    "nightcap": [
+        "..bbbb...",
+        ".bbbbbbb.",
+        ".bbybbbbb",
+        ".bbbbb.bw",
+        "wwwwwww..",
     ],
     "crown": [
         "y.y.y",
@@ -1103,7 +1214,7 @@ def compose(frame, hat=None, collar=None, pad=8, headphones=False, kind=None):
 def preview_accessories(path, scale=6):
     frames = ["sit", "walk1", "run1", "crouch1", "eat1", "sleep1", "held1", "held2"]
     looks = [("partyHat", "redCollar"), ("witchHat", "bellCollar"), ("santaHat", None), ("crown", "redCollar"), ("bow", "bellCollar"),
-             (None, None, True), ("crown", "bellCollar", True)]
+             (None, None, True), ("crown", "bellCollar", True), ("nightcap", None)]
     pal = COATS["orange"]
     cell = 24
     width, height = cell * scale * len(frames), cell * scale * len(looks)

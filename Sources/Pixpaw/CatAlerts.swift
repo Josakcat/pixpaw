@@ -15,12 +15,37 @@ import CoreAudio
 import CoreMediaIO
 import EventKit
 import IOKit.ps
+import IOKit.pwr_mgt
 
 /// The words the cat uses. English, short enough for the bubble.
 enum CatWords {
     static let hungry = "I'm hungry!"
     static let full = "So full. Thanks!"
     static let caught = "Got it!"
+    static func focusDone(minutes: Int) -> CatLine {
+        CatLine(text: "Time for a break! \(minutes) minutes of focus done.", symbol: "cup.and.saucer.fill", seconds: 5)
+    }
+    static let treat = ["Yum!", "Crunchy!", "More, please?"]
+    static let gift = "I brought you something!"
+    static let giftTaken = ["You like it?", "It's for you!", "I found it myself!"]
+    /// Shaken about while carried.
+    static let dizzy = ["Whoa…", "The room is spinning!", "Everything's wobbly…"]
+    /// You just took a screenshot.
+    static func screenshot() -> CatLine {
+        CatLine(text: ["Did you get my good side?", "Cheese!", "Ooh, a photo!", "Was I in it?"].randomElement()!, symbol: "camera.fill")
+    }
+    /// The first time it sees you on a morning, with the day's first event
+    /// when it can read your calendar.
+    static func goodMorning(first: (title: String, start: Date)?, calendar: Bool) -> CatLine {
+        guard calendar else { return CatLine(text: "Good morning!", symbol: "sun.max.fill", seconds: 3) }
+        guard let first else { return CatLine(text: "Good morning! Your calendar's clear today.", symbol: "sun.max.fill", seconds: 4) }
+        let time = first.start.formatted(date: .omitted, time: .shortened)
+        return CatLine(text: "Good morning! First up: \(first.title.prefix(40)) at \(time).", symbol: "sun.max.fill", seconds: 5)
+    }
+    /// Once a night, the first time it sees you up after midnight.
+    static let lateNight = CatLine(text: "It's late. Bed soon?", symbol: "moon.zzz.fill", seconds: 3)
+    /// After a leap at the laser dot, which it never catches.
+    static let missedLaser = ["Huh?", "Where did it go?", "So close!", "I almost had it!"]
     static let sleepy = "Sleepy. Off to the notch…"
     static func awake(_ kind: PetKind) -> String {
         switch kind {
@@ -250,6 +275,18 @@ final class CalendarWatcher {
         }
     }
 
+    /// Today's first event still to come, or begun in the last half hour;
+    /// all-day ones left out.
+    static func firstEventToday() -> (title: String, start: Date)? {
+        guard hasAccess else { return nil }
+        let store = EKEventStore()
+        let now = Date()
+        guard let end = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now) else { return nil }
+        let events = store.events(matching: store.predicateForEvents(withStart: now.addingTimeInterval(-30 * 60), end: end, calendars: nil))
+        return events.filter { !$0.isAllDay }.compactMap { event in event.startDate.map { (event.title ?? "An event", $0) } }
+            .min { $0.1 < $1.1 }
+    }
+
     func start() {
         guard timer == nil else { return }
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
@@ -401,17 +438,21 @@ final class NotificationWatcher: @unchecked Sendable {
 // MARK: - Music
 
 /// Track changes in Apple Music and Spotify, from the distributed
-/// notifications both apps post on every change. No permission needed.
+/// notifications both apps post on every change, and notice anything else
+/// playing: a video in a browser, another player. No permission needed.
 @MainActor
 final class MusicWatcher {
     private var observers: [NSObjectProtocol] = []
     private var lastTrack = ""
+    private var playerPlaying = false
+    private let playback = PlaybackWatcher()
     private let onLine: (CatLine) -> Void
     private let onPlaying: (Bool) -> Void
 
-    init(onLine: @escaping (CatLine) -> Void, onPlaying: @escaping (Bool) -> Void) {
+    init(onLine: @escaping (CatLine) -> Void, onPlaying: @escaping (Bool) -> Void, log: ((String) -> Void)? = nil) {
         self.onLine = onLine
         self.onPlaying = onPlaying
+        playback.log = log
     }
 
     func start() {
@@ -426,23 +467,137 @@ final class MusicWatcher {
                 MainActor.assumeIsolated { self?.changed(state: state, song: song, artist: artist) }
             })
         }
+        playback.start { [weak self] in self?.report() }
     }
 
     func stop() {
         observers.forEach { DistributedNotificationCenter.default().removeObserver($0) }
         observers = []
+        playback.stop()
         lastTrack = ""
+        playerPlaying = false
         onPlaying(false)
     }
 
     private func changed(state: String, song: String, artist: String) {
-        let playing = state == "Playing"
-        onPlaying(playing)
-        guard playing, !song.isEmpty else { return }
+        playerPlaying = state == "Playing"
+        report()
+        guard playerPlaying, !song.isEmpty else { return }
         let track = song + "\u{1}" + artist
         guard track != lastTrack else { return }
         lastTrack = track
         onLine(CatLine(text: CatWords.nowPlaying(song, artist), symbol: "music.note"))
+    }
+
+    private func report() {
+        onPlaying(playerPlaying || playback.isPlaying)
+    }
+}
+
+/// Whether some app is playing, from the power assertions players take to
+/// keep the Mac awake while they play: "Playing audio" in Chrome and other
+/// Chromium browsers, "WebKit Media Playback" in Safari, and the like in
+/// other players. A browser holding the speakers open in silence, or an
+/// app making keyboard clicks, takes none, so neither counts. Asked every
+/// two seconds; a change has to show twice running, so a blip does nothing.
+@MainActor
+final class PlaybackWatcher {
+    private(set) var isPlaying = false
+    var log: ((String) -> Void)?
+    private var timer: Timer?
+    private var streak = 0
+    private var onChange: (() -> Void)?
+
+    func start(onChange: @escaping () -> Void) {
+        guard timer == nil else { return }
+        self.onChange = onChange
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+        timer?.tolerance = 0.5
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        onChange = nil
+        streak = 0
+        isPlaying = false
+    }
+
+    private func check() {
+        let player = Self.player()
+        guard (player != nil) != isPlaying else { streak = 0; return }
+        streak += 1
+        guard streak >= 2 else { return }
+        streak = 0
+        isPlaying = player != nil
+        log?(player.map { "playback started: \($0)" } ?? "playback stopped")
+        onChange?()
+    }
+
+    /// The name of an assertion some other app holds while playing; nil
+    /// when nothing is.
+    private static func player() -> String? {
+        var list: Unmanaged<CFDictionary>?
+        guard IOPMCopyAssertionsByProcess(&list) == kIOReturnSuccess,
+              let byProcess = list?.takeRetainedValue() as? [NSNumber: [[String: Any]]] else { return nil }
+        let me = getpid()
+        for (pid, assertions) in byProcess where pid.int32Value != me {
+            for assertion in assertions {
+                guard let name = assertion["AssertName"] as? String,
+                      name.range(of: "playing|playback", options: [.regularExpression, .caseInsensitive]) != nil else { continue }
+                // WebKit's names start with the whole service description.
+                return name.split(separator: ":").last.map(String.init) ?? name
+            }
+        }
+        return nil
+    }
+}
+
+// MARK: - Screenshots
+
+/// New screenshots, from Spotlight, which marks every one macOS saves,
+/// wherever it saves them. No permission needed; a screenshot copied only to
+/// the clipboard leaves no file, so it goes unnoticed.
+@MainActor
+final class ScreenshotWatcher {
+    private var query: NSMetadataQuery?
+    private var observer: NSObjectProtocol?
+    private var lastShot = Date.distantPast
+    private let onShot: () -> Void
+
+    init(onShot: @escaping () -> Void) {
+        self.onShot = onShot
+    }
+
+    func start() {
+        guard query == nil else { return }
+        let query = NSMetadataQuery()
+        // Only ones taken from now on.
+        query.predicate = NSPredicate(format: "kMDItemIsScreenCapture == 1 AND kMDItemContentCreationDate > %@", Date() as NSDate)
+        query.searchScopes = [NSMetadataQueryUserHomeScope]
+        observer = NotificationCenter.default.addObserver(forName: .NSMetadataQueryDidUpdate, object: query, queue: .main) { [weak self] note in
+            let added = (note.userInfo?[NSMetadataQueryUpdateAddedItemsKey] as? [Any])?.isEmpty == false
+            guard added else { return }
+            MainActor.assumeIsolated { self?.shot() }
+        }
+        query.start()
+        self.query = query
+    }
+
+    func stop() {
+        query?.stop()
+        query = nil
+        if let observer { NotificationCenter.default.removeObserver(observer) }
+        observer = nil
+    }
+
+    private func shot() {
+        // A burst of them is one photo shoot.
+        guard Date().timeIntervalSince(lastShot) > 10 else { return }
+        lastShot = Date()
+        onShot()
     }
 }
 

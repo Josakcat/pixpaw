@@ -15,8 +15,17 @@ your desktop and talks to you. A Droplet for
   refresh, so it glides.
 - Grooms, purrs when petted, pounces on files you drag, and dangles like a
   real cat when you pick it up.
-- Hold it for half a second for its menu: Feed, Nap, Play (a yarn ball or a
-  feather teaser) and Wardrobe.
+- Hold it for half a second for its menu: Feed, Nap, Play (a yarn ball, a
+  feather teaser or a laser pointer it never quite catches) and Wardrobe.
+- Says good morning the first time it sees you each morning, with your first event of the day.
+- Celebrates your birthday with confetti and a party hat.
+- From midnight to 5 am it wears a nightcap and, once a night, tells you it's late.
+- Strikes a pose when you take a screenshot.
+- Stroke it with the pointer to pet it; shake it about and it lands dizzy.
+- Treats, a little gift for you once a day, and a photo of your pet to keep or share.
+- Focus sessions: it keeps you company quietly, with a countdown beside the notch.
+- Festival hats, and Loy Krathong and Chinese New Year among the festivals.
+- The shelf widget counts your days together, pets, meals and games.
 - Six coats, and an optional friend cat that sits with it and plays tag.
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
   between perches), a dinosaur, a dog, a hamster or a chicken, each with its
@@ -25,7 +34,7 @@ your desktop and talks to you. A Droplet for
 
 **Talks in a speech bubble**
 - Mac notifications, and calendar events five minutes ahead.
-- Song changes in Apple Music and Spotify (and it stops to dance on every new song).
+- Song changes in Apple Music and Spotify (and it stops to dance on every new song). It dances to anything else playing too: YouTube in your browser, a video, another player.
 - Claude Code and Codex finishing or needing you, with the plan usage left.
 - Volume and brightness, headphones connecting, the battery, downloads.
 - Goes quiet during calls and screen sharing, and optionally while mirroring.
@@ -86,7 +95,7 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
 ## Links for scripts and Shortcuts
 
 `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…`): `show`, `hide`,
-`come`, `nap`, `feed`, `play?toy=yarn|teaser|stop`, `wear?hat=…&collar=…`,
+`come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|stop`, `wear?hat=…&collar=…`,
 `quiet?on=1|0`, `say?text=…`, `agent?name=…&state=…&text=…&usage=…`,
 `roam?mode=anywhere|floor|windows`,
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken`.

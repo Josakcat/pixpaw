@@ -51,6 +51,9 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
         }
     }
 
+    /// Every character by name, A to Z, for the pickers.
+    static var alphabetical: [PetKind] { allCases.sorted { $0.title < $1.title } }
+
     /// Flies wherever it likes, whatever the walking setting says.
     var flies: Bool { self == .bee }
 
@@ -117,7 +120,7 @@ enum CatAccessory: String, CaseIterable, Identifiable, Codable {
 /// a day it counts, so stars take days of real care rather than a minute of
 /// clicking.
 enum StarSource: String, Codable {
-    case pet, meal, hungryMeal, play, catchFile
+    case pet, meal, hungryMeal, play, catchFile, treat, gift
 
     static let dailyTotal = 30
     /// Petting again this soon after the last counted pet earns nothing.
@@ -130,6 +133,8 @@ enum StarSource: String, Codable {
         case .hungryMeal: 5
         case .play: 5
         case .catchFile: 2
+        case .treat: 2
+        case .gift: 3
         }
     }
 
@@ -142,6 +147,8 @@ enum StarSource: String, Codable {
         case .meal, .hungryMeal: 3
         case .play: 3
         case .catchFile: 5
+        case .treat: 3
+        case .gift: 1
         }
     }
 }
@@ -161,7 +168,7 @@ struct StarDay: Codable, Equatable {
 }
 
 enum CatEffect: String {
-    case heart, zzz, fish, note, ghost, bowl, bowlEmpty, yarn1, yarn2, teaser
+    case heart, zzz, fish, note, ghost, bowl, bowlEmpty, treat, krathong, skyLantern, redLantern, giftFlower, giftBone, giftBall, giftFeather, yarn1, yarn2, teaser, laser, dizzy1, dizzy2, dizzy3
 }
 
 @MainActor
@@ -175,26 +182,27 @@ final class CatSprites {
     private var cache: [String: CGImage] = [:]
 
     /// The frame in its coat, wearing the hat and collar if it has them, and
-    /// headphones in place of the hat while a pair is connected. The image
+    /// headphones in place of the hat while a pair is connected, or else a
+    /// costume hat of the day (a party hat, a nightcap). The image
     /// grows upward when a hat rises above the art; the feet stay on the
-    /// bottom row.
+    /// bottom row. `swing` pushes the legs that many art pixels sideways.
     func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil,
-               headphones: Bool = false, kind: PetKind = .cat) -> CGImage? {
-        let hat = headphones ? nil : hat
+               headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0) -> CGImage? {
+        let hat = headphones ? nil : costume ?? hat?.rawValue
         let art = kind.artKey(frame)
-        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat?.rawValue ?? "-").\(collar?.rawValue ?? "-").\(headphones)"
+        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(headphones).\(swing)"
         if let hit = cache[key] { return hit }
-        guard let rows = CatArt.frames[art],
+        guard let rows = CatArt.frames[art].map({ swing == 0 ? $0 : Self.swing($0, by: swing) }),
               let palette = CatArt.coats[kind.hasCoats ? coat.rawValue : kind.rawValue] else { return nil }
         let width = rows.first?.count ?? 0
 
         // Accessory pixels laid over the art, in art coordinates (y may be negative).
         var overlay: [(x: Int, y: Int, rgb: UInt32)] = []
         if let anchor = CatArt.anchors[art] {
-            for (item, centre, row) in [(hat, anchor.0, anchor.1), (collar, anchor.2, anchor.3)] {
-                guard let item, row >= 0, let art = CatArt.accessories[item.rawValue] else { continue }
+            for (item, isHat, centre, row) in [(hat, true, anchor.0, anchor.1), (collar?.rawValue, false, anchor.2, anchor.3)] {
+                guard let item, row >= 0, let art = CatArt.accessories[item] else { continue }
                 let left = Int((centre - Double(art[0].count) / 2).rounded())
-                let top = item.slot == .hat ? row - art.count + 1 - (CatArt.accessoryLift[item.rawValue] ?? 0) : row
+                let top = isHat ? row - art.count + 1 - (CatArt.accessoryLift[item] ?? 0) : row
                 for (y, line) in art.enumerated() {
                     for (x, char) in line.enumerated() {
                         if let rgb = CatArt.accessoryColors[char], left + x >= 0, left + x < width {
@@ -222,6 +230,22 @@ final class CatSprites {
         let image = Self.render(grid)
         cache[key] = image
         return image
+    }
+
+    /// The bottom quarter of a frame (legs, tail) pushed `amount` art pixels
+    /// sideways, its lowest rows by the whole amount and the rest by one:
+    /// legs swinging the way the pet is carried.
+    private static func swing(_ rows: [String], by amount: Int) -> [String] {
+        let filled = rows.indices.filter { rows[$0].contains { $0 != "." } }
+        guard let top = filled.first, let bottom = filled.last else { return rows }
+        let hips = top + Int((Double(bottom - top + 1) * 0.75).rounded())
+        let knees = hips + (bottom - hips + 1) / 2
+        return rows.enumerated().map { y, row in
+            let shift = y < hips ? 0 : y < knees ? amount.signum() : amount
+            guard shift != 0 else { return row }
+            let blank = String(repeating: ".", count: abs(shift))
+            return shift > 0 ? blank + row.dropLast(shift) : String(row.dropFirst(-shift)) + blank
+        }
     }
 
     /// A character sitting, for a menu: crisp pixels at `points` per art pixel
