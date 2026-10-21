@@ -2,9 +2,11 @@
 //  CatSounds.swift
 //  Pixpaw
 //
-//  The cat's voice, synthesised once at launch: a meow (two pitches), a purr
-//  and a chew. Made from sine waves and noise in code, so there are no sound
-//  files to license or ship.
+//  The voices, synthesised the first time they are needed: the cat's meow
+//  (two pitches), purr and chew, and the other characters' calls: the bee's
+//  buzz, the parrot's squawk, the dinosaur's rawr, the dog's bark, the
+//  hamster's squeak, the chicken's bawk. Made from sine waves and noise in
+//  code, so there are no sound files to license or ship.
 //
 
 import AppKit
@@ -20,24 +22,31 @@ final class CatSounds {
     private static let sampleRate = 22_050.0
     private static let volume: Float = 0.35
 
-    private var meows: [NSSound] = []
-    private var purr: NSSound?
-    private var chew: NSSound?
+    /// One character's sounds, made once.
+    private struct Voice {
+        var calls: [NSSound]
+        var content: NSSound?
+        var chew: NSSound?
+    }
+
+    private var voices: [PetKind: Voice] = [:]
     private var lastMeow = Date.distantPast
 
     private init() {}
 
-    func play(_ sound: Sound) {
+    /// Plays a sound in a character's voice: for the bee, a meow is a buzz
+    /// and a purr a contented hum.
+    func play(_ sound: Sound, voice kind: PetKind = .cat) {
         guard isEnabled else { return }
-        prepare()
+        let voice = prepare(kind)
         switch sound {
         case .meow:
-            // A meow every few seconds at most; a chatty cat is charming once.
+            // A call every few seconds at most; a chatty pet is charming once.
             guard Date().timeIntervalSince(lastMeow) > 4 else { return }
             lastMeow = Date()
-            meows.randomElement().map(start)
-        case .purr: purr.map(start)
-        case .chew: chew.map(start)
+            voice.calls.randomElement().map(start)
+        case .purr: voice.content.map(start)
+        case .chew: voice.chew.map(start)
         }
     }
 
@@ -47,11 +56,35 @@ final class CatSounds {
         sound.play()
     }
 
-    private func prepare() {
-        guard meows.isEmpty else { return }
-        meows = [Self.meow(pitch: 1), Self.meow(pitch: 1.18)].compactMap { NSSound(data: Self.wav($0)) }
-        purr = NSSound(data: Self.wav(Self.purrSamples()))
-        chew = NSSound(data: Self.wav(Self.chewSamples()))
+    private func prepare(_ kind: PetKind) -> Voice {
+        if let made = voices[kind] { return made }
+        let sound = { (samples: [Float]) in NSSound(data: Self.wav(samples)) }
+        let voice: Voice
+        switch kind {
+        case .cat:
+            voice = Voice(calls: [Self.meow(pitch: 1), Self.meow(pitch: 1.18)].compactMap(sound),
+                          content: sound(Self.purrSamples()), chew: sound(Self.chewSamples()))
+        case .bee:
+            voice = Voice(calls: [Self.buzz(pitch: 1), Self.buzz(pitch: 1.2)].compactMap(sound),
+                          content: sound(Self.humSamples()), chew: sound(Self.chewSamples()))
+        case .parrot:
+            voice = Voice(calls: [Self.squawk(pitch: 1), Self.squawk(pitch: 1.15)].compactMap(sound),
+                          content: sound(Self.chirpSamples()), chew: sound(Self.chewSamples()))
+        case .dino:
+            voice = Voice(calls: [Self.rawr(pitch: 1), Self.rawr(pitch: 1.2)].compactMap(sound),
+                          content: sound(Self.purrSamples()), chew: sound(Self.chewSamples()))
+        case .dog:
+            voice = Voice(calls: [Self.bark(pitch: 1, times: 2), Self.bark(pitch: 1.15, times: 1)].compactMap(sound),
+                          content: sound(Self.pantSamples()), chew: sound(Self.chewSamples()))
+        case .hamster:
+            voice = Voice(calls: [Self.squeak(pitch: 1, times: 1), Self.squeak(pitch: 1.12, times: 2)].compactMap(sound),
+                          content: sound(Self.chitterSamples()), chew: sound(Self.chewSamples()))
+        case .chicken:
+            voice = Voice(calls: [Self.bawk(pitch: 1), Self.bawk(pitch: 1.12)].compactMap(sound),
+                          content: sound(Self.cluckSamples()), chew: sound(Self.chewSamples()))
+        }
+        voices[kind] = voice
+        return voice
     }
 
     // MARK: Synthesis
@@ -100,6 +133,242 @@ final class CatSounds {
             let breath = t < 0.6 ? 1.0 : 0.7
             let envelope = min(1, t / 0.1) * min(1, (duration - t) / 0.2)
             samples[i] = Float(rumble * pulse * breath * envelope * 0.5)
+        }
+        return samples
+    }
+
+    /// "Bzzz-zz": a buzzy sawtooth that swells, dips and swells again, its
+    /// pitch wavering like wings beating.
+    private static func buzz(pitch: Double) -> [Float] {
+        let duration = 0.6
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var phase = 0.0
+        var smooth = 0.0
+        for i in 0..<count {
+            let t = Double(i) / sampleRate
+            let p = t / duration
+            let f0 = (210 + 40 * sin(.pi * p)) * pitch * (1 + 0.04 * sin(2 * .pi * 38 * t))
+            phase += f0 / sampleRate
+            let saw = 2 * (phase - floor(phase)) - 1
+            // Soften the edges a little so it buzzes rather than rasps.
+            smooth += (saw - smooth) * 0.35
+            let swell = 0.65 + 0.35 * sin(2 * .pi * 3.2 * t)
+            let envelope = min(1, t / 0.03) * min(1, (duration - t) / 0.12)
+            samples[i] = Float(smooth * swell * envelope * 0.28)
+        }
+        return samples
+    }
+
+    /// A low, contented hum: the buzz slowed and softened.
+    private static func humSamples() -> [Float] {
+        let duration = 1.1
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var phase = 0.0
+        var smooth = 0.0
+        for i in 0..<count {
+            let t = Double(i) / sampleRate
+            phase += 150 * (1 + 0.02 * sin(2 * .pi * 30 * t)) / sampleRate
+            let saw = 2 * (phase - floor(phase)) - 1
+            smooth += (saw - smooth) * 0.15
+            let envelope = min(1, t / 0.12) * min(1, (duration - t) / 0.25)
+            samples[i] = Float(smooth * envelope * 0.32)
+        }
+        return samples
+    }
+
+    /// "Rrah!": a short, raspy call that jumps up and falls away, harmonics
+    /// roughened with a little noise.
+    private static func squawk(pitch: Double) -> [Float] {
+        let duration = 0.34
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var phase = 0.0
+        for i in 0..<count {
+            let t = Double(i) / sampleRate
+            let p = t / duration
+            let f0 = (p < 0.25 ? 900 + 700 * p / 0.25 : 1600 - 700 * (p - 0.25) / 0.75) * pitch
+            phase += 2 * .pi * f0 * (1 + 0.03 * Double.random(in: -1...1)) / sampleRate
+            var value = 0.0
+            for k in 1...5 { value += sin(phase * Double(k)) / Double(k) }
+            value += Double.random(in: -1...1) * 0.25
+            let envelope = min(1, t / 0.015) * min(1, (duration - t) / 0.08)
+            samples[i] = Float(value * envelope * 0.22)
+        }
+        return samples
+    }
+
+    /// "Rawr!": a little roar, more cute than scary. A growly low tone that
+    /// rises and falls, roughened by a fast flutter and a breath of noise.
+    private static func rawr(pitch: Double) -> [Float] {
+        let duration = 0.55
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var phase = 0.0
+        var noise = 0.0
+        for i in 0..<count {
+            let t = Double(i) / sampleRate
+            let p = t / duration
+            let f0 = (220 + 160 * sin(.pi * min(1, p * 1.3))) * pitch
+            phase += 2 * .pi * f0 / sampleRate
+            var value = 0.0
+            for k in 1...6 { value += sin(phase * Double(k)) / Double(k) }
+            let growl = 0.6 + 0.4 * sin(2 * .pi * 34 * t)
+            noise = noise * 0.9 + Double.random(in: -1...1) * 0.1
+            let envelope = min(1, t / 0.05) * min(1, (duration - t) / 0.18)
+            samples[i] = Float((value * growl + noise * 1.5) * envelope * 0.22)
+        }
+        return samples
+    }
+
+    /// "Woof" (or "woof-woof"): short bursts that start high and drop,
+    /// rough with a little noise.
+    private static func bark(pitch: Double, times: Int) -> [Float] {
+        let length = 0.16, gap = 0.12
+        let count = Int((Double(times) * (length + gap)) * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for n in 0..<times {
+            let from = Int(Double(n) * (length + gap) * sampleRate)
+            var phase = 0.0
+            var noise = 0.0
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let p = t / length
+                let f0 = (560 - 220 * p) * pitch
+                phase += 2 * .pi * f0 / sampleRate
+                var value = 0.0
+                for k in 1...6 { value += sin(phase * Double(k)) * (k == 2 || k == 3 ? 0.8 : 0.4) / Double(k) }
+                noise = noise * 0.7 + Double.random(in: -1...1) * 0.3
+                let envelope = min(1, t / 0.008) * pow(1 - p, 1.5)
+                samples[from + j] = Float((value + noise * 0.5) * envelope * 0.4)
+            }
+        }
+        return samples
+    }
+
+    /// Happy panting: four quick breathy huffs.
+    private static func pantSamples() -> [Float] {
+        let duration = 1.0
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var low = 0.0, band = 0.0
+        for i in 0..<count {
+            let t = Double(i) / sampleRate
+            let beat = (t * 4).truncatingRemainder(dividingBy: 1)
+            let huff = beat < 0.45 ? sin(.pi * beat / 0.45) : 0
+            // Noise through a rough band-pass, so it sounds like breath, not hiss.
+            let white = Double.random(in: -1...1)
+            low += (white - low) * 0.35
+            band += (low - band) * 0.08
+            let envelope = min(1, (duration - t) / 0.1)
+            samples[i] = Float((low - band) * huff * envelope * 0.9)
+        }
+        return samples
+    }
+
+    /// "Eek" (or "eek-eek"): tiny high squeaks that rise and fall, with a
+    /// fast flutter.
+    private static func squeak(pitch: Double, times: Int) -> [Float] {
+        let length = 0.11, gap = 0.07
+        let count = Int(Double(times) * (length + gap) * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for n in 0..<times {
+            let from = Int(Double(n) * (length + gap) * sampleRate)
+            var phase = 0.0
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let p = t / length
+                let f0 = (2400 + 900 * sin(.pi * p)) * pitch * (1 + 0.03 * sin(2 * .pi * 70 * t))
+                phase += 2 * .pi * f0 / sampleRate
+                let envelope = sin(.pi * p)
+                samples[from + j] = Float((sin(phase) + 0.25 * sin(phase * 2)) * envelope * 0.3)
+            }
+        }
+        return samples
+    }
+
+    /// Contented chittering: a soft run of tiny clicks, like teeth grinding.
+    private static func chitterSamples() -> [Float] {
+        let duration = 0.9
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var t = 0.02
+        while t < duration - 0.03 {
+            let from = Int(t * sampleRate)
+            let click = Int(0.006 * sampleRate)
+            for j in 0..<click where from + j < count {
+                let decay = 1 - Double(j) / Double(click)
+                samples[from + j] += Float(Double.random(in: -1...1) * decay * decay * 0.35)
+            }
+            t += Double.random(in: 0.03...0.06)
+        }
+        return samples
+    }
+
+    /// "Buk-buk-BAWK": two short clucks, then a long nasal squawk that
+    /// rises and falls.
+    private static func bawk(pitch: Double) -> [Float] {
+        let notes: [(start: Double, length: Double, from: Double, to: Double)] =
+            [(0, 0.07, 520, 480), (0.11, 0.07, 540, 500), (0.24, 0.32, 620, 900)]
+        let count = Int(0.6 * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for note in notes {
+            let from = Int(note.start * sampleRate)
+            var phase = 0.0
+            for j in 0..<Int(note.length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let p = t / note.length
+                // The long one goes up and comes back down at the end.
+                let bend = note.length > 0.1 ? sin(.pi * min(1, p * 1.4)) : p
+                let f0 = (note.from + (note.to - note.from) * bend) * pitch
+                phase += 2 * .pi * f0 / sampleRate
+                var value = 0.0
+                for k in 1...8 { value += sin(phase * Double(k)) * (k >= 3 && k <= 5 ? 0.9 : 0.35) / Double(k) }
+                let envelope = min(1, t / 0.01) * min(1, (note.length - t) / 0.04)
+                samples[from + j] = Float(value * envelope * 0.3)
+            }
+        }
+        return samples
+    }
+
+    /// Soft contented clucks: "bok... bok bok".
+    private static func cluckSamples() -> [Float] {
+        let count = Int(0.9 * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for start in [0.05, 0.42, 0.6] {
+            let from = Int(start * sampleRate)
+            let length = 0.09
+            var phase = 0.0
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let f0 = 330 - 80 * t / length
+                phase += 2 * .pi * f0 / sampleRate
+                var value = 0.0
+                for k in 1...5 { value += sin(phase * Double(k)) / Double(k) }
+                let envelope = min(1, t / 0.006) * pow(1 - t / length, 2)
+                samples[from + j] = Float(value * envelope * 0.32)
+            }
+        }
+        return samples
+    }
+
+    /// Three quick rising chirps: a happy little trill.
+    private static func chirpSamples() -> [Float] {
+        let duration = 0.6
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for (n, start) in [0.0, 0.18, 0.36].enumerated() {
+            var phase = 0.0
+            let length = 0.12
+            let from = Int(start * sampleRate)
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let f = (2200 + 1400 * t / length) * (1 + 0.06 * Double(n))
+                phase += 2 * .pi * f / sampleRate
+                let envelope = sin(.pi * t / length)
+                samples[from + j] += Float(sin(phase) * envelope * 0.3)
+            }
         }
         return samples
     }

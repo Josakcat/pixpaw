@@ -22,8 +22,28 @@ enum CatWords {
     static let full = "So full. Thanks!"
     static let caught = "Got it!"
     static let sleepy = "Sleepy. Off to the notch…"
-    static let awake = "Meow! I'm up."
-    static let purr = "Purrrr…"
+    static func awake(_ kind: PetKind) -> String {
+        switch kind {
+        case .cat: "Meow! I'm up."
+        case .bee: "Bzzz! I'm up."
+        case .parrot: "Squawk! I'm up."
+        case .dino: "Rawr! I'm up."
+        case .dog: "Woof! I'm up."
+        case .hamster: "Squeak! I'm up."
+        case .chicken: "Bawk! I'm up."
+        }
+    }
+    static func purr(_ kind: PetKind) -> String {
+        switch kind {
+        case .cat: "Purrrr…"
+        case .bee: "Bzzzz…"
+        case .parrot: "Pretty bird!"
+        case .dino: "Rrrrr…"
+        case .dog: "Wag wag wag!"
+        case .hamster: "Squee…"
+        case .chicken: "Bok bok bok…"
+        }
+    }
 
     static func batteryLow(_ percent: Int) -> String { "Battery at \(percent)%. Plug me in?" }
     static let charging = "Yum, power!"
@@ -206,10 +226,28 @@ final class CalendarWatcher {
         self.onLine = onLine
     }
 
+    /// Droppy's own answer, which is the one that counts: Droppy owns the
+    /// calendar prompt, and can know it is granted before EventKit in this
+    /// process says so.
+    static var hostGranted = false
+
     static var hasAccess: Bool {
+        if hostGranted { return true }
         let status = EKEventStore.authorizationStatus(for: .event)
         if #available(macOS 14.0, *) { return status == .fullAccess }
         return status == .authorized
+    }
+
+    /// EventKit's status by name, for the log.
+    static var eventKitStatus: String {
+        switch EKEventStore.authorizationStatus(for: .event) {
+        case .notDetermined: "not determined"
+        case .restricted: "restricted"
+        case .denied: "denied"
+        case .fullAccess: "full access"
+        case .writeOnly: "write only"
+        @unknown default: "unknown"
+        }
     }
 
     func start() {
@@ -570,12 +608,15 @@ final class HeadphonesWatcher {
     }
 
     private let onLine: (CatLine) -> Void
+    /// Whether any headphones are connected, on start and on every change.
+    private let onWearing: (Bool) -> Void
     private var known: [AudioObjectID: Output] = [:]
     private var running = false
     private let listener: AudioObjectPropertyListenerBlock
 
-    init(onLine: @escaping (CatLine) -> Void) {
+    init(onLine: @escaping (CatLine) -> Void, onWearing: @escaping (Bool) -> Void = { _ in }) {
         self.onLine = onLine
+        self.onWearing = onWearing
         var changed: AudioObjectPropertyListenerBlock = { _, _ in }
         listener = { a, b in changed(a, b) }
         changed = { [weak self] _, _ in MainActor.assumeIsolated { self?.devicesChanged() } }
@@ -585,6 +626,7 @@ final class HeadphonesWatcher {
         guard !running else { return }
         running = true
         known = Self.headphones()
+        onWearing(!known.isEmpty)
         var address = Self.devicesAddress
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
     }
@@ -595,6 +637,7 @@ final class HeadphonesWatcher {
         var address = Self.devicesAddress
         AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, listener)
         known = [:]
+        onWearing(false)
     }
 
     private static var devicesAddress: AudioObjectPropertyAddress {
@@ -619,6 +662,7 @@ final class HeadphonesWatcher {
             onLine(CatLine(text: CatWords.disconnected(name), symbol: "headphones"))
         }
         known = now
+        onWearing(!now.isEmpty)
     }
 
     /// Output devices that are headphones of some kind, by id.

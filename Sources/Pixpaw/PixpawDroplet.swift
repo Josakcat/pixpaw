@@ -26,6 +26,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     private enum Key {
         static let coat = "coat"
+        static let kind = "character"
+        static let festivals = "festivals"
+        static let festivalGreeted = "festivalGreeted"
+        static let festivalsHidden = "festivalsHidden"
         static let chases = "followsCursor"
         static let visible = "visible"
         static let pets = "pets"
@@ -89,6 +93,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Quiet because you asked, until you ask again.
     @Published private(set) var quietByHand = false
     private var autoQuietReason: QuietWatcher.Reason?
+    /// Festival decorations, only ever on the festival's own days; each one
+    /// can be switched off on its own.
+    @Published private(set) var festivalsOn = true
+    @Published private(set) var festivalsHidden: Set<Festival> = []
+    private let festivals = FestivalOverlay()
+    private var festivalCheck: Timer?
+    private var screenWatch: NSObjectProtocol?
     private var quiet: QuietWatcher?
     private var headphones: HeadphonesWatcher?
     private var levels: LevelsWatcher?
@@ -110,6 +121,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         self.host = host
         let prefs = host.preferences
         let cat = CatController(
+            kind: PetKind(rawValue: prefs.value(forKey: Key.kind, default: PetKind.cat.rawValue)) ?? .cat,
             coat: CatCoat(rawValue: prefs.value(forKey: Key.coat, default: CatCoat.orange.rawValue)) ?? .orange,
             chasesPointer: prefs.value(forKey: Key.chases, default: false),
             roaming: CatRoaming(rawValue: prefs.value(forKey: Key.roaming, default: CatRoaming.floor.rawValue)) ?? .floor,
@@ -193,10 +205,28 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if prefs.value(forKey: Key.visible, default: true), !host.environment.isHarness {
             setOut(true)
         }
+        festivalsOn = prefs.value(forKey: Key.festivals, default: true)
+        festivalsHidden = Set(prefs.value(forKey: Key.festivalsHidden, default: "").split(separator: ",")
+            .compactMap { Festival(rawValue: String($0)) })
+        // A minute is fine-grained enough for a festival that starts at 6 pm.
+        festivalCheck = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshFestival() }
+        }
+        screenWatch = NotificationCenter.default.addObserver(
+            forName: NSApplication.didChangeScreenParametersNotification, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.festivals.refit() }
+        }
+        refreshFestival()
         host.log.info("Pixpaw activated")
     }
 
     public func deactivate() {
+        festivalCheck?.invalidate()
+        festivalCheck = nil
+        if let screenWatch { NotificationCenter.default.removeObserver(screenWatch) }
+        screenWatch = nil
+        festivals.hide()
         friend?.hide()
         friend = nil
         if let permissionWatch { NSWorkspace.shared.notificationCenter.removeObserver(permissionWatch) }
@@ -232,6 +262,33 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func setCoat(_ coat: CatCoat) {
         cat?.coat = coat
         persist()
+    }
+
+    /// Swaps the cat for another character, or back; the friend follows.
+    func setKind(_ kind: PetKind) {
+        cat?.kind = kind
+        friend?.kind = kind
+        persist()
+    }
+
+    /// Every character in a menu at the pointer, the current one ticked.
+    func chooseKind() {
+        guard let cat else { return }
+        let menu = NSMenu()
+        for kind in PetKind.allCases {
+            let item = NSMenuItem(title: kind.title, action: #selector(pickKind(_:)), keyEquivalent: "")
+            item.target = self
+            item.representedObject = kind.rawValue
+            item.state = kind == cat.kind ? .on : .off
+            item.image = CatSprites.shared.menuImage(kind, coat: cat.coat)
+            menu.addItem(item)
+        }
+        menu.popUp(positioning: nil, at: NSEvent.mouseLocation, in: nil)
+    }
+
+    @objc private func pickKind(_ item: NSMenuItem) {
+        guard let raw = item.representedObject as? String, let kind = PetKind(rawValue: raw) else { return }
+        setKind(kind)
     }
 
     func setChases(_ chases: Bool) {
@@ -296,6 +353,41 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         friend?.setQuiet(reason)
         // A quiet cat makes no sound either.
         CatSounds.shared.isEnabled = soundsOn && reason == nil
+        refreshFestival()
+    }
+
+    // MARK: Festivals
+
+    func setFestivals(_ on: Bool) {
+        festivalsOn = on
+        host?.preferences.setValue(on, forKey: Key.festivals)
+        refreshFestival()
+    }
+
+    func setFestival(_ festival: Festival, shown: Bool) {
+        if shown { festivalsHidden.remove(festival) } else { festivalsHidden.insert(festival) }
+        host?.preferences.setValue(festivalsHidden.map(\.rawValue).sorted().joined(separator: ","), forKey: Key.festivalsHidden)
+        refreshFestival()
+    }
+
+    /// Puts up today's festival, takes it down when it is over, and keeps the
+    /// screen clear during calls and screen sharing.
+    private func refreshFestival() {
+        guard let host, !host.environment.isHarness else { return }
+        // Only ever the real date: there is no way to call a festival early.
+        guard festivalsOn, let today = Festival.current(), !festivalsHidden.contains(today),
+              autoQuietReason == nil || !quietsAutomatically else {
+            festivals.hide()
+            return
+        }
+        festivals.show(today)
+        // Greets it once, the first time it is up that day and the pet is
+        // out to say so.
+        let stamp = "\(today.rawValue) \(StarDay.today)"
+        if isOut, !quietByHand, host.preferences.value(forKey: Key.festivalGreeted, default: "") != stamp {
+            host.preferences.setValue(stamp, forKey: Key.festivalGreeted)
+            cat?.say(today.greeting)
+        }
     }
 
     func setHealth(on: Bool? = nil, minutes: Int? = nil) {
@@ -314,7 +406,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Re-reads what Droppy has been granted, for the settings pane.
     func refreshPermissionState() {
         let notifications = NotificationWatcher.isTrusted
+        let hostCalendar = host?.permissions.status(for: .calendars)
+        CalendarWatcher.hostGranted = hostCalendar == .granted
         let calendar = CalendarWatcher.hasAccess
+        let seen = "Droppy says \(String(describing: hostCalendar)), EventKit says \(CalendarWatcher.eventKitStatus)"
+        if seen != lastCalendarSeen {
+            lastCalendarSeen = seen
+            host?.log.info("calendar access: \(seen)")
+        }
         if notifications != notificationsAllowed || calendar != calendarAllowed {
             notificationsAllowed = notifications
             calendarAllowed = calendar
@@ -324,11 +423,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// Asks through Droppy, which owns the system prompt.
     private var permissionWatch: NSObjectProtocol?
+    private var lastCalendarSeen = ""
 
     func requestPermission(_ permission: DropletPermission) {
         guard let host else { return }
         Task { @MainActor [weak self] in
             let status = await host.permissions.request(permission)
+            host.log.info("asked for \(String(describing: permission)): \(String(describing: status))")
             if status == .denied { host.permissions.openSystemSettings(for: permission) }
             self?.refreshPermissionState()
             // The answer can come later than the request: a system prompt
@@ -399,7 +500,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             health?.stop()
         }
         if out, tellsHeadphones {
-            if headphones == nil { headphones = HeadphonesWatcher(onLine: say) }
+            if headphones == nil {
+                headphones = HeadphonesWatcher(onLine: say, onWearing: { [weak cat] on in
+                    if cat?.wearsHeadphones != on { cat?.wearsHeadphones = on }
+                })
+            }
             headphones?.start()
         } else {
             headphones?.stop()
@@ -412,7 +517,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         if out, tellsMusic {
             if music == nil {
-                music = MusicWatcher(onLine: say, onPlaying: { [weak cat] playing in
+                // A new song names itself and starts the cat dancing again.
+                music = MusicWatcher(onLine: { [weak cat] line in say(line); cat?.dance() }, onPlaying: { [weak cat] playing in
                     if cat?.musicPlaying != playing { cat?.musicPlaying = playing }
                 })
             }
@@ -555,7 +661,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         if friend == nil {
             let friend = CatController(
-                coat: friendCoat, chasesPointer: cat.chasesPointer, roaming: cat.roaming,
+                kind: cat.kind, coat: friendCoat, chasesPointer: cat.chasesPointer, roaming: cat.roaming,
                 pouncesOnDrags: cat.pouncesOnDrags, chatty: false, pets: 0, lastFed: cat.lastFed
             )
             friend.isFriend = true
@@ -616,6 +722,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         syncFriend()
         guard let cat, let prefs = host?.preferences else { return }
         prefs.setValue(cat.coat.rawValue, forKey: Key.coat)
+        prefs.setValue(cat.kind.rawValue, forKey: Key.kind)
         prefs.setValue(cat.chasesPointer, forKey: Key.chases)
         prefs.setValue(cat.pets, forKey: Key.pets)
         prefs.setValue(cat.points, forKey: Key.points)
@@ -699,6 +806,22 @@ private struct PixpawWidget: View {
                 .font(.system(size: 12, weight: .semibold))
             Spacer(minLength: 0)
             Button {
+                droplet.chooseKind()
+            } label: {
+                if let face = CatSprites.shared.image(.sit, coat: cat.coat, kind: cat.kind) {
+                    Image(decorative: face, scale: 1)
+                        .interpolation(.none)
+                        .resizable()
+                        .aspectRatio(contentMode: .fit)
+                        .frame(width: 15, height: 12)
+                } else {
+                    Image(systemName: "pawprint")
+                }
+            }
+            .buttonStyle(DroppyCircleButtonStyle(size: 20))
+            .help("Character: \(cat.kind.title). Click to change.")
+            .accessibilityLabel("Change character, now \(cat.kind.title)")
+            Button {
                 droplet.toggleQuiet()
             } label: {
                 Image(systemName: cat.quietReason == nil ? "bell" : "bell.slash.fill")
@@ -721,7 +844,8 @@ private struct PixpawWidget: View {
     private var portrait: some View {
         let frame: CatFrame = droplet.isOut ? cat.frame : .sleep1
         return Group {
-            if let image = CatSprites.shared.image(frame, coat: cat.coat, hat: cat.hat, collar: cat.collar) {
+            if let image = CatSprites.shared.image(frame, coat: cat.coat, hat: cat.hat, collar: cat.collar,
+                                                   headphones: droplet.isOut && cat.wearsHeadphones, kind: cat.kind) {
                 Image(decorative: image, scale: 1)
                     .interpolation(.none)
                     .resizable()
@@ -761,7 +885,7 @@ private struct PixpawWidget: View {
 
     private var controls: some View {
         HStack(spacing: DroppySpacing.sm) {
-            ForEach(CatCoat.allCases) { coat in
+            ForEach(cat.kind.hasCoats ? CatCoat.allCases : []) { coat in
                 Button {
                     droplet.setCoat(coat)
                 } label: {
@@ -842,7 +966,8 @@ private struct CatWingPortrait: View {
 
     var body: some View {
         Group {
-            if let image = CatSprites.shared.image(cat.frame, coat: cat.coat, hat: cat.hat, collar: cat.collar) {
+            if let image = CatSprites.shared.image(cat.frame, coat: cat.coat, hat: cat.hat, collar: cat.collar,
+                                                   headphones: cat.wearsHeadphones, kind: cat.kind) {
                 Image(decorative: image, scale: 1)
                     .interpolation(.none)
                     .resizable()
@@ -885,8 +1010,10 @@ extension PixpawDroplet: SettingsPaneProviding {
         [
             SettingsSearchEntry(title: "A second cat", keywords: ["cat", "friend", "two", "companion"]),
             SettingsSearchEntry(title: "Wardrobe", keywords: ["cat", "hat", "collar", "points", "happiness", "unlock"]),
+            SettingsSearchEntry(title: "Festival decorations", keywords: ["festival", "halloween", "new year", "christmas", "songkran", "valentine", "fireworks", "ghost", "snow"]),
             SettingsSearchEntry(title: "Break reminders", keywords: ["cat", "health", "stretch", "water", "eyes", "break"]),
             SettingsSearchEntry(title: "Sounds", keywords: ["cat", "meow", "purr", "sound", "mute"]),
+            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "pet", "character", "animal"]),
             SettingsSearchEntry(title: "Where the cat walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
             SettingsSearchEntry(title: "Follow the cursor", keywords: ["cat", "chase", "pointer", "mouse"]),
             SettingsSearchEntry(title: "Pounce on dragged files", keywords: ["cat", "drag", "file", "pounce", "play"]),
@@ -923,8 +1050,20 @@ private struct PixpawSettings: View {
                     isOn: Binding(get: { droplet.isOut }, set: { droplet.setOut($0) })
                 )
                 DropletGroupedPickerRow(
+                    title: "Character",
+                    subtitle: "Who lives on your desktop. More friends are on the way."
+                ) {
+                    Picker("Character", selection: Binding(get: { cat.kind }, set: { droplet.setKind($0) })) {
+                        ForEach(PetKind.allCases) { kind in
+                            Text(kind.title).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                DropletGroupedPickerRow(
                     title: "Where the cat walks",
-                    subtitle: "Bottom and on windows lets it jump onto the top edges of the windows you have open, and ride along when you move one."
+                    subtitle: "Bottom and on windows lets it jump onto the top edges of the windows you have open, and ride along when you move one. The bee flies anywhere; the parrot perches here and flies between perches."
                 ) {
                     Picker("Where the cat walks", selection: Binding(get: { cat.roaming }, set: { droplet.setRoaming($0) })) {
                         ForEach(CatRoaming.allCases) { roaming in
@@ -1009,7 +1148,7 @@ private struct PixpawSettings: View {
                     )
                     DropletToggleRow(
                         title: "Headphones",
-                        subtitle: "When AirPods or other headphones connect or disconnect.",
+                        subtitle: "When AirPods or other headphones connect or disconnect. The cat wears a pair while yours are on.",
                         isOn: Binding(get: { droplet.tellsHeadphones }, set: { droplet.setTells(headphones: $0) })
                     )
                     DropletToggleRow(
@@ -1055,15 +1194,17 @@ private struct PixpawSettings: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                     }
-                    DropletGroupedPickerRow(title: "Collar") {
-                        Picker("Collar", selection: Binding(get: { cat.collar }, set: { droplet.wear($0, in: .collar) })) {
-                            Text("None").tag(CatAccessory?.none)
-                            ForEach(CatAccessory.unlocked(at: cat.points).filter { $0.slot == .collar }) { item in
-                                Text(item.title).tag(CatAccessory?.some(item))
+                    if cat.kind.wearsCollars {
+                        DropletGroupedPickerRow(title: "Collar") {
+                            Picker("Collar", selection: Binding(get: { cat.collar }, set: { droplet.wear($0, in: .collar) })) {
+                                Text("None").tag(CatAccessory?.none)
+                                ForEach(CatAccessory.unlocked(at: cat.points).filter { $0.slot == .collar }) { item in
+                                    Text(item.title).tag(CatAccessory?.some(item))
+                                }
                             }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
                     }
                     if let next = CatAccessory.next(after: cat.points) {
                         DropletControlRow(title: "Next: \(next.title)") {
@@ -1082,14 +1223,16 @@ private struct PixpawSettings: View {
                         subtitle: "A friend that roams with your cat, sits with it and plays tag. It never talks, and its happiness counts for your cat.",
                         isOn: Binding(get: { droplet.hasFriend }, set: { droplet.setFriend($0) })
                     )
-                    DropletGroupedPickerRow(title: "Friend's coat") {
-                        Picker("Friend's coat", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
-                            ForEach(CatCoat.allCases) { coat in
-                                Text(coat.title).tag(coat)
+                    if cat.kind.hasCoats {
+                        DropletGroupedPickerRow(title: "Friend's coat") {
+                            Picker("Friend's coat", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
+                                ForEach(CatCoat.allCases) { coat in
+                                    Text(coat.title).tag(coat)
+                                }
                             }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
                         }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
                     }
                 }
             }
@@ -1111,6 +1254,27 @@ private struct PixpawSettings: View {
                         }
                         .pickerStyle(.menu)
                         .labelsHidden()
+                    }
+                }
+            }
+
+            DropletSettingsSection {
+                settingsSectionHeader("Festivals")
+            } content: {
+                DropletSettingsCard {
+                    DropletToggleRow(
+                        title: "Festival decorations",
+                        subtitle: "On a festival's own days the screen joins in, then clears when the day is over. Never during calls or screen sharing.",
+                        isOn: Binding(get: { droplet.festivalsOn }, set: { droplet.setFestivals($0) })
+                    )
+                    ForEach(Festival.allCases) { festival in
+                        DropletToggleRow(
+                            title: festival.title,
+                            subtitle: "\(festival.when): \(festival.decoration).",
+                            isOn: Binding(get: { !droplet.festivalsHidden.contains(festival) },
+                                          set: { droplet.setFestival(festival, shown: $0) })
+                        )
+                        .disabled(!droplet.festivalsOn)
                     }
                 }
             }
@@ -1165,6 +1329,9 @@ extension PixpawDroplet: DropletURLHandling {
             if let text = request.query["text"]?.prefix(140), !text.isEmpty { cat?.say(CatLine(text: String(text), symbol: "bubble.left.fill")) }
         case "roam":
             if let mode = request.query["mode"].flatMap(CatRoaming.init(rawValue:)) { setRoaming(mode) }
+        case "character":
+            // character?name=cat|bee
+            if let kind = request.query["name"].flatMap({ PetKind(rawValue: $0.lowercased()) }) { setKind(kind) }
         default: host?.log.info("ignored URL path \(request.path)")
         }
     }

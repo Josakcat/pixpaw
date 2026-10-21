@@ -1,6 +1,7 @@
 # Pixpaw 🐾
 
-A pixel cat that lives on your desktop and talks to you. A Droplet for
+A pixel cat (or bee, parrot, dinosaur, dog, hamster or chicken) that lives on
+your desktop and talks to you. A Droplet for
 [Droppy](https://getdroppy.app), built with
 [DroppyKit](https://getdroppy.app/docs/droppykit).
 
@@ -17,10 +18,14 @@ A pixel cat that lives on your desktop and talks to you. A Droplet for
 - Hold it for half a second for its menu: Feed, Nap, Play (a yarn ball or a
   feather teaser) and Wardrobe.
 - Six coats, and an optional friend cat that sits with it and plays tag.
+- Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
+  between perches), a dinosaur, a dog, a hamster or a chicken, each with its
+  own sounds. Switch from the portrait on the shelf or in Settings.
+- Wears headphones while yours are connected.
 
 **Talks in a speech bubble**
 - Mac notifications, and calendar events five minutes ahead.
-- Song changes in Apple Music and Spotify (and it dances while they play).
+- Song changes in Apple Music and Spotify (and it stops to dance on every new song).
 - Claude Code and Codex finishing or needing you, with the plan usage left.
 - Volume and brightness, headphones connecting, the battery, downloads.
 - Goes quiet during calls and screen sharing, and optionally while mirroring.
@@ -30,8 +35,11 @@ A pixel cat that lives on your desktop and talks to you. A Droplet for
   pixel hats and collars.
 - Break reminders every 30 to 90 minutes: stretch, drink water, rest your eyes.
 - A hunger meter and a food bowl.
-- A synthesised meow, purr and crunch; no sound files.
+- Synthesised sounds (meow, purr, buzz, bark, squeak and more); no sound files.
 - A shelf widget with its mood, stars, coats and quick controls.
+- Festival decorations on the real dates only: ghosts on Halloween, fireworks
+  at New Year, snow at Christmas, water drops for Songkran, hearts on
+  Valentine's Day. Each can be switched off in Settings.
 
 | | |
 |---|---|
@@ -80,7 +88,8 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
 `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…`): `show`, `hide`,
 `come`, `nap`, `feed`, `play?toy=yarn|teaser|stop`, `wear?hat=…&collar=…`,
 `quiet?on=1|0`, `say?text=…`, `agent?name=…&state=…&text=…&usage=…`,
-`roam?mode=anywhere|floor|windows`.
+`roam?mode=anywhere|floor|windows`,
+`character?name=cat|bee|parrot|dino|dog|hamster|chicken`.
 
 ## Art
 

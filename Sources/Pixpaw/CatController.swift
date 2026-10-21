@@ -111,6 +111,8 @@ final class CatController: ObservableObject {
     @Published private(set) var frame: CatFrame = .sit
     @Published private(set) var facesRight = true
     @Published var coat: CatCoat { didSet { redraw() } }
+    /// The cat, or the character picked instead of it.
+    @Published var kind: PetKind { didSet { if kind != oldValue { kindChanged() } } }
     @Published var chasesPointer: Bool
     @Published var roaming: CatRoaming { didSet { if roaming != oldValue { roamingChanged() } } }
     @Published var pouncesOnDrags: Bool
@@ -122,11 +124,26 @@ final class CatController: ObservableObject {
     @Published private(set) var points: Int
     @Published var hat: CatAccessory? { didSet { redraw() } }
     @Published var collar: CatAccessory? { didSet { redraw() } }
+    /// Headphones are connected: the cat wears a pair, in place of its hat.
+    @Published var wearsHeadphones = false {
+        didSet {
+            guard wearsHeadphones != oldValue else { return }
+            if wearsHeadphones { putOnHeadphones() }
+            redraw()
+        }
+    }
+    /// How high a flying parrot is off its perch, rising and settling a
+    /// little each step.
+    private var lift: CGFloat = 0
+    private static let flightLift = CatSprites.scale * 5
+
+    /// Just put headphones on: a pleased moment once it has settled them.
+    private var settlingHeadphones = false
     /// 1 just after a meal, 0 after `hungerHours` without one.
     @Published private(set) var fullness: Double = 1
     @Published private(set) var isHungry = false
     /// Music is playing in Apple Music or Spotify: an idle cat dances.
-    @Published var musicPlaying = false
+    @Published var musicPlaying = false { didSet { if musicPlaying, !oldValue { dance() } } }
     /// A couple of points of bounce while dancing.
     private var bob: CGFloat = 0
     private(set) var lastFed: Date
@@ -259,7 +276,7 @@ final class CatController: ObservableObject {
         var arc: CGFloat?
     }
 
-    init(coat: CatCoat, chasesPointer: Bool, roaming: CatRoaming, pouncesOnDrags: Bool, chatty: Bool,
+    init(kind: PetKind = .cat, coat: CatCoat, chasesPointer: Bool, roaming: CatRoaming, pouncesOnDrags: Bool, chatty: Bool,
          pets: Int, points: Int = 0, hat: CatAccessory? = nil, collar: CatAccessory? = nil,
          starDay: StarDay? = nil, lastFed: Date) {
         self.points = points
@@ -267,6 +284,7 @@ final class CatController: ObservableObject {
         self.hat = hat
         self.collar = collar
         self.coat = coat
+        self.kind = kind
         self.chatty = chatty
         self.pouncesOnDrags = pouncesOnDrags
         self.chasesPointer = chasesPointer
@@ -297,7 +315,7 @@ final class CatController: ObservableObject {
         guard panel != nil, quietReason == nil || essential else { return }
         bubble.say(line)
         // Levels you are changing yourself stay silent.
-        if line.key == nil { CatSounds.shared.play(.meow) }
+        if line.key == nil { CatSounds.shared.play(.meow, voice: kind) }
     }
 
     /// The cat's own remarks, when it is chatty.
@@ -309,12 +327,124 @@ final class CatController: ObservableObject {
     var statusTitle: String {
         if isHungry, mood.isIdle { return "Hungry" }
         if musicPlaying, mood == .sitting { return "Vibing to the music" }
+        if kind == .bee {
+            switch mood {
+            case .sitting: return "Hovering"
+            case .walking: return "Buzzing about"
+            case .happy: return "Buzzing happily"
+            case .grooming: return "Cleaning its antennae"
+            case .jumping: return "Zooming"
+            default: break
+            }
+        }
+        if kind == .chicken {
+            switch mood {
+            case .walking: return "Strutting about"
+            case .happy: return "Flapping happily"
+            case .grooming: return "Preening"
+            case .jumping: return "Fluttering"
+            case .pouncing: return "Bawk!"
+            default: break
+            }
+        }
+        if kind == .hamster {
+            switch mood {
+            case .walking: return "Scurrying about"
+            case .happy: return "Squeaking happily"
+            case .grooming: return "Washing its face"
+            case .jumping: return "Hopping"
+            case .pouncing: return "Squeak!"
+            default: break
+            }
+        }
+        if kind == .dog {
+            switch mood {
+            case .walking: return "Trotting about"
+            case .happy: return "Wagging its tail"
+            case .grooming: return "Scratching"
+            case .jumping: return "Bounding"
+            case .pouncing: return "Woof!"
+            default: break
+            }
+        }
+        if kind == .dino {
+            switch mood {
+            case .walking: return "Stomping about"
+            case .happy: return "Happy rumble"
+            case .jumping: return "Leaping"
+            case .pouncing: return "Rawr!"
+            default: break
+            }
+        }
+        if kind == .parrot {
+            switch mood {
+            case .sitting: return "Perched"
+            case .walking: return "Flying about"
+            case .happy: return "Chirping"
+            case .grooming: return "Preening"
+            case .jumping: return "Flying"
+            default: break
+            }
+        }
         return mood.title
     }
     /// The same, short enough for the wing beside the notch.
     var statusShortTitle: String {
         if isHungry, mood.isIdle { return "Hungry" }
         if musicPlaying, mood == .sitting { return "Vibing" }
+        if kind == .bee {
+            switch mood {
+            case .sitting: return "Hovering"
+            case .walking: return "Buzzing"
+            case .happy: return "Bzzz"
+            case .grooming: return "Preening"
+            default: break
+            }
+        }
+        if kind == .chicken {
+            switch mood {
+            case .walking: return "Strutting"
+            case .happy: return "Flapping"
+            case .grooming: return "Preening"
+            case .pouncing: return "Bawk!"
+            default: break
+            }
+        }
+        if kind == .hamster {
+            switch mood {
+            case .walking: return "Scurrying"
+            case .happy: return "Squeak!"
+            case .grooming: return "Washing"
+            case .pouncing: return "Squeak!"
+            default: break
+            }
+        }
+        if kind == .dog {
+            switch mood {
+            case .walking: return "Trotting"
+            case .happy: return "Wagging"
+            case .grooming: return "Scratching"
+            case .pouncing: return "Woof!"
+            default: break
+            }
+        }
+        if kind == .dino {
+            switch mood {
+            case .walking: return "Stomping"
+            case .happy: return "Rumble"
+            case .pouncing: return "Rawr!"
+            default: break
+            }
+        }
+        if kind == .parrot {
+            switch mood {
+            case .sitting: return "Perched"
+            case .walking, .jumping: return "Flying"
+            case .happy: return "Chirp!"
+            case .grooming: return "Preening"
+            default: break
+            }
+        }
         return mood.shortTitle
     }
 
@@ -472,9 +602,41 @@ final class CatController: ObservableObject {
         case .falling, .jumping, .eating, .goingToBowl, .pouncing: break
         case .sleeping:
             enter(.sitting)
-            remark(CatWords.awake)
+            remark(CatWords.awake(kind))
         default: startChase(to: NSEvent.mouseLocation)
         }
+    }
+
+    /// A new song: a cat that is only sitting, grooming or strolling stops
+    /// where it stands and dances. Anything it is busy with comes first.
+    func dance() {
+        guard panel != nil, musicPlaying else { return }
+        switch mood {
+        case .sitting, .grooming:
+            break
+        case .walking where buddyPlan == nil && route?.jump == nil && route?.takeoff == nil:
+            route = nil
+        default:
+            return
+        }
+        enter(.sitting)
+    }
+
+    /// A new pair of headphones: a cat with nothing better to do stops and
+    /// settles them with a paw, then looks pleased.
+    private func putOnHeadphones() {
+        guard panel != nil else { return }
+        switch mood {
+        case .sitting, .grooming:
+            break
+        case .walking where buddyPlan == nil && route?.jump == nil && route?.takeoff == nil:
+            route = nil
+        default:
+            return
+        }
+        enter(.grooming)
+        stateLength = Int(Self.fps * 1.2)
+        settlingHeadphones = true
     }
 
     /// A nap right where it is, until woken (a click, Come here, food, play).
@@ -539,6 +701,9 @@ final class CatController: ObservableObject {
                 headToBowl()
             } else if wantsToChase(mouse) {
                 startChase(to: mouse)
+            } else if stateTicks >= stateLength, settlingHeadphones {
+                settlingHeadphones = false
+                enter(.happy)
             } else if stateTicks >= stateLength {
                 pickSomethingToDo()
             }
@@ -572,11 +737,12 @@ final class CatController: ObservableObject {
                 enter(.eating)
             }
         case .eating:
-            if stateTicks % 8 == 1 { CatSounds.shared.play(.chew) }
+            if stateTicks % 8 == 1 { CatSounds.shared.play(.chew, voice: kind) }
             if stateTicks >= stateLength { finishMeal() }
         case .falling:
             fall()
         }
+        keepOnScreen()
         animate()
         glide(from: before)
         bubble.update(anchor: bubbleAnchor())
@@ -661,10 +827,21 @@ final class CatController: ObservableObject {
             let tag = Int.random(in: 0..<3) == 0
             let side: CGFloat = other.x > position.x ? -1 : 1
             let spot = CGPoint(x: other.x + side * (CatSprites.catSize.width * 0.8), y: other.y)
-            planRoute(to: roaming == .anywhere ? spot : CGPoint(x: spot.x, y: floorSurface(near: spot).y),
-                      on: roaming == .anywhere ? nil : floorSurface(near: spot))
+            planRoute(to: moves == .anywhere ? spot : CGPoint(x: spot.x, y: floorSurface(near: spot).y),
+                      on: moves == .anywhere ? nil : floorSurface(near: spot))
             buddyPlan = tag ? .tag : .visit
             enter(.walking)
+            return
+        }
+        if musicPlaying {
+            // Three dances in four; now and then a stroll to a new spot.
+            if Int.random(in: 0..<4) == 0 {
+                let (spot, surface) = randomSpot()
+                planRoute(to: spot, on: surface)
+                enter(.walking)
+            } else {
+                enter(.sitting)
+            }
             return
         }
         switch Int.random(in: 0..<10) {
@@ -682,9 +859,12 @@ final class CatController: ObservableObject {
     private func enter(_ next: CatMood) {
         if next != mood { log?("mood \(mood) -> \(next) at \(position)") }
         mood = next
+        // Interrupted while settling its headphones: no pleased moment later.
+        settlingHeadphones = false
         stateTicks = 0
         switch next {
-        case .sitting: stateLength = Int(Self.fps * Double.random(in: 2...6))
+        // Dancing lasts a good while; otherwise a short sit.
+        case .sitting: stateLength = Int(Self.fps * (musicPlaying ? Double.random(in: 8...16) : Double.random(in: 2...6)))
         case .grooming: stateLength = Int(Self.fps * Double.random(in: 2.5...4.5))
         case .happy: stateLength = Int(Self.fps * 1.8)
         case .eating: stateLength = Int(Self.fps * 4)
@@ -697,14 +877,26 @@ final class CatController: ObservableObject {
         }
     }
 
+    /// Where it may go: the walking setting, or anywhere for a flier.
+    private var moves: CatRoaming { kind.flies ? .anywhere : roaming }
+
+    /// A new character: drawn at once; one that cannot fly drops to the
+    /// floor or a window, one that can stays where it is.
+    private func kindChanged() {
+        drawn = nil
+        redraw()
+        roamingChanged()
+    }
+
     private func roamingChanged() {
         surfaceCache = nil
         guard panel != nil else { return }
         // Off a window when windows are no longer allowed; anything above the
-        // floor drops down when only the floor is.
-        if roaming != .anywhere, mood.isIdle || mood == .sitting {
+        // floor drops down when only the floor is. A nap or a happy moment in
+        // mid-air (a bee swapped for a dog, say) ends in a fall too.
+        if moves != .anywhere, mood.isIdle || mood == .sleeping || mood == .happy {
             let floor = floorSurface(near: position)
-            if roaming == .floor || perch == nil, position.y > floor.y + 1 { startFalling() }
+            if moves == .floor || perch == nil, position.y > floor.y + 1 { startFalling() }
         }
     }
 
@@ -714,7 +906,7 @@ final class CatController: ObservableObject {
     /// anywhere, otherwise along its surface, with a jump when the
     /// destination is on another one.
     private func planRoute(to destination: CGPoint, on surface: CatSurface?) {
-        guard roaming != .anywhere, let surface else {
+        guard moves != .anywhere, let surface else {
             route = Route(destination: destination)
             return
         }
@@ -809,7 +1001,7 @@ final class CatController: ObservableObject {
         let size = CatSprites.catSize
         let side: CGFloat = mouse.x >= position.x + size.width / 2 ? -1 : 1
         let x = mouse.x - size.width / 2 + side * (size.width / 2 + 6)
-        switch roaming {
+        switch moves {
         case .anywhere:
             planRoute(to: clamp(CGPoint(x: x, y: mouse.y - size.height + 6), near: mouse), on: nil)
         case .floor, .windows:
@@ -1005,7 +1197,7 @@ final class CatController: ObservableObject {
         let center = CGPoint(x: position.x + CatSprites.catSize.width / 2, y: position.y + 20)
         let dx = abs(mouse.x - center.x)
         let dy = mouse.y - center.y
-        switch roaming {
+        switch moves {
         case .anywhere: return hypot(dx, dy) < 260
         case .floor, .windows: return dx < 220 && dy < 420
         }
@@ -1016,7 +1208,7 @@ final class CatController: ObservableObject {
         let size = CatSprites.catSize
         let side: CGFloat = mouse.x >= position.x + size.width / 2 ? -1 : 1
         let x = mouse.x - size.width / 2 + side * 140
-        switch roaming {
+        switch moves {
         case .anywhere:
             planRoute(to: clamp(CGPoint(x: x, y: mouse.y - size.height / 2 - 60), near: mouse), on: nil)
         case .floor, .windows:
@@ -1036,7 +1228,7 @@ final class CatController: ObservableObject {
         let landing: CGPoint
         let surface: CatSurface?
         let arc: CGFloat
-        switch roaming {
+        switch moves {
         case .anywhere:
             landing = clamp(reach, near: mouse)
             surface = nil
@@ -1081,14 +1273,14 @@ final class CatController: ObservableObject {
     }
 
     private func currentSurface() -> CatSurface {
-        if let perch, roaming == .windows { return perch }
+        if let perch, moves == .windows { return perch }
         return floorSurface(near: position)
     }
 
     /// The highest thing to stand on at or below `point`.
     private func surface(below point: CGPoint) -> CatSurface {
         let floor = floorSurface(near: point)
-        guard roaming == .windows else { return floor }
+        guard moves == .windows else { return floor }
         let width = CatSprites.catSize.width
         return windowSurfaces()
             .filter { $0.y <= point.y + 1 && point.x >= $0.minX - width / 2 && point.x <= $0.maxX + width / 2 }
@@ -1126,8 +1318,14 @@ final class CatController: ObservableObject {
                   top > screen.visibleFrame.minY + size.height
             else { continue }
 
+            // Only the part on this screen: a window dragged half off the
+            // edge would otherwise walk the cat off with it.
+            let left = max(bounds.minX, screen.visibleFrame.minX)
+            let right = min(bounds.maxX, screen.visibleFrame.maxX)
+            guard right > left else { continue }
+
             // Subtract every window in front that crosses this window's top line.
-            var segments = [(bounds.minX, bounds.maxX)]
+            var segments = [(left, right)]
             for front in covers where front.minY <= bounds.minY + 2 && front.maxY > bounds.minY - size.height {
                 segments = segments.flatMap { segment -> [(CGFloat, CGFloat)] in
                     if front.maxX <= segment.0 || front.minX >= segment.1 { return [segment] }
@@ -1146,7 +1344,7 @@ final class CatController: ObservableObject {
     }
 
     private func land(on surface: CatSurface?) {
-        if let surface, surface.windowID != nil, roaming == .windows {
+        if let surface, surface.windowID != nil, moves == .windows {
             perch = surface
             perchOrigin = CGPoint(x: surface.windowX ?? surface.minX, y: surface.y)
         } else {
@@ -1158,7 +1356,7 @@ final class CatController: ObservableObject {
     /// Rides along when the window under the cat moves, and falls when it
     /// closes, minimises or slides out from under it.
     private func followPerch() {
-        guard let perch, roaming == .windows, !isMidAir, mood != .held else { return }
+        guard let perch, moves == .windows, !isMidAir, mood != .held else { return }
         surfaceCache = nil
         guard let now = windowSurfaces().first(where: { $0.windowID == perch.windowID }) else {
             startFalling()
@@ -1291,8 +1489,13 @@ final class CatController: ObservableObject {
         let next: CatFrame
         switch mood {
         case .sitting where musicPlaying:
-            // Head-bobbing to the beat, eyes closed on the down beat.
+            // Head-bobbing to the beat, eyes closed on the down beat, and a
+            // turn to the other side every four beats.
             next = (tick / 5) % 2 == 0 ? .happy : .sit
+            facesRight = (tick / 20) % 2 == 0
+        case .sitting where kind.flies:
+            // Hovering: the wings never stop.
+            next = (stateTicks % 40) >= 37 ? .blink : (tick % 2 == 0 ? .walk1 : .walk2)
         case .sitting: next = (stateTicks % 40) >= 37 ? .blink : .sit
         case .walking, .goingToBowl:
             // A four-beat walk, 1-2-3-2, at six steps a second.
@@ -1321,7 +1524,19 @@ final class CatController: ObservableObject {
         case .held: next = (tick / 4) % 2 == 0 ? .held1 : .held2
         }
         if next != frame { frame = next }
-        bob = (mood == .sitting && musicPlaying && (tick / 5) % 2 == 1) ? 3 : 0
+        bob = (mood == .sitting && musicPlaying && (tick / 5) % 2 == 1) ? CatSprites.scale * 2 : 0
+        if kind.flies, mood != .held, mood != .sleeping, mood != .eating {
+            // A gentle hover, one art pixel up and down.
+            bob += [0, 1, 2, 1][(tick / 3) % 4] * CatSprites.scale / 2
+        }
+        if kind.fliesWhenMoving {
+            // Takes off a few pixels while it flies, and settles back down.
+            let flying = mood != .held && [CatFrame.walk1, .walk2, .walk3, .run1, .run2].contains(next)
+            lift = flying ? min(Self.flightLift, lift + CatSprites.scale * 1.5) : max(0, lift - CatSprites.scale * 1.5)
+            bob += lift
+        } else {
+            lift = 0
+        }
         redraw()
     }
 
@@ -1332,14 +1547,14 @@ final class CatController: ObservableObject {
 
     private func redraw() {
         guard let catLayer, let effectLayer else { return }
-        let effectShowing = mood == .happy || mood == .sleeping || (mood == .sitting && isHungry)
-        let look = "\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")"
+        let effectShowing = mood == .happy || mood == .sleeping || (mood == .sitting && (isHungry || musicPlaying))
+        let look = "\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(wearsHeadphones)"
         if let drawn, drawn.frame == frame, drawn.coat == coat, drawn.right == facesRight, drawn.bob == bob,
            drawn.look == look, !effectShowing, effectLayer.opacity == 0 {
             return
         }
         drawn = (frame, coat, facesRight, bob, look)
-        let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar)
+        let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar, headphones: wearsHeadphones, kind: kind)
         spriteHeight = sprite.map { CGFloat($0.height) * CatSprites.scale } ?? spriteHeight
         catLayer.contents = sprite
         if let sprite {
@@ -1358,6 +1573,7 @@ final class CatController: ObservableObject {
         case .happy: effect = .heart
         case .sleeping: effect = .zzz
         case .sitting where isHungry: effect = .fish
+        case .sitting where musicPlaying: effect = .note
         default: effect = nil
         }
         guard let effect, let image = CatSprites.shared.image(effect) else {
@@ -1374,6 +1590,8 @@ final class CatController: ObservableObject {
         switch effect {
         case .heart: rise = CGFloat(stateTicks) * 0.9
         case .fish: rise = CGFloat((stateTicks / 8) % 2) * 2
+        // A fresh note floats up on each turn, in step with the head.
+        case .note: rise = CGFloat(tick % 20) * 1.6
         default: rise = CGFloat((stateTicks / 6) % 3) * 2
         }
         effectLayer.frame = CGRect(x: headX - w / 2, y: min(size.height - 4 + rise * 0.4, size.height + Self.effectHeight - h), width: w, height: h)
@@ -1434,12 +1652,12 @@ final class CatController: ObservableObject {
             position = clamp(position, near: CGPoint(x: position.x + CatSprites.catSize.width / 2, y: position.y))
             // Let go in mid-air, it drops to whatever is below unless it may
             // stand anywhere.
-            if roaming == .anywhere { enter(.sitting) } else { startFalling() }
+            if moves == .anywhere { enter(.sitting) } else { startFalling() }
         } else {
             pets += 1
-            CatSounds.shared.play(.purr)
+            CatSounds.shared.play(.purr, voice: kind)
             earn(.pet)
-            if pets % 5 == 0 { remark(CatWords.purr) }
+            if pets % 5 == 0 { remark(CatWords.purr(kind)) }
             panel?.level = .floating
             if mood != .eating { enter(.happy) }
         }
@@ -1452,7 +1670,7 @@ final class CatController: ObservableObject {
     private func randomSpot() -> (CGPoint, CatSurface?) {
         let size = CatSprites.catSize
         let floor = floorSurface(near: position)
-        switch roaming {
+        switch moves {
         case .anywhere:
             let area = (Self.screen(containing: CGPoint(x: position.x + size.width / 2, y: position.y + 1)) ?? NSScreen.main)?.visibleFrame ?? .zero
             let x = CGFloat.random(in: area.minX...max(area.minX, area.maxX - size.width))
@@ -1466,6 +1684,31 @@ final class CatController: ObservableObject {
             let surface = (Bool.random() ? windows.randomElement() : nil) ?? floor
             let x = CGFloat.random(in: surface.minX...max(surface.minX, surface.maxX - size.width))
             return (CGPoint(x: x, y: surface.y), surface)
+        }
+    }
+
+    /// Brings the cat back when anything has taken it past a screen's edge:
+    /// a window it rode off, a screen that went away, a route planned on a
+    /// layout that has since changed. Only a held cat may hang off an edge.
+    private func keepOnScreen() {
+        guard mood != .held else { return }
+        let size = CatSprites.catSize
+        let center = CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
+        guard let area = (Self.screen(containing: center) ?? NSScreen.main)?.visibleFrame, !area.isEmpty else { return }
+        let fixed = CGPoint(
+            x: min(max(position.x, area.minX), area.maxX - size.width),
+            y: min(max(position.y, area.minY), area.maxY - size.height)
+        )
+        guard fixed != position else { return }
+        log?("kept on screen: \(position) -> \(fixed)")
+        position = fixed
+        if var route {
+            route.destination = clamp(route.destination, near: center)
+            self.route = route
+        }
+        // Off the end of its window: it drops to whatever is below.
+        if let perch, moves == .windows, fixed.x + size.width / 2 < perch.minX || fixed.x + size.width / 2 > perch.maxX {
+            startFalling()
         }
     }
 
@@ -1605,12 +1848,16 @@ final class CatView: NSView {
         play.submenu = toys
         menu.addItem(play)
 
-        let (points, worn) = MainActor.assumeIsolated { (controller.points, [controller.hat, controller.collar]) }
+        let (points, worn, collars) = MainActor.assumeIsolated {
+            (controller.points, [controller.hat, controller.collar], controller.kind.wearsCollars)
+        }
         let wardrobe = NSMenuItem(title: "Wardrobe (\(points) ★)", action: nil, keyEquivalent: "")
         wardrobe.image = NSImage(systemSymbolName: "tshirt", accessibilityDescription: nil)
         let clothes = NSMenu()
         clothes.autoenablesItems = false
-        for (slot, none) in [(CatAccessory.Slot.hat, "No hat"), (.collar, "No collar")] {
+        // Only a character that has a collar drawn for it is offered one.
+        let slots: [(CatAccessory.Slot, String)] = collars ? [(.hat, "No hat"), (.collar, "No collar")] : [(.hat, "No hat")]
+        for (slot, none) in slots {
             let off = NSMenuItem(title: none, action: #selector(wearItem(_:)), keyEquivalent: "")
             off.target = self
             off.representedObject = slot == .hat ? "hat:" : "collar:"
@@ -1625,7 +1872,7 @@ final class CatView: NSView {
                 entry.state = worn.contains(item) ? .on : .off
                 clothes.addItem(entry)
             }
-            if slot == .hat { clothes.addItem(.separator()) }
+            if slot == .hat, collars { clothes.addItem(.separator()) }
         }
         wardrobe.submenu = clothes
         menu.addItem(wardrobe)

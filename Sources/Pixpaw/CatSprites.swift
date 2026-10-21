@@ -32,6 +32,43 @@ enum CatCoat: String, CaseIterable, Identifiable, Codable {
     }
 }
 
+/// Who lives on the desktop: the cat, or a character picked instead of it.
+/// Every character has the cat's frames, so the same moods drive them all.
+enum PetKind: String, CaseIterable, Identifiable, Codable {
+    case cat, bee, parrot, dino, dog, hamster, chicken
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .cat: "Cat"
+        case .bee: "Bee"
+        case .parrot: "Parrot"
+        case .dino: "Dinosaur"
+        case .dog: "Dog"
+        case .hamster: "Hamster"
+        case .chicken: "Chicken"
+        }
+    }
+
+    /// Flies wherever it likes, whatever the walking setting says.
+    var flies: Bool { self == .bee }
+
+    /// Perches where the cat would stand, but takes off and flies whenever
+    /// it goes somewhere.
+    var fliesWhenMoving: Bool { self == .parrot }
+
+    /// Only the cat comes in coats; the others have their own colours.
+    var hasCoats: Bool { self == .cat }
+
+    /// Only the cat has a collar drawn for it; the others wear hats.
+    var wearsCollars: Bool { self == .cat }
+
+    /// Where a frame's art is: the cat's under its name, the others' as
+    /// "<kind>.<frame>".
+    func artKey(_ frame: CatFrame) -> String { self == .cat ? frame.rawValue : "\(rawValue).\(frame.rawValue)" }
+}
+
 enum CatFrame: String, CaseIterable {
     case sit, blink, walk1, walk2, walk3, run1, run2, groom1, groom2, sleep1, sleep2, happy, eat1, eat2, crouch1, crouch2, held1, held2
 
@@ -124,7 +161,7 @@ struct StarDay: Codable, Equatable {
 }
 
 enum CatEffect: String {
-    case heart, zzz, fish, bowl, bowlEmpty, yarn1, yarn2, teaser
+    case heart, zzz, fish, note, ghost, bowl, bowlEmpty, yarn1, yarn2, teaser
 }
 
 @MainActor
@@ -137,18 +174,23 @@ final class CatSprites {
 
     private var cache: [String: CGImage] = [:]
 
-    /// The frame in its coat, wearing the hat and collar if it has them. The
-    /// image grows upward when a hat rises above the art; the feet stay on
-    /// the bottom row.
-    func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil) -> CGImage? {
-        let key = "\(coat.rawValue).\(frame.rawValue).\(hat?.rawValue ?? "-").\(collar?.rawValue ?? "-")"
+    /// The frame in its coat, wearing the hat and collar if it has them, and
+    /// headphones in place of the hat while a pair is connected. The image
+    /// grows upward when a hat rises above the art; the feet stay on the
+    /// bottom row.
+    func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil,
+               headphones: Bool = false, kind: PetKind = .cat) -> CGImage? {
+        let hat = headphones ? nil : hat
+        let art = kind.artKey(frame)
+        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat?.rawValue ?? "-").\(collar?.rawValue ?? "-").\(headphones)"
         if let hit = cache[key] { return hit }
-        guard let rows = CatArt.frames[frame.rawValue], let palette = CatArt.coats[coat.rawValue] else { return nil }
+        guard let rows = CatArt.frames[art],
+              let palette = CatArt.coats[kind.hasCoats ? coat.rawValue : kind.rawValue] else { return nil }
         let width = rows.first?.count ?? 0
 
         // Accessory pixels laid over the art, in art coordinates (y may be negative).
         var overlay: [(x: Int, y: Int, rgb: UInt32)] = []
-        if let anchor = CatArt.anchors[frame.rawValue] {
+        if let anchor = CatArt.anchors[art] {
             for (item, centre, row) in [(hat, anchor.0, anchor.1), (collar, anchor.2, anchor.3)] {
                 guard let item, row >= 0, let art = CatArt.accessories[item.rawValue] else { continue }
                 let left = Int((centre - Double(art[0].count) / 2).rounded())
@@ -162,6 +204,15 @@ final class CatSprites {
                 }
             }
         }
+        if headphones, let (view, left, top) = CatArt.headphonesAt[art], let phones = CatArt.headphones[view] {
+            for (y, line) in phones.enumerated() {
+                for (x, char) in line.enumerated() {
+                    if let rgb = CatArt.accessoryColors[char], left + x >= 0, left + x < width {
+                        overlay.append((left + x, top + y, rgb))
+                    }
+                }
+            }
+        }
         let pad = max(0, -(overlay.map(\.y).min() ?? 0))
         var grid: [[UInt32?]] = Array(repeating: Array(repeating: nil, count: width), count: pad)
         grid += rows.map { row in row.map { palette[$0] } }
@@ -171,6 +222,21 @@ final class CatSprites {
         let image = Self.render(grid)
         cache[key] = image
         return image
+    }
+
+    /// A character sitting, for a menu: crisp pixels at `points` per art pixel
+    /// on a Retina screen.
+    func menuImage(_ kind: PetKind, coat: CatCoat, points: CGFloat = 1) -> NSImage? {
+        guard let art = image(.sit, coat: coat, kind: kind) else { return nil }
+        let factor = 2 * Int(points)
+        let width = art.width * factor, height = art.height * factor
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .none
+        context.draw(art, in: CGRect(x: 0, y: 0, width: width, height: height))
+        guard let scaled = context.makeImage() else { return nil }
+        return NSImage(cgImage: scaled, size: NSSize(width: CGFloat(art.width) * points, height: CGFloat(art.height) * points))
     }
 
     func image(_ effect: CatEffect) -> CGImage? {

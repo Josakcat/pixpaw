@@ -326,6 +326,29 @@ EFFECTS = {
         "...d...",
         "...d...",
     ],
+    "note": [
+        "...nn.",
+        "...nnn",
+        "...n.n",
+        "...n..",
+        ".nnn..",
+        "nnnn..",
+        ".nn...",
+    ],
+    "ghost": [
+        "....ooo....",
+        "..ooGGGoo..",
+        ".oGGGGGGGo.",
+        ".oGGGGGGGo.",
+        "oGGoGGGoGGo",
+        "oGGoGGGoGGo",
+        "oGlGGGGGlGo",
+        "oGGGGoGGGGo",
+        "oGGGGGGGGGo",
+        "oGGGGGGGGGo",
+        "oGoGGoGGoGo",
+        ".o.oo.oo.o.",
+    ],
     "zzz": [
         "zzzz",
         "...z",
@@ -345,7 +368,7 @@ COATS = {
     "calico": dict(o="2a1d16", f="ffffff", s="e3892e", w="ffffff", p="f59aa8", e="2a1d16"),
 }
 EFFECT_COLORS = dict(r="ff5b7f", z="cfd8ff", o="1d1a24", c="8fc3ff", b="4f86e8", h="a9c8ff", k="b9733a",
-                     y="e8577a", l="ffa3bb", q="3fc4b8", d="8b5a2b")
+                     y="e8577a", l="ffa3bb", q="3fc4b8", d="8b5a2b", n="ffe08a", G="f4f4ff")
 
 
 def rotate_ccw(rows):
@@ -442,6 +465,52 @@ ACCESSORIES = {
     "redCollar": ["rrrrr"],
     "bellCollar": ["rrrrr", "..y.."],
 }
+# Headphones, worn while a pair is connected: a band over the head and a cup
+# each side, from the front; one cup and the band edge-on, from the side.
+HEADPHONES = {
+    "front": [
+        "..bbbbbbb..",
+        ".b.......b.",
+        "b.........b",
+        "b.........b",
+        "bb.......bb",
+        "bb.......bb",
+        "bb.......bb",
+    ],
+    "side": [
+        ".bbbbb.",
+        "b.....b",
+        "b.....b",
+        "bbb....",
+        "bbb....",
+        "bbb....",
+    ],
+    "bee": [
+        ".bbbb.",
+        "b....b",
+        "bb...b",
+        "bb....",
+        "bb....",
+    ],
+    "held": [
+        "...bbbbbbbbbb...",
+        "..b..........b..",
+        ".b............b.",
+        "b..............b",
+        "bb............bb",
+        "bb............bb",
+        "bb............bb",
+    ],
+}
+# Frame: (view, left column, top row); top may be above the art. Frames not
+# listed (asleep, eating) tuck the head away and show none.
+HEADPHONES_AT = {
+    **{f: ("front", 9, 2) for f in ("sit", "blink", "happy", "groom1", "groom2")},
+    **{f: ("side", 13, 2) for f in ("walk1", "walk2", "walk3", "run2")},
+    "run1": ("side", 13, 1), "crouch1": ("side", 13, 4), "crouch2": ("side", 13, 4),
+    "held1": ("held", 0, -1), "held2": ("held", 0, -1),
+}
+
 # Rows to raise an accessory above its anchor.
 ACCESSORY_LIFT = {"crown": 1, "bow": 1}
 ACCESSORY_COLORS = dict(r="e8404a", b="4f86e8", y="ffd34d", Y="ffd34d", w="ffffff", k="2a2533", p="9b6bff", t="ff8fb1", l="7fd1ff")
@@ -457,6 +526,444 @@ ANCHORS = {
     "crouch1": (16.5, 7, 15.5, 10), "crouch2": (16.5, 7, 15.5, 10),
     "eat1": (17, 11, None, None), "eat2": (17, 10, None, None),
     "sleep1": (13.5, 9, None, None), "sleep2": (13.5, 10, None, None),
+}
+
+
+# Other characters, picked instead of the cat. Same 20 x 16 canvas and frame
+# names, so the cat's moods drive them unchanged. Drawn from shapes rather
+# than typed, so outlines stay even.
+def _blank():
+    return [["." for _ in range(W)] for _ in range(H)]
+
+
+def inside_ellipse(x, y, cx, cy, rx, ry):
+    return ((x + 0.5 - cx) / rx) ** 2 + ((y + 0.5 - cy) / ry) ** 2 <= 1
+
+def blob(g, cx, cy, rx, ry, fill, outline="o", paint=None):
+    """Fill an ellipse; its edge pixels become outline."""
+    pts = {(x, y) for y in range(H) for x in range(W) if inside_ellipse(x, y, cx, cy, rx, ry)}
+    for (x, y) in pts:
+        edge = any((x + dx, y + dy) not in pts for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)))
+        g[y][x] = outline if edge else (paint(x, y) if paint else fill)
+    return pts
+
+def bee(wings="up", eyes="open", dy=0, legs=False, antenna_up=True):
+    """A round chibi bee: one body, the face on its right, wings on top."""
+    g = _blank()
+    cy = 10.2 + dy
+    def wing(cx, wy, rx, ry, shine):
+        blob(g, cx, wy, rx, ry, "w", paint=lambda x, y: "l" if (x, y) == shine else "w")
+    if wings == "up":
+        wing(7.6, 4.2 + dy, 2.7, 2.9, (6, int(3 + dy)))
+        wing(11.0, 3.6 + dy, 2.7, 3.0, (10, int(2 + dy)))
+    elif wings == "down":
+        wing(5.6, 6.4 + dy, 3.4, 2.0, (4, int(6 + dy)))
+        wing(9.6, 5.6 + dy, 3.0, 2.0, (9, int(5 + dy)))
+    elif wings == "folded":
+        wing(8.6, 6.6 + dy, 4.4, 1.6, (6, int(6 + dy)))
+    # Antennae: a stalk and a knob, leaning forward.
+    top = int(cy - 4.6)
+    stalks = [(13, 14, 15), (15, 16, 17)] if antenna_up else [(14, 15, 16), (16, 17, 18)]
+    for xs in stalks:
+        for k, x in enumerate(xs[:-1]):
+            y = top - k
+            if 0 <= y < H and g[y][x] == ".": g[y][x] = "o"
+        y = top - len(xs) + 1
+        if 0 <= y < H: g[y][xs[-1]] = "s"
+    # The body: stripes on the back half, the face clear.
+    blob(g, 10.0, cy, 7.4, 5.0, "f", paint=lambda x, y: "s" if x in (6, 7, 10) else "f")
+    # Stinger.
+    sy = int(cy + 0.5)
+    g[sy][1] = "o"; g[sy][2] = "o"
+    ey = int(cy - 1)
+    if eyes == "open":
+        g[ey][14] = "e"; g[ey + 1][14] = "e"
+    elif eyes == "closed":
+        g[ey + 1][13] = "e"; g[ey + 1][14] = "e"
+    elif eyes == "happy":
+        g[ey][14] = "e"; g[ey + 1][13] = "e"; g[ey + 1][15] = "e"
+    g[ey + 2][15] = "p"
+    if legs:
+        for x in (8, 11, 13):
+            y = int(cy + 5)
+            if y < H: g[y][x] = "o"
+    return ["".join(r) for r in g]
+
+BEE_FRAMES = {
+    "sit": bee("up"), "blink": bee("up", "closed"), "happy": bee("up", "happy"),
+    "walk1": bee("up"), "walk2": bee("down"), "walk3": bee("up"),
+    "run1": bee("down"), "run2": bee("up"),
+    "groom1": bee("up", legs=True), "groom2": bee("down", legs=True),
+    "sleep1": bee("folded", "closed", dy=1), "sleep2": bee("folded", "closed", dy=1, antenna_up=False),
+    "eat1": bee("down", dy=1), "eat2": bee("up", dy=1),
+    "crouch1": bee("down", dy=1), "crouch2": bee("up", dy=1),
+    "held1": bee("up", "happy", legs=True), "held2": bee("down", "happy", legs=True),
+}
+
+# The parrot: perched upright, and level in flight for every moving frame.
+def put(g, x, y, ch):
+    if 0 <= x < W and 0 <= y < H: g[y][x] = ch
+
+def line(g, x0, y0, x1, y1, ch):
+    n = max(abs(x1 - x0), abs(y1 - y0))
+    for i in range(n + 1):
+        put(g, round(x0 + (x1 - x0) * i / n), round(y0 + (y1 - y0) * i / n), ch)
+
+def beak(g, x, y):
+    """A hooked beak, its top-left at (x, y): solid orange, the hook dark."""
+    put(g, x, y, "b"); put(g, x + 1, y, "b"); put(g, x + 2, y, "o")
+    put(g, x, y + 1, "b"); put(g, x + 1, y + 1, "b"); put(g, x + 2, y + 1, "b")
+    put(g, x + 1, y + 2, "b"); put(g, x + 2, y + 2, "o")
+    put(g, x + 1, y + 3, "o")
+
+def perched(eyes="open", dy=0, wing="down", head_dy=0, beak_open=False):
+    g = _blank()
+    # Long tail, down and back to the left.
+    line(g, 9, 12 + dy, 4, 15, "o"); line(g, 10, 12 + dy, 5, 15, "t"); line(g, 10, 13 + dy, 6, 15, "o")
+    line(g, 9, 13 + dy, 5, 15, "t")
+    # Body: a plump upright egg, belly lighter on the right.
+    blob(g, 12.4, 9.8 + dy, 3.9, 4.4, "f", paint=lambda x, y: "w" if x >= 13 and y >= 9 + dy else "f")
+    # Wing folded on its side, or lifted.
+    if wing == "down":
+        blob(g, 10.9, 10.2 + dy, 2.0, 3.0, "s")
+    else:
+        blob(g, 9.2, 7.6 + dy, 3.0, 2.0, "s")
+    # Head with a red face.
+    hy = 4.4 + dy + head_dy
+    blob(g, 13.8, hy, 3.2, 3.0, "f", paint=lambda x, y: "p" if x >= 14 and y >= int(hy) - 1 else "f")
+    ey = int(hy) - 1
+    if eyes == "open": put(g, 14, ey, "e")
+    elif eyes == "closed": put(g, 14, ey, "o"); put(g, 15, ey, "o")
+    elif eyes == "happy": put(g, 14, ey, "e"); put(g, 15, ey - 1, "e")
+    beak(g, 16, int(hy) - 1)
+    if beak_open: put(g, 16, int(hy) + 1, ".")
+    # Feet on the floor.
+    fy = min(15, 14 + dy)
+    for x in (11, 12, 14, 15): put(g, x, fy, "g")
+    return ["".join(r) for r in g]
+
+def flying(wings="up", eyes="open"):
+    g = _blank()
+    # Tail streaming back.
+    line(g, 6, 9, 0, 11, "o"); line(g, 6, 10, 1, 12, "t"); line(g, 6, 11, 1, 13, "o")
+    # Body, level and plump.
+    blob(g, 10.0, 10.2, 5.2, 2.9, "f", paint=lambda x, y: "w" if y >= 11 and x >= 9 else "f")
+    # Head with the red face, and the beak.
+    blob(g, 15.2, 8.6, 2.9, 2.8, "f", paint=lambda x, y: "p" if x >= 15 and y >= 8 else "f")
+    if eyes == "open": put(g, 15, 7, "e")
+    else: put(g, 15, 7, "e"); put(g, 16, 6, "e")
+    beak(g, 17, 7)
+    # Wings: up, level, down.
+    if wings == "up":
+        blob(g, 9.0, 6.0, 4.0, 2.6, "s")
+    elif wings == "mid":
+        blob(g, 8.4, 8.6, 4.6, 1.6, "s")
+    else:
+        blob(g, 9.0, 13.4, 3.8, 2.2, "s")
+    return ["".join(r) for r in g]
+
+PARROT_FRAMES = {
+    "sit": perched(), "blink": perched("closed"), "happy": perched("happy", wing="up"),
+    "walk1": flying("up"), "walk2": flying("mid"), "walk3": flying("down"),
+    "run1": flying("up"), "run2": flying("down"),
+    "groom1": perched(head_dy=1), "groom2": perched(head_dy=1, wing="up"),
+    "sleep1": perched("closed", dy=1, head_dy=1), "sleep2": perched("closed", dy=1, head_dy=2),
+    "eat1": perched(dy=1, head_dy=3), "eat2": perched(dy=1, head_dy=2, beak_open=True),
+    "crouch1": perched(dy=1), "crouch2": perched(dy=1, wing="up"),
+    "held1": perched("happy", wing="up"), "held2": perched("happy"),
+}
+
+# The dinosaur: a little T-rex with spikes on its back, walking like the cat.
+def dino(legs="stand", eyes="open", mouth="closed", dy=0, head_dy=0, head_dx=0, tail_up=0):
+    g = _blank()
+    # Tail, tapering back to the left (drawn first, under the body).
+    # Tapers: a thick root, a thin tip curling up a little.
+    blob(g, 5.8, 10.9 + dy - tail_up * 0.5, 3.4, 2.5, "f")
+    blob(g, 2.8, 10.2 + dy - tail_up, 2.9, 1.7, "f")
+    put(g, 0, int(9.2 + dy - tail_up * 1.5), "o")
+    # Legs under the body: stout, two of them in view.
+    feet = {"stand": [(6, 0), (11, 0)], "a": [(5, 0), (12, -1)], "b": [(7, -1), (10, 0)],
+            "run": [(4, -1), (13, -1)], "tuck": []}[legs]
+    for x, lift in feet:
+        top = int(12 + dy)
+        for y in range(top, 16 + lift):
+            put(g, x, y, "o"); put(g, x + 1, y, "f"); put(g, x + 2, y, "f"); put(g, x + 3, y, "o")
+        for k in range(4): put(g, x + k, 15 + lift, "o")
+    # Body, belly lighter underneath.
+    blob(g, 9.6, 10.2 + dy, 4.8, 3.4, "f", paint=lambda x, y: "w" if y >= 11 + dy and x >= 8 else "f")
+    # Back spikes, standing on the outline of the back.
+    for x in (6, 8, 10):
+        top = next((y for y in range(H) if g[y][x] != "."), None)
+        if top is not None:
+            put(g, x, top, "p"); put(g, x, top - 1, "p")
+    # Neck and big round head, facing right.
+    blob(g, 13.0, 7.8 + dy + head_dy * 0.5, 2.2, 2.6, "f")
+    hx, hy = 15.6 + head_dx, 5.2 + dy + head_dy
+    blob(g, hx, hy, 3.8, 3.0, "f", paint=lambda x, y: "w" if y >= int(hy) + 1 and x >= int(hx) - 1 else "f")
+    put(g, int(hx) - 2, int(hy - 3.0), "p")  # a spike on the head
+    ex, ey = int(hx), int(hy) - 1
+    if eyes == "open": put(g, ex, ey, "e"); put(g, ex, ey - 1, "e")
+    elif eyes == "closed": put(g, ex, ey, "o"); put(g, ex + 1, ey, "o")
+    elif eyes == "happy": put(g, ex, ey - 1, "e"); put(g, ex - 1, ey, "e"); put(g, ex + 1, ey, "e")
+    # Mouth along the snout; a nostril.
+    my = int(hy) + 1
+    if mouth == "open":
+        for x in range(ex + 1, ex + 4): put(g, x, my, "o"); put(g, x, my + 1, "p")
+    else:
+        for x in range(ex + 1, ex + 4): put(g, x, my, "o")
+    put(g, int(hx + 3), ey, "o")
+    # A tiny arm.
+    put(g, 13, int(10 + dy), "o"); put(g, 14, int(10 + dy), "f"); put(g, 14, int(11 + dy), "o")
+    return ["".join(r) for r in g]
+
+DINO_POSES = {
+    "sit": dict(), "blink": dict(eyes="closed"), "happy": dict(eyes="happy", mouth="open"),
+    "walk1": dict(legs="a"), "walk2": dict(legs="stand", dy=-0.4), "walk3": dict(legs="b"),
+    "run1": dict(legs="run", dy=0.4), "run2": dict(legs="stand", dy=-0.4, tail_up=1),
+    "groom1": dict(head_dy=1, eyes="closed"), "groom2": dict(head_dy=1, eyes="closed", tail_up=1),
+    "sleep1": dict(legs="tuck", eyes="closed", dy=2.2, head_dy=2.6), "sleep2": dict(legs="tuck", eyes="closed", dy=2.4, head_dy=2.6),
+    "eat1": dict(head_dy=4, head_dx=0.6), "eat2": dict(head_dy=4, head_dx=0.6, mouth="open"),
+    "crouch1": dict(legs="stand", dy=1), "crouch2": dict(legs="stand", dy=1, tail_up=1),
+    "held1": dict(legs="stand", eyes="happy", mouth="open"), "held2": dict(legs="b", eyes="happy", mouth="open", tail_up=1),
+}
+DINO_FRAMES = {name: dino(**pose) for name, pose in DINO_POSES.items()}
+
+def _dino_head(frame):
+    """How far down a frame carries the head, in whole rows."""
+    pose = DINO_POSES[frame]
+    return round(pose.get("dy", 0) + pose.get("head_dy", 0))
+
+# The dog: a beagle puppy, body, head and muzzle drawn as one shape so no
+# outline cuts across it, with a floppy ear and a wagging tail.
+def shape(g, parts, paint):
+    """Fill a union of ellipses (cx, cy, rx, ry); only its outer edge is outline."""
+    pts = set()
+    for cx, cy, rx, ry in parts:
+        pts |= {(x, y) for y in range(H) for x in range(W) if inside_ellipse(x, y, cx, cy, rx, ry)}
+    for (x, y) in pts:
+        edge = any((x + dx, y + dy) not in pts for dx, dy in ((1,0),(-1,0),(0,1),(0,-1)))
+        g[y][x] = "o" if edge else paint(x, y)
+    return pts
+
+def patch(g, cx, cy, rx, ry, fill):
+    """Paint an ellipse over what is there; outline only where it meets empty space."""
+    pts = {(x, y) for y in range(H) for x in range(W) if inside_ellipse(x, y, cx, cy, rx, ry)}
+    def empty(x, y):
+        return not (0 <= x < W and 0 <= y < H) or ((x, y) not in pts and g[y][x] == ".")
+    for (x, y) in pts:
+        g[y][x] = "o" if any(empty(x + dx, y + dy) for dx, dy in ((1,0),(-1,0),(0,1),(0,-1))) else fill
+
+def dog(legs="stand", eyes="open", mouth="closed", dy=0, head_dy=0, head_dx=0, tail="up", ear=0):
+    g = _blank()
+    # Tail first, under the body: up and curling forward, or wagging over.
+    ty = int(9 + dy)
+    tip = {"up": [(3, -1), (2, -2), (2, -3), (3, -4)], "wag": [(3, -1), (2, -2), (1, -3), (1, -4)],
+           "down": [(3, 0), (2, 1), (1, 2)], "tuck": [(3, 0), (2, 1)]}[tail]
+    for x, up in tip:
+        put(g, x, ty + up, "o"); put(g, x + 1, ty + up, "f"); put(g, x + 2, ty + up, "o")
+    # Legs: back pair on the left, front pair on the right, short and stout, white socks.
+    feet = {"stand": [(5, 0), (11, 0)], "a": [(4, 0), (12, -1)], "b": [(6, -1), (10, 0)],
+            "run": [(3, -1), (13, -1)], "tuck": []}[legs]
+    for x, lift in feet:
+        for y in range(int(11 + dy), 15 + lift):
+            put(g, x, y, "o"); put(g, x + 1, y, "f"); put(g, x + 2, y, "f"); put(g, x + 3, y, "o")
+        put(g, x + 1, 14 + lift, "w"); put(g, x + 2, 14 + lift, "w")
+        for k in range(4): put(g, x + k, 15 + lift, "o")
+    # Body, neck, head and muzzle; pale muzzle, chest and belly, a patch on the back.
+    hx, hy = 14.2 + head_dx, 5.6 + dy + head_dy
+    def paint(x, y):
+        if x >= hx + 1.4 and y >= hy: return "w"
+        if y > hy + 2 and x >= 11: return "w"
+        if y >= 11.5 + dy and 6 <= x <= 12: return "w"
+        if y <= 8.2 + dy and 6 <= x <= 9: return "s"
+        return "f"
+    shape(g, [(8.4, 10.0 + dy, 4.8, 3.0), (12.2, 8.4 + dy + head_dy * 0.5, 2.0, 2.4),
+              (hx, hy, 3.5, 3.2), (hx + 3.0, hy + 1.3, 2.2, 1.6)], paint)
+    put(g, int(hx + 4.6), int(hy + 0.4), "e")  # nose
+    patch(g, hx - 1.6, hy + 0.6 + ear * 0.4, 1.25, 2.6 - ear * 0.5, "s")  # the ear, blown back when running
+    ex, ey = int(hx) + 1, int(hy) - 1
+    if eyes == "open": put(g, ex, ey, "e"); put(g, ex, ey + 1, "e")
+    elif eyes == "closed": put(g, ex, ey + 1, "o"); put(g, ex + 1, ey + 1, "o")
+    elif eyes == "happy": put(g, ex, ey, "e"); put(g, ex - 1, ey + 1, "e"); put(g, ex + 1, ey + 1, "e")
+    if mouth == "open":  # tongue out
+        my = int(hy + 2.4)
+        put(g, int(hx + 2), my, "o"); put(g, int(hx + 3), my, "o")
+        put(g, int(hx + 2), my + 1, "p"); put(g, int(hx + 3), my + 1, "p")
+    return ["".join(r) for r in g]
+
+DOG_POSES = {
+    "sit": dict(), "blink": dict(eyes="closed"), "happy": dict(eyes="happy", mouth="open", tail="wag"),
+    "walk1": dict(legs="a"), "walk2": dict(legs="stand", dy=-0.4, tail="wag"), "walk3": dict(legs="b"),
+    "run1": dict(legs="run", dy=0.4, ear=1, mouth="open"), "run2": dict(legs="stand", dy=-0.4, tail="wag", mouth="open"),
+    "groom1": dict(head_dy=1, eyes="closed"), "groom2": dict(head_dy=1, eyes="closed", tail="wag"),
+    "sleep1": dict(legs="tuck", eyes="closed", dy=2.4, head_dy=2.2, tail="tuck"),
+    "sleep2": dict(legs="tuck", eyes="closed", dy=2.6, head_dy=2.2, tail="tuck"),
+    "eat1": dict(head_dy=4, head_dx=0.4), "eat2": dict(head_dy=4, head_dx=0.4, mouth="open", tail="wag"),
+    "crouch1": dict(dy=1, tail="down"), "crouch2": dict(dy=1, tail="wag"),
+    "held1": dict(eyes="happy", mouth="open", tail="wag"), "held2": dict(legs="b", eyes="happy", mouth="open"),
+}
+DOG_FRAMES = {name: dog(**pose) for name, pose in DOG_POSES.items()}
+
+def _dog_head(frame):
+    pose = DOG_POSES[frame]
+    return round(pose.get("dy", 0) + pose.get("head_dy", 0))
+
+# The hamster: a round golden ball with a big head, pink ears and feet,
+# white cheeks that stuff out while it eats.
+def hamster(feet="stand", eyes="open", dy=0, head_dy=0, cheeks=False, paws=False, curl=False, ears_back=False):
+    g = _blank()
+    # One round shape: body and a big head; golden on top, white below.
+    hx, hy = 13.0, 8.6 + dy + head_dy
+    body = (8.8, 11.0 + dy, 5.6, 3.6)
+    if curl:
+        hx, hy = 12.4, 10.2 + dy
+        body = (9.2, 11.8 + dy, 6.0, 3.0)
+    parts = [body, (hx, hy, 3.9, 3.6)]
+    if cheeks: parts.append((hx + 0.6, hy + 2.3, 3.2, 2.3))  # stuffed cheeks
+    def paint(x, y):
+        if y >= hy + 0.4 and x >= hx - 1.2: return "w"   # cheek, muzzle and chin
+        if y >= body[1] + 1.4: return "w"                # belly
+        if y <= body[1] - 2.2 and 5 <= x <= 8: return "s"  # a darker saddle on the back
+        return "f"
+    shape(g, parts, paint)
+    # Round ears on top of the head, pink inside.
+    top = next(y for y in range(H) if g[y][int(hx)] != ".")
+    for x in ((int(hx) - 2, int(hx) + 1) if not ears_back else (int(hx) - 3, int(hx))):
+        put(g, x, top - 1, "o"); put(g, x + 1, top - 1, "o")
+        put(g, x - 1, top, "o"); put(g, x, top, "p"); put(g, x + 1, top, "p"); put(g, x + 2, top, "o")
+    # Little pink feet peeking out underneath.
+    spots = {"stand": [(5, 0), (11, 0)], "a": [(4, 0), (12, -1)], "b": [(6, -1), (10, 0)],
+             "run": [(3, -1), (13, -1)], "tuck": []}[feet]
+    for x, lift in spots:
+        base = int(body[1] + body[3]) + lift
+        put(g, x, base, "o"); put(g, x + 1, base, "p"); put(g, x + 2, base, "p"); put(g, x + 3, base, "o")
+        put(g, x + 1, base + 1, "o"); put(g, x + 2, base + 1, "o")
+    # Eye, nose, blush.
+    ex, ey = int(hx + 1), int(hy - 1)
+    if eyes == "open": put(g, ex, ey, "e"); put(g, ex, ey + 1, "e")
+    elif eyes == "closed": put(g, ex, ey + 1, "o"); put(g, ex + 1, ey + 1, "o")
+    elif eyes == "happy": put(g, ex, ey, "e"); put(g, ex - 1, ey + 1, "e"); put(g, ex + 1, ey + 1, "e")
+    ny = int(hy + 0.6)
+    nx = max(x for x in range(W) if g[ny][x] != ".")
+    put(g, nx, ny, "p")
+    put(g, ex - 1, ey + 2, "p")
+    if paws:  # tiny paws held up under the chin
+        put(g, int(hx + 1), int(hy + 2.6), "p"); put(g, int(hx + 2), int(hy + 2.6), "p")
+    return ["".join(r) for r in g]
+
+HAMSTER_POSES = {
+    "sit": dict(), "blink": dict(eyes="closed"), "happy": dict(eyes="happy", paws=True),
+    "walk1": dict(feet="a"), "walk2": dict(feet="stand", dy=-0.4), "walk3": dict(feet="b"),
+    "run1": dict(feet="run", dy=0.3, ears_back=True), "run2": dict(feet="stand", dy=-0.5, ears_back=True),
+    "groom1": dict(eyes="closed", paws=True), "groom2": dict(eyes="closed", paws=True, head_dy=0.6),
+    "sleep1": dict(feet="tuck", eyes="closed", curl=True, dy=0.6), "sleep2": dict(feet="tuck", eyes="closed", curl=True, dy=0.9),
+    "eat1": dict(cheeks=True, head_dy=0.6), "eat2": dict(cheeks=True, eyes="happy", head_dy=0.6, paws=True),
+    "crouch1": dict(dy=0.8, ears_back=True), "crouch2": dict(dy=0.8, ears_back=True, feet="b"),
+    "held1": dict(eyes="happy", paws=True), "held2": dict(eyes="happy", paws=True, feet="b"),
+}
+HAMSTER_FRAMES = {name: hamster(**pose) for name, pose in HAMSTER_POSES.items()}
+
+def _hamster_top(frame):
+    """The row the ears start on, from the art itself."""
+    return next(y for y, row in enumerate(HAMSTER_FRAMES[frame]) if row.strip("."))
+
+# The chicken: a plump white hen with a red comb and wattle, an orange beak
+# and legs. Pecks at the ground to eat, flaps when it is happy.
+def chicken(legs="stand", eyes="open", beak_open=False, dy=0, head_dy=0, head_dx=0, wing="down", sitting=False):
+    g = _blank()
+    # Thin orange legs and three-toed feet.
+    spots = {"stand": [(8, 0), (11, 0)], "a": [(7, 0), (12, -1)], "b": [(9, -1), (10, 0)],
+             "run": [(6, -1), (13, -1)], "tuck": []}[legs]
+    for x, lift in spots:
+        for y in range(int(12 + dy), 15 + lift):
+            put(g, x, y, "b")
+        put(g, x - 1, 15 + lift, "b"); put(g, x, 15 + lift, "b"); put(g, x + 1, 15 + lift, "b")
+    # Body, tail feathers, neck and head as one plump white shape.
+    by = 9.6 + dy + (1.6 if sitting else 0)
+    hx, hy = 13.8 + head_dx, 5.2 + dy + head_dy
+    parts = [(9.0, by, 5.2, 3.6), (4.4, by - 2.6, 1.7, 2.4), (12.4, (by + hy) / 2 + 0.4, 1.9, 2.6), (hx, hy, 2.6, 2.6)]
+    shape(g, parts, lambda x, y: "f")
+    # Wing: tucked on the side, or raised and flapping; outlined only along
+    # its lower edge, so it reads as a fold of feathers.
+    def wing_at(cx, cy, rx, ry):
+        pts = {(x, y) for y in range(H) for x in range(W) if inside_ellipse(x, y, cx, cy, rx, ry)}
+        for (x, y) in pts:
+            if g[y][x] == ".":
+                g[y][x] = "o"
+            elif g[y][x] != "o":
+                g[y][x] = "o" if (x, y + 1) not in pts else "s"
+    if wing == "down": wing_at(8.2, by - 0.4, 3.2, 1.6)
+    else: wing_at(7.4, by - 2.4, 3.2, 1.9)
+    # Comb on top.
+    top = next(y for y in range(H) if g[y][int(hx)] != ".")
+    put(g, int(hx) - 1, top - 1, "p"); put(g, int(hx), top - 2, "p"); put(g, int(hx), top - 1, "p"); put(g, int(hx) + 1, top - 1, "p")
+    # Beak against the face, the wattle hanging under it.
+    by0 = int(hy)
+    bx = max(x for x in range(W) if g[by0][x] != ".") + 1
+    put(g, bx, by0 - 1, "b"); put(g, bx + 1, by0 - 1, "b"); put(g, bx, by0, "b")
+    if beak_open:
+        put(g, bx, by0, "."); put(g, bx, by0 + 1, "b"); put(g, bx + 1, by0 + 1, "b")
+    put(g, bx - 1, by0 + 1, "p"); put(g, bx - 1, by0 + 2, "p")
+    ex, ey = bx - 3, by0 - 1
+    if eyes == "open": put(g, ex, ey, "e"); put(g, ex, ey - 1, "e")
+    elif eyes == "closed": put(g, ex, ey, "o"); put(g, ex - 1, ey, "o")
+    elif eyes == "happy": put(g, ex, ey - 1, "e"); put(g, ex - 1, ey, "e"); put(g, ex + 1, ey, "e")
+    return ["".join(r) for r in g]
+
+CHICKEN_POSES = {
+    "sit": dict(), "blink": dict(eyes="closed"), "happy": dict(eyes="happy", beak_open=True, wing="up"),
+    "walk1": dict(legs="a"), "walk2": dict(legs="stand", dy=-0.4, head_dx=0.6), "walk3": dict(legs="b"),
+    "run1": dict(legs="run", wing="up", head_dx=0.6), "run2": dict(legs="stand", dy=-0.5, wing="up", beak_open=True),
+    "groom1": dict(eyes="closed", head_dy=1, head_dx=-1, wing="up"), "groom2": dict(eyes="closed", head_dy=1.4, head_dx=-1.4),
+    "sleep1": dict(legs="tuck", eyes="closed", sitting=True, head_dy=2.4, head_dx=-0.6), "sleep2": dict(legs="tuck", eyes="closed", sitting=True, head_dy=2.6, head_dx=-0.6),
+    "eat1": dict(head_dy=4.8, head_dx=1.4), "eat2": dict(head_dy=5.6, head_dx=1.6, beak_open=True),
+    "crouch1": dict(dy=1), "crouch2": dict(dy=1, wing="up"),
+    "held1": dict(eyes="happy", wing="up", beak_open=True), "held2": dict(eyes="happy", legs="b", beak_open=True),
+}
+CHICKEN_FRAMES = {name: chicken(**pose) for name, pose in CHICKEN_POSES.items()}
+
+def _chicken_comb(frame):
+    """Where the comb is: its middle column and its top row, from the art."""
+    rows = CHICKEN_FRAMES[frame]
+    y = next(y for y, row in enumerate(rows) if "p" in row)
+    return rows[y].index("p"), y
+
+KINDS = {"bee": BEE_FRAMES, "parrot": PARROT_FRAMES, "dino": DINO_FRAMES, "dog": DOG_FRAMES,
+         "hamster": HAMSTER_FRAMES, "chicken": CHICKEN_FRAMES}
+# Palette per character, in the coat letters plus l for a wing's shine.
+KIND_COLORS = {
+    "bee": dict(o="2a1d16", f="ffcf3a", s="2f2733", w="d9f0ff", l="ffffff", e="1d140c", p="ff8fa3"),
+    "parrot": dict(o="1f2a1a", f="5dbb3c", s="2e7d32", w="b9e45f", p="e8432c", e="111111", b="f5a623", g="8a8f99", t="2f9e8f"),
+    "dino": dict(o="1d2b1a", f="6cc24a", s="4a9a33", w="d8f0a0", p="ffa53c", e="111111"),
+    "dog": dict(o="2b1a10", f="e0a35a", s="8a5a2b", w="fff3dd", p="ff7f9a", e="1a1110"),
+    "hamster": dict(o="3a2414", f="f2a65a", s="d4823a", w="fff6ea", p="ff9fb2", e="1a1110"),
+    "chicken": dict(o="3a2a20", f="fbf7f0", s="ddd5c8", w="fff1c4", p="e8432c", e="111111", b="f5a623"),
+}
+# Hat anchors (no collar: a bee has no neck) and headphones, per frame.
+def _bee_dy(frame):
+    return 1 if frame.startswith(("sleep", "eat", "crouch")) else 0
+# Where the parrot's head is: how far each perched frame lowers it (body
+# drop + head drop); flying frames carry it level at row 6.
+_PARROT_HEAD_DROP = {"sleep1": 2, "sleep2": 3, "eat1": 4, "eat2": 3, "groom1": 1, "groom2": 1, "crouch1": 1, "crouch2": 1}
+def _parrot_flying(frame):
+    return frame.startswith(("walk", "run"))
+KIND_ANCHORS = {
+    "bee": {f: (14.5, 6 + _bee_dy(f), None, None) for f in BEE_FRAMES},
+    "parrot": {f: (15.5, 6, None, None) if _parrot_flying(f) else (13.5, 2 + _PARROT_HEAD_DROP.get(f, 0), None, None)
+               for f in PARROT_FRAMES},
+    "dino": {f: (15.5, 2 + _dino_head(f), None, None) for f in DINO_FRAMES},
+    "dog": {f: (14.5, 2 + _dog_head(f), None, None) for f in DOG_FRAMES},
+    "hamster": {f: (13.0, _hamster_top(f), None, None) for f in HAMSTER_FRAMES},
+    "chicken": {f: (_chicken_comb(f)[0] + 0.5, _chicken_comb(f)[1] + 1, None, None) for f in CHICKEN_FRAMES},
+}
+KIND_HEADPHONES_AT = {
+    "bee": {f: ("bee", 11, 4 + _bee_dy(f)) for f in BEE_FRAMES if not f.startswith("sleep")},
+    "parrot": {f: ("side", 12, 5) if _parrot_flying(f) else ("side", 11, _PARROT_HEAD_DROP.get(f, 0))
+               for f in PARROT_FRAMES if not f.startswith("sleep")},
+    "dino": {f: ("side", 12, 1 + _dino_head(f)) for f in DINO_FRAMES if not f.startswith("sleep")},
+    "dog": {f: ("side", 11, 1 + _dog_head(f)) for f in DOG_FRAMES if not f.startswith("sleep")},
+    "hamster": {f: ("side", 10, _hamster_top(f)) for f in HAMSTER_FRAMES if not f.startswith("sleep")},
+    "chicken": {f: ("side", _chicken_comb(f)[0] - 3, _chicken_comb(f)[1]) for f in CHICKEN_FRAMES if not f.startswith("sleep")},
 }
 
 
@@ -511,6 +1018,12 @@ def swift():
         out.append(f'        "{name}": [')
         out += [f'            "{r}",' for r in rows]
         out.append("        ],")
+    # Other characters' frames, as "<kind>.<frame>".
+    for kind, frames in KINDS.items():
+        for name, rows in frames.items():
+            out.append(f'        "{kind}.{name}": [')
+            out += [f'            "{r}",' for r in rows]
+            out.append("        ],")
     out += ["    ]", "", "    static let effects: [String: [String]] = ["]
     for name, rows in EFFECTS.items():
         out.append(f'        "{name}": [')
@@ -527,13 +1040,28 @@ def swift():
     out += [f'        "{k}": 0x{v},' for k, v in ACCESSORY_COLORS.items()]
     out += ["    ]", "", "    static let accessoryLift: [String: Int] = ["]
     out += [f'        "{k}": {v},' for k, v in ACCESSORY_LIFT.items()]
+    out += ["    ]", "", "    static let headphones: [String: [String]] = ["]
+    for name, rows in HEADPHONES.items():
+        out.append(f'        "{name}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
+    out += ["    ]", "", "    /// Frame: headphones view, left column, top row.",
+            "    static let headphonesAt: [String: (String, Int, Int)] = ["]
+    for name, (view, left, top) in HEADPHONES_AT.items():
+        out.append(f'        "{name}": ("{view}", {left}, {top}),')
+    for kind, spots in KIND_HEADPHONES_AT.items():
+        for name, (view, left, top) in spots.items():
+            out.append(f'        "{kind}.{name}": ("{view}", {left}, {top}),')
     out += ["    ]", "", "    /// Frame: hat centre x, hat bottom row, collar centre x, collar row (-1 = none).",
             "    static let anchors: [String: (Double, Int, Double, Int)] = ["]
     for name, (hx, hy, cx, cy) in ANCHORS.items():
         out.append(f'        "{name}": ({hx}, {hy}, {cx if cx is not None else -1}, {cy if cy is not None else -1}),')
+    for kind, anchors in KIND_ANCHORS.items():
+        for name, (hx, hy, cx, cy) in anchors.items():
+            out.append(f'        "{kind}.{name}": ({hx}, {hy}, {cx if cx is not None else -1}, {cy if cy is not None else -1}),')
     out += ["    ]", "", "    /// Palette per coat: outline, fur, stripe, white, pink, eye.",
             "    static let coats: [String: [Character: UInt32]] = ["]
-    for coat, pal in COATS.items():
+    for coat, pal in list(COATS.items()) + list(KIND_COLORS.items()):
         items = ", ".join(f'"{k}": 0x{v}' for k, v in pal.items())
         out.append(f'        "{coat}": [{items}],')
     out += ["    ]", "}", ""]
@@ -542,11 +1070,23 @@ def swift():
     print("wrote", dest)
 
 
-def compose(frame, hat=None, collar=None, pad=8):
-    """The frame as rows of (char, palette) with room above for a hat."""
-    rows = [list("." * len(FRAMES[frame][0])) for _ in range(pad)] + [list(r) for r in FRAMES[frame]]
+def compose(frame, hat=None, collar=None, pad=8, headphones=False, kind=None):
+    """The frame as rows of (char, palette) with room above for a hat.
+    Headphones take the hat's place."""
+    art = KINDS[kind][frame] if kind else FRAMES[frame]
+    anchors = KIND_ANCHORS[kind] if kind else ANCHORS
+    spots = KIND_HEADPHONES_AT[kind] if kind else HEADPHONES_AT
+    rows = [list("." * len(art[0])) for _ in range(pad)] + [list(r) for r in art]
     over = [[None] * len(rows[0]) for _ in rows]
-    hx, hy, cx, cy = ANCHORS[frame]
+    if headphones:
+        hat = None
+    if headphones and frame in spots:
+        view, left, top = spots[frame]
+        for y, row in enumerate(HEADPHONES[view]):
+            for x, ch in enumerate(row):
+                if ch != "." and 0 <= top + pad + y < len(rows) and 0 <= left + x < len(rows[0]):
+                    over[top + pad + y][left + x] = ch
+    hx, hy, cx, cy = anchors[frame]
     for name, ax, ay in [(hat, hx, hy), (collar, cx, cy)]:
         if not name or ax is None:
             continue
@@ -562,14 +1102,15 @@ def compose(frame, hat=None, collar=None, pad=8):
 
 def preview_accessories(path, scale=6):
     frames = ["sit", "walk1", "run1", "crouch1", "eat1", "sleep1", "held1", "held2"]
-    looks = [("partyHat", "redCollar"), ("witchHat", "bellCollar"), ("santaHat", None), ("crown", "redCollar"), ("bow", "bellCollar")]
+    looks = [("partyHat", "redCollar"), ("witchHat", "bellCollar"), ("santaHat", None), ("crown", "redCollar"), ("bow", "bellCollar"),
+             (None, None, True), ("crown", "bellCollar", True)]
     pal = COATS["orange"]
     cell = 24
     width, height = cell * scale * len(frames), cell * scale * len(looks)
     px = bytearray([40, 44, 52, 255] * width * height)
-    for ly, (hat, collar) in enumerate(looks):
+    for ly, (hat, collar, *phones) in enumerate(looks):
         for fx, frame in enumerate(frames):
-            rows, over = compose(frame, hat, collar)
+            rows, over = compose(frame, hat, collar, headphones=bool(phones))
             for y, row in enumerate(rows):
                 for x, ch in enumerate(row):
                     o = over[y][x]
