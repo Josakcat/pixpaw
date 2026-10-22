@@ -14,7 +14,29 @@ each 20 x 20 pixels, 360 x 20 in all. Open it in any pixel editor
 - The cat is painted in the orange coat. The other coats reuse its
   colours by role, so one cat sheet makes all six.
 
-Then:
+### Your own pet, no build needed
+
+Pixpaw can also bring a sheet in while it runs: Settings → Your own pets →
+Choose PNG. There it is less strict:
+
+- Only the first cell, `sit`, is needed. Leave any other cell empty (or
+  leave it off the end) and Pixpaw makes it from the poses you drew: it
+  hops to walk and run, and sinks down a pixel or two to sleep, eat and crouch.
+- Any colours. A pixel more than half transparent is empty.
+- Scaled up evenly is fine (a 200 × 200 export of one cell, say).
+- A pet can use the top 4 rows of its cells too; it just stands taller.
+- Hats go on the top of its head by themselves; it wears no collar or headphones.
+- Its ⋯ menu takes sounds of its own: a call, a happy sound and an eating
+  sound (short WAV, MP3, M4A or AIFF files). The rest are the voice of the
+  character it acts like. Don't worry about how loud you record: Pixpaw
+  evens every sound out to the level of its own voices (about -18 dBFS RMS,
+  peaks under -1 dBFS) and cuts the silence off either end.
+
+Start from a template (Settings → Your own pets → Start from a template
+saves any character's sheet) and save your pet's sheet from its ⋯ menu to
+share it.
+
+To add a character to Pixpaw itself, then:
 
 ```
 python3 Tools/sprites.py preview out.png   # every cat frame in every coat

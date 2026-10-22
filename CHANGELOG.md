@@ -1,5 +1,13 @@
 # Changelog
 
+## [1.4.0] - 2026-10-22
+
+Draw your own pet, bring it in, and give it sounds of its own.
+
+### Added
+
+- Your own pets. Draw a pet in any pixel editor (Aseprite, Piskel…) and bring it in as a PNG under Settings → Your own pets. One 20 × 20 sitting pose is enough: Pixpaw makes it hop to walk, sink down to sleep and crouch before a pounce. Draw more poses in cells beside it, in the order of the template, and they're used instead. Any colours, and a picture scaled up evenly is fine. Choose which character it acts like for its sounds, words, ways of moving and home; it wears hats and works at the laptop like the others. Give it sounds of its own too (⋯ → a call when it talks, a happy sound when you pet it and an eating sound, up to 3 seconds each, 1.5 for eating; WAV, MP3, M4A or AIFF). Pixpaw evens each one out to the loudness of its own voices (about -18 dBFS, peaks below -1 dBFS), cuts the silence off either end and makes it mono, so a quiet recording and a loud one sound as loud as a meow. Any it hasn't got are the voice of the character it acts like. Keep up to five, rename them, give one a new picture, or save its sheet to share. Start from a template: any character's sheet, saved as a PNG to draw over.
+
 ## [1.3.0] - 2026-10-22
 
 Four new friends (a giraffe, a hippo, a rabbit and a shark), a home of its own at 500 stars, a little laptop to work at with you while you focus, stretching together, your own reminders, and a welcome back when you return.

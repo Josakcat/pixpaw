@@ -7,7 +7,8 @@
 //  buzz, the parrot's squawk, the dinosaur's rawr, the dog's bark, the
 //  hamster's squeak, the chicken's bawk, the giraffe's hum, the hippo's
 //  honk, the rabbit's thump and the shark's chomp. Made from sine waves and noise in
-//  code, so there are no sound files to license or ship.
+//  code, so there are no sound files to license or ship. Pets you draw
+//  yourself can bring sounds of their own (OwnPets.swift).
 //
 
 import AppKit
@@ -57,12 +58,36 @@ final class CatSounds {
         sound.play()
     }
 
+    /// Drops the voices of the pets you drew, after their sounds changed.
+    func forgetOwnPets() {
+        voices = voices.filter { !$0.key.isOwn }
+    }
+
+    /// Plays one of a pet's own sounds, to try it.
+    func preview(_ url: URL) {
+        NSSound(contentsOf: url, byReference: false).map(start)
+    }
+
     private func prepare(_ kind: PetKind) -> Voice {
+        guard kind.isOwn else { return builtIn(kind) }
+        if let made = voices[kind] { return made }
+        // A pet you drew speaks in its own sounds, and in the voice of the
+        // character it acts like for the ones it hasn't got.
+        var voice = builtIn(kind.actsLike)
+        let own = { (sound: OwnSound) in OwnPets.sound(sound, of: kind).flatMap { NSSound(contentsOf: $0, byReference: false) } }
+        if let call = own(.call) { voice.calls = [call] }
+        if let happy = own(.happy) { voice.content = happy }
+        if let eating = own(.eating) { voice.chew = eating }
+        voices[kind] = voice
+        return voice
+    }
+
+    private func builtIn(_ kind: PetKind) -> Voice {
         if let made = voices[kind] { return made }
         let sound = { (samples: [Float]) in NSSound(data: Self.wav(samples)) }
         let voice: Voice
         switch kind {
-        case .cat:
+        case .cat, .own1, .own2, .own3, .own4, .own5:
             voice = Voice(calls: [Self.meow(pitch: 1), Self.meow(pitch: 1.18)].compactMap(sound),
                           content: sound(Self.purrSamples()), chew: sound(Self.chewSamples()))
         case .bee:

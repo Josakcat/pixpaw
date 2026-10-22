@@ -1,9 +1,9 @@
 {
   "id": "pixpaw",
   "name": "Pixpaw",
-  "version": "1.3.0",
+  "version": "1.4.0",
   "summary": "A pixel cat that lives on your desktop and talks to you",
-  "description": "A little pixel cat lives on your desktop. It wanders the whole screen, just the bottom edge, or the bottom edge and the tops of your open windows, riding along when you move one. It grooms, purrs when you click it, stalks and pounces on files you drag, gets hungry and eats from a bowl you put down. It also tells you things in a speech bubble: notifications from your other apps, calendar events about to start, song changes (and it dances to whatever is playing, YouTube included), your coding agents finishing or needing you, volume and brightness changes, headphones connecting, the battery and finished downloads. It meows, purrs and crunches, reminds you to take breaks, earns happiness points that unlock pixel hats and collars, and can bring a friend along. Hold on it for a menu to feed it, have it nap, or play with a yarn ball, a feather teaser or a laser pointer it never quite catches. Drag it anywhere, pick from six coats on the shelf, and turn on Follow the cursor in its settings to have it chase your pointer. Not a cat person? Pick a bee, a parrot, a dinosaur, a dog, a hamster, a chicken, a giraffe, a hippo, a rabbit or a shark that swims through the air instead, each with its own sounds. On festival days the screen joins in: ghosts on Halloween, fireworks at New Year, snow at Christmas, water drops for Songkran and hearts on Valentine's Day. Stroke it, toss it a treat, take its photo, stretch together, or start a focus session and it works along with you at its own little laptop. Reach 500 stars and it gets a home of its own, after where the animal really lives, to nap in. It poses for your screenshots, welcomes you back, says good morning with your first event of the day, celebrates your birthday with confetti, and after midnight it puts on a nightcap and tells you it's late. The shelf widget counts your days together.",
+  "description": "A little pixel cat lives on your desktop. It wanders the whole screen, just the bottom edge, or the bottom edge and the tops of your open windows, riding along when you move one. It grooms, purrs when you click it, stalks and pounces on files you drag, gets hungry and eats from a bowl you put down. It also tells you things in a speech bubble: notifications from your other apps, calendar events about to start, song changes (and it dances to whatever is playing, YouTube included), your coding agents finishing or needing you, volume and brightness changes, headphones connecting, the battery and finished downloads. It meows, purrs and crunches, reminds you to take breaks, earns happiness points that unlock pixel hats and collars, and can bring a friend along. Hold on it for a menu to feed it, have it nap, or play with a yarn ball, a feather teaser or a laser pointer it never quite catches. Drag it anywhere, pick from six coats on the shelf, and turn on Follow the cursor in its settings to have it chase your pointer. Not a cat person? Pick a bee, a parrot, a dinosaur, a dog, a hamster, a chicken, a giraffe, a hippo, a rabbit or a shark that swims through the air instead, each with its own sounds. On festival days the screen joins in: ghosts on Halloween, fireworks at New Year, snow at Christmas, water drops for Songkran and hearts on Valentine's Day. Stroke it, toss it a treat, take its photo, stretch together, or start a focus session and it works along with you at its own little laptop. Reach 500 stars and it gets a home of its own, after where the animal really lives, to nap in. Or draw your own pet in any pixel editor (one pose is enough), bring it in, give it sounds of its own and pick which character it acts like. It poses for your screenshots, welcomes you back, says good morning with your first event of the day, celebrates your birthday with confetti, and after midnight it puts on a nightcap and tells you it's late. The shelf widget counts your days together.",
   "category": "System",
   "kit": {
     "abi": 1,
@@ -39,7 +39,8 @@
     "Screenshot-5.png",
     "Screenshot-6.png",
     "Screenshot-7.png",
-    "Screenshot-8.png"
+    "Screenshot-8.png",
+    "Screenshot-9.png"
   ],
   "keywords": [
     "cat",
@@ -51,6 +52,6 @@
     "hamster",
     "rabbit",
     "shark",
-    "festival"
+    "custom pet"
   ]
 }

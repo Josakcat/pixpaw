@@ -271,6 +271,68 @@ canvas(Int(W), Int(H), "Screenshot-8.png") { ctx in
     }
 }
 
+// 9. Your own pets: drawn in a pixel editor, brought in, with sounds of its own.
+// The frog is an example drawn here, not one of Pixpaw's characters.
+let frog = [
+    "....................",
+    "....................",
+    "...........ooo.ooo..",
+    "..........oWWWoWWWo.",
+    "..........oWeWoWeWo.",
+    ".........oggggggggo.",
+    "........oggggggggggo",
+    "........ogpggggggpgo",
+    "........ogggoooooggo",
+    ".......ogggwwwwwwggo",
+    "......oggdgwwwwwwgo.",
+    ".....oggdggwwwwwwgo.",
+    "....ogggdggwwwwwgo..",
+    "...oggggggggwwwggo..",
+    "...ogoggogggoooggo..",
+    "...oo.ooooooo.ooo...",
+]
+let frogColours: [Character: UInt32] = ["o": 0x1D3B1F, "g": 0x6CC04A, "d": 0x4A9A33, "w": 0xE8F5C8,
+                                        "W": 0xFFFFFF, "e": 0x111111, "p": 0xF59AA8]
+/// The pose a row lower, the way Pixpaw makes a sleeping frame from a sitting one.
+func sunk(_ rows: [String]) -> [String] {
+    var rows = rows
+    rows.remove(at: 9)
+    return [String(repeating: ".", count: 20)] + rows
+}
+
+canvas(Int(W), Int(H), "Screenshot-9.png") { ctx in
+    desktop(ctx, W, H, title: "Draw your own", subtitle: "Bring in a pet from any pixel editor and give it sounds of its own.")
+    // The editor: one 20 x 20 cell, the frog at its bottom.
+    let cellPx: CGFloat = 24, editor = CGRect(x: 90, y: 240, width: 20 * cellPx + 60, height: 20 * cellPx + 110)
+    ctx.setFillColor(rgb(0x1E1E24, 0.92).cgColor)
+    ctx.addPath(CGPath(roundedRect: editor, cornerWidth: 22, cornerHeight: 22, transform: nil)); ctx.fillPath()
+    label("frog.png · 20 × 20", at: CGPoint(x: editor.minX + 30, y: editor.minY + 22), size: 24, weight: .semibold, color: rgb(0xFFFFFF, 0.8))
+    let grid = CGPoint(x: editor.minX + 30, y: editor.minY + 75)
+    for y in 0..<20 { for x in 0..<20 {
+        ctx.setFillColor(rgb((x + y) % 2 == 0 ? 0x3A3A44 : 0x33333C).cgColor)
+        ctx.fill(CGRect(x: grid.x + CGFloat(x) * cellPx, y: grid.y + CGFloat(y) * cellPx, width: cellPx, height: cellPx))
+    } }
+    sprite(ctx, frog, palette: frogColours, at: CGPoint(x: grid.x, y: grid.y + 4 * cellPx), px: cellPx)
+    label("One pose is enough", at: CGPoint(x: editor.midX, y: editor.maxY + 18), size: 26, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    label("→", at: CGPoint(x: 690, y: 470), size: 90, weight: .bold, color: rgb(0xFFFFFF, 0.9))
+
+    // The poses Pixpaw makes from it.
+    let small: CGFloat = 6
+    for (i, item) in [("Sits", frog, CGFloat(0)), ("Hops", frog, CGFloat(-2)), ("Sleeps", sunk(sunk(frog)), CGFloat(0))].enumerated() {
+        let x = 850 + CGFloat(i) * 220
+        sprite(ctx, item.1, palette: frogColours, at: CGPoint(x: x, y: 260 + item.2 * small), px: small)
+        label(item.0, at: CGPoint(x: x + 10 * small, y: 260 + 16 * small + 14), size: 24, weight: .semibold, centered: true)
+    }
+
+    // Out on the desktop, in a voice of its own.
+    let big: CGFloat = 14, feet = CGPoint(x: 840, y: 880)
+    sprite(ctx, frog, palette: frogColours, at: CGPoint(x: feet.x, y: feet.y - 16 * big), px: big)
+    bubble(ctx, "Ribbit!", symbol: "speaker.wave.2.fill", tip: CGPoint(x: feet.x + 14.5 * big, y: feet.y - 14.5 * big), scale: 2.4)
+    label("Sounds of its own", at: CGPoint(x: feet.x + 330, y: feet.y - 150), size: 26, weight: .semibold, color: rgb(0xFFE08A))
+    label("Acts like any character", at: CGPoint(x: feet.x + 330, y: feet.y - 105), size: 26, weight: .semibold, color: rgb(0xFFE08A))
+}
+
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in
     ctx.setFillColor(rgb(0x4446F4).cgColor)

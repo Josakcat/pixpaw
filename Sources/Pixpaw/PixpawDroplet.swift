@@ -8,6 +8,7 @@ import Combine
 import DroppyKit
 import IOKit.pwr_mgt
 import SwiftUI
+import UniformTypeIdentifiers
 
 /// The class Droppy's loader instantiates, named in the bundle's
 /// `NSPrincipalClass`. Keep it empty: it runs before the host is ready.
@@ -79,6 +80,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         /// The house's left edge on the floor; below zero until it has one.
         static let homeX = "homeX"
         static let focusMinutes = "focusMinutes"
+        static let ownPets = "ownPets"
     }
 
     private var host: DropletHost?
@@ -118,6 +120,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var focusStartedAt: Date?
     @Published private(set) var focusEndsAt: Date?
     @Published private(set) var focusMinutes = 25
+    /// The pets you drew, and what went wrong bringing the last one in.
+    @Published private(set) var ownPets: [OwnPet] = []
+    @Published private(set) var ownPetProblem: String?
     private var focusTimer: Timer?
     private var health: ReminderCoach?
 
@@ -164,8 +169,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     public func activate(host: DropletHost) throws {
         self.host = host
         let prefs = host.preferences
+        ownPets = prefs.value(forKey: Key.ownPets, as: [OwnPet].self) ?? []
+        OwnPets.soundFolder = host.environment.containerDirectory.appendingPathComponent("Own pet sounds", isDirectory: true)
+        OwnPets.use(ownPets)
+        let kind = PetKind(rawValue: prefs.value(forKey: Key.kind, default: PetKind.cat.rawValue)) ?? .cat
         let cat = CatController(
-            kind: PetKind(rawValue: prefs.value(forKey: Key.kind, default: PetKind.cat.rawValue)) ?? .cat,
+            kind: kind.isOwn && OwnPets.pet(kind) == nil ? .cat : kind,
             coat: CatCoat(rawValue: prefs.value(forKey: Key.coat, default: CatCoat.orange.rawValue)) ?? .orange,
             chasesPointer: prefs.value(forKey: Key.chases, default: false),
             roaming: CatRoaming(rawValue: prefs.value(forKey: Key.roaming, default: CatRoaming.floor.rawValue)) ?? .floor,
@@ -659,6 +668,121 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     static let maxOwnReminders = 5
+
+    // MARK: Pets you drew
+
+    /// Asks for a sprite sheet and brings it in as a new pet, or as a new
+    /// picture for one you have. The new pet comes out at once.
+    func importOwnPet(replacing slot: Int? = nil) {
+        guard slot != nil || OwnPets.freeSlot != nil else { return }
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.png]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose your pet's sprite sheet: one 20 × 20 cell for each pose, sitting first."
+        NSApp.activate()
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { self?.addOwnPet(from: url, replacing: slot) }
+        }
+    }
+
+    private func addOwnPet(from url: URL, replacing slot: Int?) {
+        do {
+            guard let data = try? Data(contentsOf: url) else { throw OwnPetProblem.unreadable }
+            let sheet = try OwnPets.sheet(from: data)
+            ownPetProblem = nil
+            if let slot, let index = ownPets.firstIndex(where: { $0.slot == slot }) {
+                ownPets[index].sheet = sheet
+                saveOwnPets()
+            } else if let slot = OwnPets.freeSlot {
+                let name = url.deletingPathExtension().lastPathComponent.trimmingCharacters(in: .whitespaces)
+                let pet = OwnPet(slot: slot, name: String((name.isEmpty ? "My pet" : name).prefix(30)), actsLike: .cat, sheet: sheet)
+                ownPets.append(pet)
+                saveOwnPets()
+                setKind(pet.kind)
+            }
+        } catch {
+            ownPetProblem = error.localizedDescription
+        }
+    }
+
+    func renameOwnPet(_ slot: Int, to name: String) {
+        guard let index = ownPets.firstIndex(where: { $0.slot == slot }) else { return }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        ownPets[index].name = name.isEmpty ? "My pet" : String(name.prefix(30))
+        saveOwnPets()
+    }
+
+    func setOwnPet(_ slot: Int, actsLike kind: PetKind) {
+        guard !kind.isOwn, let index = ownPets.firstIndex(where: { $0.slot == slot }) else { return }
+        ownPets[index].actsLike = kind
+        saveOwnPets()
+    }
+
+    /// Lets the pet go; if it was out, the cat comes back in its place.
+    func removeOwnPet(_ slot: Int) {
+        guard let pet = ownPets.first(where: { $0.slot == slot }) else { return }
+        ownPets.removeAll { $0.slot == slot }
+        if cat?.kind == pet.kind { setKind(.cat) }
+        saveOwnPets()
+    }
+
+    /// Asks for a short sound and gives it to the pet, in place of the
+    /// voice of the character it acts like.
+    func chooseOwnSound(_ sound: OwnSound, for slot: Int) {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.audio]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a sound \(sound.when), up to \(sound.longest.formatted()) seconds long."
+        NSApp.activate()
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { self?.setOwnSound(sound, for: slot, from: url) }
+        }
+    }
+
+    private func setOwnSound(_ sound: OwnSound, for slot: Int, from url: URL) {
+        guard let index = ownPets.firstIndex(where: { $0.slot == slot }) else { return }
+        do {
+            let name = try OwnPets.keep(url, as: sound, for: slot)
+            ownPetProblem = nil
+            ownPets[index].sounds = (ownPets[index].sounds ?? [:]).merging([sound.rawValue: name]) { $1 }
+            saveOwnPets()
+            playOwnSound(sound, of: slot)
+        } catch {
+            ownPetProblem = error.localizedDescription
+        }
+    }
+
+    /// Back to the voice of the character it acts like.
+    func removeOwnSound(_ sound: OwnSound, from slot: Int) {
+        guard let index = ownPets.firstIndex(where: { $0.slot == slot }) else { return }
+        ownPets[index].sounds?[sound.rawValue] = nil
+        saveOwnPets()
+    }
+
+    /// Plays it, even with sounds off: you asked to hear it.
+    func playOwnSound(_ sound: OwnSound, of slot: Int) {
+        guard let pet = ownPets.first(where: { $0.slot == slot }), let url = OwnPets.sound(sound, of: pet.kind) else { return }
+        CatSounds.shared.preview(url)
+    }
+
+    /// A character's sprite sheet, to draw over or to share.
+    func saveSheet(of kind: PetKind) {
+        guard let cat else { return }
+        let data = kind.isOwn ? OwnPets.pet(kind)?.sheet : OwnPets.template(kind, coat: cat.coat)
+        guard let data else { return }
+        PetPhoto.save(data, named: "\(kind.title).png")
+    }
+
+    private func saveOwnPets() {
+        OwnPets.use(ownPets)
+        OwnPets.tidySounds()
+        host?.preferences.setValue(ownPets, forKey: Key.ownPets)
+        cat?.ownPetChanged()
+        friend?.ownPetChanged()
+        objectWillChange.send()
+    }
 
     private func saveReminders() {
         host?.preferences.setValue(reminders, forKey: Key.reminders)
@@ -1433,6 +1557,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Home", keywords: ["home", "house", "kennel", "hive", "nap", "sleep", "500", "unlock", "challenge"]),
             SettingsSearchEntry(title: "Break reminders", keywords: ["cat", "health", "stretch", "water", "eyes", "break", "reminder", "custom", "pill", "exercise"]),
             SettingsSearchEntry(title: "Sounds", keywords: ["cat", "meow", "purr", "sound", "mute"]),
+            SettingsSearchEntry(title: "Your own pets", keywords: ["draw", "design", "custom", "own", "sprite", "pixel", "png", "aseprite", "piskel", "template", "import"]),
             SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal"]),
             SettingsSearchEntry(title: "Where the cat walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
             SettingsSearchEntry(title: "Follow the cursor", keywords: ["cat", "chase", "pointer", "mouse"]),
@@ -1463,6 +1588,9 @@ private struct PixpawSettings: View {
     private let recheck = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     @State private var newReminder = ""
     @State private var newReminderMinutes = 60
+    @State private var templateKind: PetKind = .cat
+    @State private var renamingSlot: Int?
+    @State private var newName = ""
 
     /// A reminder: how often and whether it is on; one of yours can go.
     private func reminderRow(_ reminder: Reminder) -> some View {
@@ -1486,6 +1614,76 @@ private struct PixpawSettings: View {
             }
         }
         .disabled(!droplet.healthOn)
+    }
+
+    private func ownPetRow(_ pet: OwnPet) -> some View {
+        DropletControlRow(title: renamingSlot == pet.slot ? "Name" : pet.kind.title) {
+            HStack(spacing: 8) {
+                if renamingSlot == pet.slot {
+                    TextField("Name", text: $newName, prompt: Text("Your pet"))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 150)
+                        .onSubmit { finishRenaming(pet) }
+                    Button("Done") { finishRenaming(pet) }
+                } else {
+                    if let face = CatSprites.shared.menuImage(pet.kind, coat: cat.coat, points: 2) {
+                        Image(nsImage: face)
+                            .interpolation(.none)
+                            .accessibilityHidden(true)
+                    }
+                    Picker("Acts like", selection: Binding(get: { pet.actsLike }, set: { droplet.setOwnPet(pet.slot, actsLike: $0) })) {
+                        ForEach(PetKind.builtIn.sorted { $0.title < $1.title }) { kind in
+                            Text("Acts like a \(kind.title.lowercased())").tag(kind)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                    .fixedSize()
+                    .help("Its sounds, words, ways of moving and home")
+                    Menu {
+                        Button("Let it out") { droplet.setKind(pet.kind) }
+                        Button("Rename…") { newName = pet.name; renamingSlot = pet.slot }
+                        Button("New picture…") { droplet.importOwnPet(replacing: pet.slot) }
+                        Button("Save picture…") { droplet.saveSheet(of: pet.kind) }
+                        Divider()
+                        ForEach(OwnSound.allCases) { sound in
+                            ownSoundMenu(sound, of: pet)
+                        }
+                        Divider()
+                        Button("Remove") { droplet.removeOwnPet(pet.slot) }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                    .menuStyle(.borderlessButton)
+                    .menuIndicator(.hidden)
+                    .tint(.secondary)
+                    .fixedSize()
+                    .accessibilityLabel("More for \(pet.kind.title)")
+                }
+            }
+        }
+    }
+
+    /// A sound of its own: choose one, hear it, or go back to the voice of
+    /// the character it acts like.
+    private func ownSoundMenu(_ sound: OwnSound, of pet: OwnPet) -> some View {
+        let has = pet.sounds?[sound.rawValue] != nil
+        return Menu {
+            Button("Choose a sound…") { droplet.chooseOwnSound(sound, for: pet.slot) }
+            if has {
+                Button("Play") { droplet.playOwnSound(sound, of: pet.slot) }
+                Button("Use the \(pet.actsLike.title.lowercased())'s") { droplet.removeOwnSound(sound, from: pet.slot) }
+            }
+        } label: {
+            Label("\(sound.title) sound, \(sound.when): \(has ? "its own" : "the \(pet.actsLike.title.lowercased())'s")",
+                  systemImage: has ? "speaker.wave.2.fill" : "speaker.wave.2")
+        }
+    }
+
+    private func finishRenaming(_ pet: OwnPet) {
+        droplet.renameOwnPet(pet.slot, to: newName)
+        renamingSlot = nil
     }
 
     private func minutesPicker(_ minutes: Binding<Int>) -> some View {
@@ -1548,6 +1746,48 @@ private struct PixpawSettings: View {
                         subtitle: "A meow when the cat talks, a purr when you pet it, crunching while it eats. Silent while quiet.",
                         isOn: Binding(get: { droplet.soundsOn }, set: { droplet.setSounds($0) })
                     )
+                }
+            }
+
+            DropletSettingsSection {
+                VStack(alignment: .leading, spacing: 2) {
+                    settingsSectionHeader("Your own pets")
+                    Text("Draw a pet in any pixel editor (Aseprite, Piskel…) and bring it in as a PNG. One 20 × 20 sitting pose is enough: Pixpaw makes it hop to walk and sink down to sleep. Add more poses in cells beside it, in the template's order, whenever you like.")
+                        .font(.body)
+                        .foregroundStyle(.secondary)
+                }
+            } content: {
+                DropletSettingsCard {
+                    ForEach(droplet.ownPets) { pet in
+                        ownPetRow(pet)
+                    }
+                    if droplet.ownPets.count < OwnPets.limit {
+                        DropletControlRow(title: "Add a pet you drew", icon: "plus.circle",
+                                          infoTip: "Up to \(OwnPets.limit). It comes out as soon as it's in; pick another character to swap back.") {
+                            Button("Choose PNG…") { droplet.importOwnPet() }
+                        }
+                    }
+                    DropletControlRow(title: "Start from a template", icon: "square.grid.3x3",
+                                      infoTip: "Saves a character's sheet: 18 cells of 20 × 20, sitting first. Draw over it, or keep only the first cell.") {
+                        HStack(spacing: 6) {
+                            Picker("Template", selection: $templateKind) {
+                                ForEach(PetKind.builtIn.sorted { $0.title < $1.title }) { kind in
+                                    Text(kind.title).tag(kind)
+                                }
+                            }
+                            .pickerStyle(.menu)
+                            .labelsHidden()
+                            .fixedSize()
+                            Button("Save…") { droplet.saveSheet(of: templateKind) }
+                        }
+                    }
+                    if let problem = droplet.ownPetProblem {
+                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                    }
                 }
             }
 

@@ -34,13 +34,16 @@ enum CatCoat: String, CaseIterable, Identifiable, Codable {
 
 /// Who lives on the desktop: the cat, or a character picked instead of it.
 /// Every character has the cat's frames, so the same moods drive them all.
+/// `own1` to `own5` are the pets you drew yourself (see OwnPets.swift).
 enum PetKind: String, CaseIterable, Identifiable, Codable {
     case cat, bee, parrot, dino, dog, hamster, chicken, giraffe, hippo, rabbit, shark
+    case own1, own2, own3, own4, own5
 
     var id: String { rawValue }
 
-    var title: String {
+    @MainActor var title: String {
         switch self {
+        case .own1, .own2, .own3, .own4, .own5: OwnPets.pet(self)?.name.nilIfEmpty ?? "Your pet"
         case .cat: "Cat"
         case .bee: "Bee"
         case .parrot: "Parrot"
@@ -55,16 +58,27 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
         }
     }
 
-    /// Every character by name, A to Z, for the pickers.
-    static var alphabetical: [PetKind] { allCases.sorted { $0.title < $1.title } }
+    /// The characters Pixpaw comes with.
+    static let builtIn = allCases.filter { !$0.isOwn }
+
+    /// Every character by name, A to Z, for the pickers, then the pets you drew.
+    @MainActor static var alphabetical: [PetKind] {
+        builtIn.sorted { $0.title < $1.title } + OwnPets.pets.map(\.kind)
+    }
+
+    var isOwn: Bool { rawValue.hasPrefix("own") }
+
+    /// Whose sounds, words, ways of moving and home it has: its own, or for a
+    /// pet you drew, the character you said it acts like.
+    @MainActor var actsLike: PetKind { isOwn ? OwnPets.pet(self)?.actsLike ?? .cat : self }
 
     /// Flies (or, for the shark, swims through the air) wherever it likes,
     /// whatever the walking setting says.
-    var flies: Bool { self == .bee || self == .shark }
+    @MainActor var flies: Bool { actsLike == .bee || actsLike == .shark }
 
     /// Perches where the cat would stand, but takes off and flies whenever
     /// it goes somewhere.
-    var fliesWhenMoving: Bool { self == .parrot }
+    @MainActor var fliesWhenMoving: Bool { actsLike == .parrot }
 
     /// Only the cat comes in coats; the others have their own colours.
     var hasCoats: Bool { self == .cat }
@@ -196,17 +210,20 @@ final class CatSprites {
     /// `laptop` puts one in front of it, under its head, while it works.
     func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil,
                headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0, laptop: Bool = false) -> CGImage? {
-        let hat = headphones ? nil : costume ?? hat?.rawValue
         let art = kind.artKey(frame)
+        // No headphones are drawn for a pet you drew, so it keeps its hat on.
+        let hat = headphones && !kind.isOwn ? nil : costume ?? hat?.rawValue
         let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(headphones).\(swing).\(laptop)"
         if let hit = cache[key] { return hit }
-        guard let rows = CatArt.frames[art].map({ swing == 0 ? $0 : Self.swing($0, by: swing) }),
-              let palette = CatArt.coats[kind.hasCoats ? coat.rawValue : kind.rawValue] else { return nil }
+        guard let rows = (CatArt.frames[art] ?? OwnPets.frames[art]).map({ swing == 0 ? $0 : Self.swing($0, by: swing) }),
+              let palette = kind.isOwn ? OwnPets.colours[kind] : CatArt.coats[kind.hasCoats ? coat.rawValue : kind.rawValue] else { return nil }
+        // A pet you drew wears its hat on top of its head, and no collar.
+        let anchor = CatArt.anchors[art] ?? OwnPets.hatSpots[art].map { ($0.0, $0.1, -1.0, -1) }
         let width = rows.first?.count ?? 0
 
         // Accessory pixels laid over the art, in art coordinates (y may be negative).
         var overlay: [(x: Int, y: Int, rgb: UInt32)] = []
-        if let anchor = CatArt.anchors[art] {
+        if let anchor {
             for (item, isHat, centre, row) in [(hat, true, anchor.0, anchor.1), (collar?.rawValue, false, anchor.2, anchor.3)] {
                 guard let item, row >= 0, let art = CatArt.accessories[item] else { continue }
                 let left = Int((centre - Double(art[0].count) / 2).rounded())
@@ -229,7 +246,7 @@ final class CatSprites {
                 }
             }
         }
-        if laptop, let computer = CatArt.accessories["laptop"], let anchor = CatArt.anchors[art] {
+        if laptop, let computer = CatArt.accessories["laptop"], let anchor {
             // On the floor, centred under the head.
             let left = Int((anchor.0 - Double(computer[0].count) / 2).rounded())
             let top = rows.count - computer.count
@@ -295,12 +312,17 @@ final class CatSprites {
     /// The character's home; with someone asleep inside, the doorway is
     /// left open so the pet behind shows through it.
     func home(_ kind: PetKind, occupied: Bool) -> CGImage? {
-        let key = "home.\(kind.rawValue).\(occupied)"
+        let key = "home.\(kind.actsLike.rawValue).\(occupied)"
         if let hit = cache[key] { return hit }
-        guard let rows = CatArt.homes[kind.rawValue] else { return nil }
+        guard let rows = CatArt.homes[kind.actsLike.rawValue] else { return nil }
         let image = Self.render(rows.map { row in row.map { occupied && $0 == "d" ? nil : CatArt.homeColors[$0] } })
         cache[key] = image
         return image
+    }
+
+    /// Drops every picture of a pet you drew, after its sheet changed.
+    func forgetOwnPets() {
+        cache = cache.filter { !$0.key.hasPrefix("own") }
     }
 
     private static func render(_ rows: [String], palette: [Character: UInt32]) -> CGImage? {
@@ -330,6 +352,10 @@ final class CatSprites {
             provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent
         )
     }
+}
+
+extension String {
+    var nilIfEmpty: String? { trimmingCharacters(in: .whitespaces).isEmpty ? nil : self }
 }
 
 extension NSColor {

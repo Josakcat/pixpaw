@@ -51,8 +51,9 @@ enum CatWords {
     /// After a leap at the laser dot, which it never catches.
     static let missedLaser = ["Huh?", "Where did it go?", "So close!", "I almost had it!"]
     static let sleepy = "Sleepy. Off to the notch…"
-    static func awake(_ kind: PetKind) -> String {
-        switch kind {
+    @MainActor static func awake(_ kind: PetKind) -> String {
+        switch kind.actsLike {
+        case .own1, .own2, .own3, .own4, .own5: "Hi! I'm up."
         case .cat: "Meow! I'm up."
         case .bee: "Bzzz! I'm up."
         case .parrot: "Squawk! I'm up."
@@ -66,8 +67,9 @@ enum CatWords {
         case .shark: "Chomp! I'm up."
         }
     }
-    static func purr(_ kind: PetKind) -> String {
-        switch kind {
+    @MainActor static func purr(_ kind: PetKind) -> String {
+        switch kind.actsLike {
+        case .own1, .own2, .own3, .own4, .own5: "Happy…"
         case .cat: "Purrrr…"
         case .bee: "Bzzzz…"
         case .parrot: "Pretty bird!"

@@ -449,6 +449,7 @@ final class CatController: ObservableObject {
 
     /// What the widget says the cat is up to.
     var statusTitle: String {
+        let kind = kind.actsLike
         if focusing, mood.isIdle { return "Keeping you company" }
         if bowlIsTreat, mood == .goingToBowl { return "Off for a treat" }
         if bowlIsTreat, mood == .eating { return "Munching a treat" }
@@ -533,6 +534,7 @@ final class CatController: ObservableObject {
     }
     /// The same, short enough for the wing beside the notch.
     var statusShortTitle: String {
+        let kind = kind.actsLike
         if focusing, mood.isIdle { return "Focus" }
         if isHungry, mood.isIdle { return "Hungry" }
         if musicPlaying, mood == .sitting { return "Vibing" }
@@ -856,12 +858,12 @@ final class CatController: ObservableObject {
 
     /// Where it sleeps: in the doorway, on the branch, in the water.
     private var homeDoor: CGPoint? {
-        guard let frame = homePanel?.frame, let spot = CatArt.homeSpots[kind.rawValue] else { return nil }
+        guard let frame = homePanel?.frame, let spot = CatArt.homeSpots[kind.actsLike.rawValue] else { return nil }
         return CGPoint(x: frame.minX + CGFloat(spot.0) * CatSprites.scale, y: frame.minY + CGFloat(spot.1) * CatSprites.scale)
     }
 
     /// The home is drawn over it while it sleeps: a box, bars, water.
-    private var homeCovers: Bool { CatArt.homeSpots[kind.rawValue]?.2 ?? true }
+    private var homeCovers: Bool { CatArt.homeSpots[kind.actsLike.rawValue]?.2 ?? true }
 
     private var homeSize: CGSize {
         CGSize(width: CGFloat(CatArt.homeWidth) * CatSprites.scale, height: CGFloat(CatArt.homeHeight) * CatSprites.scale)
@@ -1275,6 +1277,9 @@ final class CatController: ObservableObject {
 
     /// Where it may go: the walking setting, or anywhere for a flier.
     private var moves: CatRoaming { kind.flies ? .anywhere : roaming }
+
+    /// A pet you drew got a new picture, or now acts like someone else.
+    func ownPetChanged() { kindChanged() }
 
     /// A new character: drawn at once; one that cannot fly drops to the
     /// floor or a window, one that can stays where it is.
