@@ -23,26 +23,28 @@ your desktop and talks to you. A Droplet for
 - Strikes a pose when you take a screenshot.
 - Stroke it with the pointer to pet it; shake it about and it lands dizzy.
 - Treats, a little gift for you once a day, and a photo of your pet to keep or share.
-- Focus sessions: it keeps you company quietly, with a countdown over its head and beside the notch.
+- Focus sessions: it works along with you at its own little laptop, with a countdown over its head and beside the notch.
 - Festival hats, and Loy Krathong and Chinese New Year among the festivals.
 - The shelf widget counts your days together, pets, meals and games.
 - Six coats, and an optional friend cat that sits with it and plays tag.
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
-  between perches), a dinosaur, a dog, a hamster or a chicken, each with its
-  own sounds. Switch from the portrait on the shelf or in Settings.
+  between perches), a shark (swims through the air), a dinosaur, a dog, a
+  hamster, a chicken, a giraffe, a hippo or a rabbit, each with its own sounds. Switch from the portrait on the shelf or in Settings.
 - Wears headphones while yours are connected.
 
 **Talks in a speech bubble**
-- Mac notifications, and calendar events five minutes ahead.
+- Mac notifications, and calendar events two minutes ahead (it comes over to tell you).
 - Song changes in Apple Music and Spotify (and it stops to dance on every new song). It dances to anything else playing too: YouTube in your browser, a video, another player.
 - Claude Code and Codex finishing or needing you, with the plan usage left.
-- Volume and brightness, headphones connecting, the battery, downloads.
+- Volume and brightness, headphones connecting, the battery (and it gets sleepy below 20%), downloads.
+- Welcome back: it runs over to say hello when you come back after a while away.
 - Goes quiet during calls and screen sharing, and optionally while mirroring.
 
 **Little extras**
 - Happiness stars (petting, meals, play, catches; up to 30 a day) unlock
   pixel hats and collars.
-- Break reminders every 30 to 90 minutes: stretch, drink water, rest your eyes.
+- Break reminders, each on its own timer: it stretches along with you, reminds you
+  to drink water and rest your eyes, and anything else you add.
 - A hunger meter and a food bowl.
 - Synthesised sounds (meow, purr, buzz, bark, squeak and more); no sound files.
 - A shelf widget with its mood, stars, coats and quick controls.
@@ -53,7 +55,8 @@ your desktop and talks to you. A Droplet for
 | | |
 |---|---|
 | ![Playtime](Assets/Screenshot-2.png) | ![Wardrobe](Assets/Screenshot-3.png) |
-| ![Alerts](Assets/Screenshot-4.png) | |
+| ![Alerts](Assets/Screenshot-4.png) | ![Eleven friends](Assets/Screenshot-5.png) |
+| ![A home of its own](Assets/Screenshot-6.png) | ![Working together](Assets/Screenshot-7.png) |
 
 Everything runs on your Mac. Notification text is shown and forgotten;
 nothing is stored or sent anywhere.
@@ -98,7 +101,7 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
 `come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|stop`, `wear?hat=…&collar=…`,
 `quiet?on=1|0`, `say?text=…`, `agent?name=…&state=…&text=…&usage=…`,
 `roam?mode=anywhere|floor|windows`,
-`character?name=cat|bee|parrot|dino|dog|hamster|chicken`.
+`character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
 
 ## Art
 

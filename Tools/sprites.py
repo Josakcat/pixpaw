@@ -166,6 +166,12 @@ EFFECTS = {
         "xRRRx",
         ".xxx.",
     ],
+    # Code floating up from the laptop while it works with you.
+    "code": [
+        ".c...c.c.",
+        "c...c...c",
+        ".c.c...c.",
+    ],
     "note": [
         "...nn.",
         "...nnn",
@@ -283,6 +289,16 @@ ACCESSORIES = {
     ],
     # Worn by itself late at night (not one to unlock): a floppy cap whose
     # tip droops over to one side, with a pompom.
+    # A laptop in front of it while you focus together: the lid seen from
+    # behind, a glowing logo, the base on the floor. Not worn; drawn over
+    # the frame's front, under its head.
+    "laptop": [
+        ".kkkkkkk.",
+        ".kgGGGgk.",
+        ".kGGwGGk.",
+        ".kgGGGgk.",
+        "kkkkkkkkk",
+    ],
     "nightcap": [
         "..bbbb...",
         ".bbbbbbb.",
@@ -354,7 +370,8 @@ HEADPHONES_AT = {
 
 # Rows to raise an accessory above its anchor.
 ACCESSORY_LIFT = {"crown": 1, "bow": 1}
-ACCESSORY_COLORS = dict(r="e8404a", b="4f86e8", y="ffd34d", Y="ffd34d", w="ffffff", k="2a2533", p="9b6bff", t="ff8fb1", l="7fd1ff")
+ACCESSORY_COLORS = dict(r="e8404a", b="4f86e8", y="ffd34d", Y="ffd34d", w="ffffff", k="2a2533", p="9b6bff", t="ff8fb1", l="7fd1ff",
+                        g="c9cdd6", G="9196a3")
 
 # (hat centre x, hat bottom row, collar centre x, collar row) per frame;
 # None where a collar would be hidden (eating, asleep).
@@ -385,6 +402,10 @@ KIND_COLORS = {
     "dog": dict(o="2b1a10", f="e0a35a", s="8a5a2b", w="fff3dd", p="ff7f9a", e="1a1110"),
     "hamster": dict(o="3a2414", f="f2a65a", s="d4823a", w="fff6ea", p="ff9fb2", e="1a1110"),
     "chicken": dict(o="3a2a20", f="fbf7f0", s="ddd5c8", w="fff1c4", p="e8432c", e="111111", b="f5a623"),
+    "giraffe": dict(o="3a2412", f="f2c14e", s="b5652a", w="fbe7b5", p="e59a6a", e="1d140c"),
+    "hippo": dict(o="2b2436", f="a196bd", s="857aa3", w="d6cde6", p="f4a3b6", e="1a1520"),
+    "rabbit": dict(o="3b2a24", f="c79a6b", s="a8784b", w="f7efe4", p="f3a3b3", e="1d1412"),
+    "shark": dict(o="1c2b3b", f="7a96b4", s="5b7795", w="eef3f8", p="f08ca3", e="0f1418"),
 }
 
 
@@ -466,6 +487,49 @@ KINDS = {kind: load_sheet(kind, KIND_COLORS[kind]) for kind in KIND_COLORS}
 BEE_FRAMES, PARROT_FRAMES, DINO_FRAMES, DOG_FRAMES, HAMSTER_FRAMES, CHICKEN_FRAMES = (
     KINDS[k] for k in ("bee", "parrot", "dino", "dog", "hamster", "chicken"))
 
+# Homes, unlocked at 500 stars: Art/homes.png, one 34 x 26 cell per
+# character in HOME_ORDER, each after where the animal really lives: a box
+# for the cat, a beehive, a tree to roost in, a cave, a kennel, a cage, a
+# coop, an acacia, a pond, a hutch, a reef. A doorway (d) is dark while the
+# home is empty and open while its pet sleeps inside.
+HOME_W, HOME_H = 34, 26
+# Where the pet sleeps: the left column of its frame, how many rows above
+# the bottom its feet are, and whether the home is drawn over it (in a box,
+# behind bars, in the water, the bee inside its hive peeping out of the slot)
+# or behind it (on a branch, under a tree).
+HOME_SPOTS = {
+    "cat": (7, 0, True), "bee": (7, 4, True), "parrot": (2, 10, False), "dino": (7, 0, True),
+    "dog": (7, 0, True), "hamster": (4, 4, True), "chicken": (7, 0, True), "giraffe": (2, 0, False),
+    "hippo": (7, 4, True), "rabbit": (3, 5, True), "shark": (7, 0, True),
+}
+HOME_ORDER = ["cat", "bee", "parrot", "dino", "dog", "hamster", "chicken", "giraffe", "hippo", "rabbit", "shark"]
+HOME_COLORS = dict(o="2a1e1a", d="2e2226", r="c94f45", R="9c3a33", w="f3e3c4", W="d9c29c", k="a0693d", K="6e4526",
+                   g="6fb05a", G="4a8a3c", y="f5c542", Y="d79a25", b="6aa8d8", B="3f78a8", p="f2a2b5", P="d97f95",
+                   s="a7a9b0", S="7d808a", n="fff2b0", t="5fb3a8", T="3f8a80", c="d9a96b", C="b9854a", m="8a6a4a",
+                   a="f7f4ec", A="d8d2c4", l="7fc4e8", L="4f9cc8")
+
+
+def load_homes():
+    path = ART / "homes.png"
+    width, height, pixels = read_png(path)
+    assert (width, height) == (HOME_W * len(HOME_ORDER), HOME_H), f"{path}: should be {HOME_W * len(HOME_ORDER)} x {HOME_H}"
+    letters = {tuple(int(v[i:i + 2], 16) for i in (0, 2, 4)): k for k, v in HOME_COLORS.items()}
+    homes = {}
+    for n, kind in enumerate(HOME_ORDER):
+        rows = []
+        for y in range(HOME_H):
+            row = ""
+            for x in range(HOME_W):
+                r, g, b, a = pixels[y][n * HOME_W + x]
+                assert a < 128 or (r, g, b) in letters, f"{path}: {kind}'s home has #{r:02x}{g:02x}{b:02x} at ({x}, {y})"
+                row += "." if a < 128 else letters[(r, g, b)]
+            rows.append(row)
+        homes[kind] = rows
+    return homes
+
+
+HOMES = load_homes()
+
 # Hat anchors (no collar: a bee has no neck) and headphones, per frame.
 def _bee_dy(frame):
     return 1 if frame.startswith(("sleep", "eat", "crouch")) else 0
@@ -490,6 +554,25 @@ def _chicken_comb(frame):
     rows = CHICKEN_FRAMES[frame]
     y = next(y for y, row in enumerate(rows) if "p" in row)
     return rows[y].index("p"), y
+# Where the newer characters' hats go, read off their sheets: the middle of
+# the head and its top row (the giraffe's horns, the hippo's ears, the
+# rabbit's head between its ears). Headphones sit over the same spot.
+_HATS = {
+    "giraffe": {"sit": (15.5, 0), "blink": (15.5, 0), "happy": (15.5, 0), "walk1": (15.5, 0), "walk2": (15.5, 0), "walk3": (15.5, 0),
+                "run1": (16.0, 1), "run2": (16.0, 1), "groom1": (16.0, 1), "groom2": (16.0, 1), "sleep1": (16.0, 6), "sleep2": (16.0, 6),
+                "eat1": (17.0, 9), "eat2": (17.0, 9), "crouch1": (16.0, 2), "crouch2": (16.0, 2), "held1": (15.5, 0), "held2": (15.5, 0)},
+    "hippo": {"sit": (13.5, 3), "blink": (13.5, 3), "happy": (13.5, 3), "walk1": (13.5, 3), "walk2": (13.5, 3), "walk3": (13.5, 3),
+              "run1": (13.5, 4), "run2": (13.5, 3), "groom1": (13.5, 4), "groom2": (13.5, 4), "sleep1": (13.5, 6), "sleep2": (13.5, 6),
+              "eat1": (14.0, 7), "eat2": (14.0, 6), "crouch1": (13.5, 4), "crouch2": (13.5, 4), "held1": (13.5, 3), "held2": (13.5, 3)},
+    "rabbit": {"sit": (13.5, 5), "blink": (13.5, 5), "happy": (13.5, 4), "walk1": (13.5, 5), "walk2": (14.5, 3), "walk3": (13.5, 5),
+               "run1": (14.5, 3), "run2": (13.5, 5), "groom1": (13.5, 5), "groom2": (13.5, 6), "sleep1": (13.5, 8), "sleep2": (13.5, 8),
+               "eat1": (15.0, 9), "eat2": (15.0, 8), "crouch1": (13.5, 6), "crouch2": (13.5, 6), "held1": (13.5, 5), "held2": (13.5, 5)},
+    "shark": {"sit": (15.5, 6), "blink": (15.5, 6), "happy": (15.5, 6), "walk1": (15.5, 6), "walk2": (15.5, 6), "walk3": (15.5, 6),
+              "run1": (15.5, 6), "run2": (15.5, 6), "groom1": (15.5, 6), "groom2": (15.5, 6), "sleep1": (15.5, 8), "sleep2": (15.5, 8),
+              "eat1": (15.5, 7), "eat2": (15.5, 7), "crouch1": (15.5, 7), "crouch2": (15.5, 7), "held1": (15.5, 6), "held2": (15.5, 6)},
+}
+# Off while asleep, and while the head is down in the bowl where it would be lost.
+_NO_PHONES = {"giraffe": ("sleep", "eat"), "hippo": ("sleep",), "rabbit": ("sleep", "eat"), "shark": ("sleep",)}
 KIND_ANCHORS = {
     "bee": {f: (14.5, 6 + _bee_dy(f), None, None) for f in BEE_FRAMES},
     "parrot": {f: (*_parrot_head(f), None, None) for f in PARROT_FRAMES},
@@ -498,6 +581,7 @@ KIND_ANCHORS = {
     "hamster": {f: (13.0, _hamster_top(f), None, None) for f in HAMSTER_FRAMES},
     "chicken": {f: (_chicken_comb(f)[0] + 0.5, _chicken_comb(f)[1] + 1, None, None) for f in CHICKEN_FRAMES},
 }
+KIND_ANCHORS.update({kind: {f: (x, y, None, None) for f, (x, y) in spots.items()} for kind, spots in _HATS.items()})
 KIND_HEADPHONES_AT = {
     "bee": {f: ("bee", 11, 4 + _bee_dy(f)) for f in BEE_FRAMES if not f.startswith("sleep")},
     # None while its head is down in the bowl, as for the cat.
@@ -508,6 +592,8 @@ KIND_HEADPHONES_AT = {
     "hamster": {f: ("side", 10, _hamster_top(f)) for f in HAMSTER_FRAMES if not f.startswith("sleep")},
     "chicken": {f: ("side", _chicken_comb(f)[0] - 3, _chicken_comb(f)[1]) for f in CHICKEN_FRAMES if not f.startswith("sleep")},
 }
+KIND_HEADPHONES_AT.update({kind: {f: ("side", round(x - 3.5), y - 1) for f, (x, y) in spots.items() if not f.startswith(_NO_PHONES[kind])}
+                           for kind, spots in _HATS.items()})
 
 
 def check():
@@ -600,6 +686,17 @@ def swift():
     for kind, anchors in KIND_ANCHORS.items():
         for name, (hx, hy, cx, cy) in anchors.items():
             out.append(f'        "{kind}.{name}": ({hx}, {hy}, {cx if cx is not None else -1}, {cy if cy is not None else -1}),')
+    out += ["    ]", "", f"    static let homeWidth = {HOME_W}", f"    static let homeHeight = {HOME_H}",
+            "", "    /// Where the pet sleeps: frame's left column, rows above the bottom, home drawn over it.",
+            "    static let homeSpots: [String: (Int, Int, Bool)] = ["]
+    out += [f'        "{k}": ({x}, {y}, {"true" if front else "false"}),' for k, (x, y, front) in HOME_SPOTS.items()]
+    out += ["    ]", "", "    static let homes: [String: [String]] = ["]
+    for kind, rows in HOMES.items():
+        out.append(f'        "{kind}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
+    out += ["    ]", "", "    /// d is the doorway: dark while the home is empty.", "    static let homeColors: [Character: UInt32] = ["]
+    out += [f'        "{k}": 0x{v},' for k, v in HOME_COLORS.items()]
     out += ["    ]", "", "    /// Palette per coat: outline, fur, stripe, white, pink, eye.",
             "    static let coats: [String: [Character: UInt32]] = ["]
     for coat, pal in list(COATS.items()) + list(KIND_COLORS.items()):

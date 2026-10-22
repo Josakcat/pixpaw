@@ -177,6 +177,80 @@ canvas(Int(W), Int(H), "Screenshot-4.png") { ctx in
     }
 }
 
+/// Any character's frame, `px` points a pixel, feet at `feet`, with a laptop
+/// in front of it if it is working.
+func pet(_ ctx: CGContext, _ kind: String, _ frame: String, feet: CGPoint, px: CGFloat, laptop: Bool = false) {
+    let key = kind == "cat" ? frame : "\(kind).\(frame)"
+    guard let rows = CatArt.frames[key], let palette = CatArt.coats[kind == "cat" ? "orange" : kind] else { return }
+    let h = CGFloat(rows.count)
+    sprite(ctx, rows, palette: palette, at: CGPoint(x: feet.x, y: feet.y - h * px), px: px)
+    if laptop, let computer = CatArt.accessories["laptop"], let anchor = CatArt.anchors[key] {
+        let left = CGFloat((anchor.0 - Double(computer[0].count) / 2).rounded())
+        sprite(ctx, computer, palette: CatArt.accessoryColors,
+               at: CGPoint(x: feet.x + left * px, y: feet.y - CGFloat(computer.count) * px), px: px)
+    }
+}
+
+/// A character's home with it asleep there, the way the app stacks them.
+func home(_ ctx: CGContext, _ kind: String, at origin: CGPoint, px: CGFloat) {
+    guard let rows = CatArt.homes[kind], let spot = CatArt.homeSpots[kind] else { return }
+    let feet = CGPoint(x: origin.x + CGFloat(spot.0) * px, y: origin.y + CGFloat(rows.count - spot.1) * px)
+    let open = rows.map { String($0.map { $0 == "d" ? "." : $0 }) }
+    if spot.2 {
+        pet(ctx, kind, "sleep1", feet: feet, px: px)
+        sprite(ctx, open, palette: CatArt.homeColors, at: origin, px: px)
+    } else {
+        sprite(ctx, rows, palette: CatArt.homeColors, at: origin, px: px)
+        pet(ctx, kind, "sleep1", feet: feet, px: px)
+    }
+}
+
+// 5. Every character, the four new ones last.
+canvas(Int(W), Int(H), "Screenshot-5.png") { ctx in
+    desktop(ctx, W, H, title: "Eleven friends", subtitle: "New: a giraffe, a hippo, a rabbit, and a shark that swims through the air.")
+    let kinds: [(String, String, String)] = [
+        ("cat", "sit", "Cat"), ("dog", "sit", "Dog"), ("hamster", "sit", "Hamster"), ("chicken", "sit", "Chicken"),
+        ("bee", "walk1", "Bee"), ("parrot", "sit", "Parrot"), ("dino", "sit", "Dinosaur"),
+        ("giraffe", "sit", "Giraffe ✦"), ("hippo", "happy", "Hippo ✦"), ("rabbit", "sit", "Rabbit ✦"), ("shark", "walk1", "Shark ✦"),
+    ]
+    for (i, item) in kinds.enumerated() {
+        let row = i < 4 ? 0 : i < 7 ? 1 : 2
+        let inRow = row == 0 ? i : row == 1 ? i - 4 : i - 7
+        let count = row == 1 ? 3 : 4
+        let x = W / 2 - CGFloat(count) * 170 + CGFloat(inRow) * 340 + 90
+        let y = 370 + CGFloat(row) * 215
+        pet(ctx, item.0, item.1, feet: CGPoint(x: x, y: y), px: 7)
+        label(item.2, at: CGPoint(x: x + 70, y: y + 10), size: 26, weight: .semibold,
+              color: item.2.hasSuffix("✦") ? rgb(0xFFE08A) : .white, centered: true)
+    }
+}
+
+// 6. Homes at 500 stars, after where each animal really lives.
+canvas(Int(W), Int(H), "Screenshot-6.png") { ctx in
+    desktop(ctx, W, H, title: "A home of its own", subtitle: "Reach 500 stars and it naps in a home after where it really lives.")
+    let homes: [(String, String)] = [("cat", "A box"), ("bee", "A beehive"), ("parrot", "A tree"), ("hippo", "A pond"),
+                                     ("dog", "A kennel"), ("rabbit", "A hutch"), ("hamster", "A cage"), ("shark", "A reef")]
+    for (i, item) in homes.enumerated() {
+        let column = CGFloat(i % 4), row = CGFloat(i / 4)
+        let origin = CGPoint(x: 120 + column * 360, y: 250 + row * 330)
+        home(ctx, item.0, at: origin, px: 8)
+        label(item.1, at: CGPoint(x: origin.x + 17 * 8, y: origin.y + 26 * 8 + 12), size: 26, weight: .semibold, centered: true)
+    }
+}
+
+// 7. Focusing and stretching together.
+canvas(Int(W), Int(H), "Screenshot-7.png") { ctx in
+    desktop(ctx, W, H, title: "Working together", subtitle: "It works at its own laptop while you focus, and stretches with you.")
+    let big: CGFloat = 16
+    let focus = CGPoint(x: 170, y: 880)
+    pet(ctx, "cat", "sit", feet: focus, px: big, laptop: true)
+    sprite(ctx, CatArt.effects["code"]!, palette: CatArt.effectColors, at: CGPoint(x: focus.x + 12 * big, y: focus.y - 19 * big), px: big * 0.67)
+    bubble(ctx, "Focus time · 24:59", symbol: "timer", tip: CGPoint(x: focus.x + 14.5 * big, y: focus.y - 20 * big), scale: 2.4)
+    let stretch = CGPoint(x: 940, y: 880)
+    pet(ctx, "dog", "crouch1", feet: stretch, px: big)
+    bubble(ctx, "Stretch with me! 0:20", symbol: "figure.cooldown", tip: CGPoint(x: stretch.x + 14.5 * big, y: stretch.y - 13.5 * big), scale: 2.4)
+}
+
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in
     ctx.setFillColor(rgb(0x4446F4).cgColor)

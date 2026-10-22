@@ -1,6 +1,6 @@
 # Art
 
-Every character is one sprite sheet here: a PNG with a row of 18 cells,
+Every character is one sprite sheet here (eleven of them): a PNG with a row of 18 cells,
 each 20 x 20 pixels, 360 x 20 in all. Open it in any pixel editor
 (Aseprite, Piskel, LibreSprite…) with a 20 x 20 grid.
 
@@ -48,18 +48,18 @@ in `Tools/sprites.py`.
 
 ## Colours
 
-| | cat | bee | parrot | dino | dog | hamster | chicken |
-|---|---|---|---|---|---|---|---|
-| `o` outline | `#2b1a10` | `#2a1d16` | `#1f2a1a` | `#1d2b1a` | `#2b1a10` | `#3a2414` | `#3a2a20` |
-| `f` fur / main colour | `#f2a03d` | `#ffcf3a` | `#5dbb3c` | `#6cc24a` | `#e0a35a` | `#f2a65a` | `#fbf7f0` |
-| `s` stripes, patches, shading | `#c8661e` | `#2f2733` | `#2e7d32` | `#4a9a33` | `#8a5a2b` | `#d4823a` | `#ddd5c8` |
-| `w` white (chest, belly) | `#fff3e0` | `#d9f0ff` | `#b9e45f` | `#d8f0a0` | `#fff3dd` | `#fff6ea` | `#fff1c4` |
-| `p` pink (ears, nose, comb) | `#f59aa8` | `#ff8fa3` | `#e8432c` | `#ffa53c` | `#ff7f9a` | `#ff9fb2` | `#e8432c` |
-| `e` eyes | `#1d140c` | `#1d140c` | `#111111` | `#111111` | `#1a1110` | `#1a1110` | `#111111` |
-| `l` wing shine |  | `#ffffff` |  |  |  |  |  |
-| `b` beak, legs |  |  | `#f5a623` |  |  |  | `#f5a623` |
-| `g` feet |  |  | `#8a8f99` |  |  |  |  |
-| `t` tail feathers |  |  | `#2f9e8f` |  |  |  |  |
+| | cat | bee | dino | dog | hamster | chicken | giraffe | hippo | rabbit | shark |
+|---|---|---|---|---|---|---|---|---|---|---|
+| `o` outline | `#2b1a10` | `#2a1d16` | `#1d2b1a` | `#2b1a10` | `#3a2414` | `#3a2a20` | `#3a2412` | `#2b2436` | `#3b2a24` | `#1c2b3b` |
+| `f` fur / main colour | `#f2a03d` | `#ffcf3a` | `#6cc24a` | `#e0a35a` | `#f2a65a` | `#fbf7f0` | `#f2c14e` | `#a196bd` | `#c79a6b` | `#7a96b4` |
+| `s` stripes, patches, shading | `#c8661e` | `#2f2733` | `#4a9a33` | `#8a5a2b` | `#d4823a` | `#ddd5c8` | `#b5652a` | `#857aa3` | `#a8784b` | `#5b7795` |
+| `w` white (chest, belly) | `#fff3e0` | `#d9f0ff` | `#d8f0a0` | `#fff3dd` | `#fff6ea` | `#fff1c4` | `#fbe7b5` | `#d6cde6` | `#f7efe4` | `#eef3f8` |
+| `p` pink (ears, nose, comb) | `#f59aa8` | `#ff8fa3` | `#ffa53c` | `#ff7f9a` | `#ff9fb2` | `#e8432c` | `#e59a6a` | `#f4a3b6` | `#f3a3b3` | `#f08ca3` |
+| `e` eyes | `#1d140c` | `#1d140c` | `#111111` | `#1a1110` | `#1a1110` | `#111111` | `#1d140c` | `#1a1520` | `#1d1412` | `#0f1418` |
+| `l` wing shine |  | `#ffffff` |  |  |  |  |  |  |  |  |
+| `b` beak, legs |  |  |  |  |  | `#f5a623` |  |  |  |  |
+
+The parrot (an orange-fronted conure) has letters of its own: `o` `#16201a`, `G` `#5aa838`, `D` `#2f7d2c`, `H` `#3b8540`, `C` `#2f7a62`, `P` `#f26a3d`, `E` `#f1e9a6`, `K` `#16161a`, `W` `#ead9c8`, `T` `#7c8a3a`, `L` `#bccf3a`, `B` `#2b4a8c`, `O` `#4f9a30`, `F` `#8f8a86`. See its comment in `KIND_COLORS` for what each one paints.
 
 A brand-new character needs a sheet here, a palette in `KIND_COLORS`, hat
 spots in `KIND_ANCHORS` and `KIND_HEADPHONES_AT` (`Tools/sprites.py`) and

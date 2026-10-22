@@ -1,5 +1,24 @@
 # Changelog
 
+## [1.3.0] - 2026-10-22
+
+Four new friends (a giraffe, a hippo, a rabbit and a shark), a home of its own at 500 stars, a little laptop to work at with you while you focus, stretching together, your own reminders, and a welcome back when you return.
+
+### Added
+
+- Working together. During a focus session your pet sits at a little laptop of its own and works along with you, bits of code floating up from it. It stays at its desk (no wandering off to wash) until the session ends, and the shelf shows it at its laptop too.
+- A challenge: reach 500 stars and your pet gets a home of its own, based on where the animal really lives: a cardboard box for the cat, a wooden beehive for the bee (it peeps out of the slot), a tree for the parrot to roost on, a cave for the dinosaur, a kennel for the dog, a cage with a wheel for the hamster, a coop for the chicken, an acacia for the giraffe to lie under, a pond for the hippo (just its back and ears above the water), a hutch for the rabbit and a reef grotto for the shark. It stands on the floor; hold your pet and choose Go home for a nap (or click the home) and it goes over and sleeps there. Click it again to call your pet out, and drag it to move it. Settings → Wardrobe shows how many stars are left to go, and you can put the home away there.
+- Four new characters: a giraffe (long legs, a neck that bends right down to its bowl), a hippo (a big yawn when it's happy), a rabbit (it hops, and washes its long ears) and a shark that swims through the air anywhere on your screen. Each has its own sounds: a low giraffe hum, a hippo honk, a rabbit's thump and a shark's chomp.
+- Welcome back. Come back to your Mac after ten minutes or more away and your pet runs over to say hello ("Welcome back!", "Missed you!"). It waits until the screen is unlocked, and leaves it to good morning or the late-night nudge when one of those has something to say. Switch it off with Welcome back in Settings.
+- Stretch with me. When it's time to stretch, your pet comes over and stretches along with you for 20 seconds, the time left in its bubble. Click it afterwards for a star (+2, 5 a day). The shelf counts your stretches together, and you can start one any time: hold your pet and choose Stretch with me.
+- Your own reminders. Under Break reminders, add up to five of your own ("Take a pill", "Check the oven") and pick how often, from every 15 minutes to every 3 hours.
+- A sleepy pet on low battery. On battery at 20% or less it yawns now and then and strolls slowly; plug in and it perks right up. Part of the Battery setting.
+
+### Changed
+
+- Break reminders each have their own time and switch: stretch every hour, water every 45 minutes and rest your eyes every 30, to begin with. They no longer take turns on one shared timer, and two never come within three minutes of each other. Five minutes away still counts as a stretch and a rest for your eyes.
+- Calendar events now come two minutes before an event instead of five, and your pet comes over to tell you.
+
 ## [1.2.1] - 2026-10-21
 
 The parrot is now an orange-fronted conure, drawn by a community member. Focus sessions keep a countdown over your pet's head, and the characters are PNG sprite sheets you can draw your own from.

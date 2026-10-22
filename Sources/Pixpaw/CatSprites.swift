@@ -35,7 +35,7 @@ enum CatCoat: String, CaseIterable, Identifiable, Codable {
 /// Who lives on the desktop: the cat, or a character picked instead of it.
 /// Every character has the cat's frames, so the same moods drive them all.
 enum PetKind: String, CaseIterable, Identifiable, Codable {
-    case cat, bee, parrot, dino, dog, hamster, chicken
+    case cat, bee, parrot, dino, dog, hamster, chicken, giraffe, hippo, rabbit, shark
 
     var id: String { rawValue }
 
@@ -48,14 +48,19 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
         case .dog: "Dog"
         case .hamster: "Hamster"
         case .chicken: "Chicken"
+        case .giraffe: "Giraffe"
+        case .hippo: "Hippo"
+        case .rabbit: "Rabbit"
+        case .shark: "Shark"
         }
     }
 
     /// Every character by name, A to Z, for the pickers.
     static var alphabetical: [PetKind] { allCases.sorted { $0.title < $1.title } }
 
-    /// Flies wherever it likes, whatever the walking setting says.
-    var flies: Bool { self == .bee }
+    /// Flies (or, for the shark, swims through the air) wherever it likes,
+    /// whatever the walking setting says.
+    var flies: Bool { self == .bee || self == .shark }
 
     /// Perches where the cat would stand, but takes off and flies whenever
     /// it goes somewhere.
@@ -120,7 +125,7 @@ enum CatAccessory: String, CaseIterable, Identifiable, Codable {
 /// a day it counts, so stars take days of real care rather than a minute of
 /// clicking.
 enum StarSource: String, Codable {
-    case pet, meal, hungryMeal, play, catchFile, treat, gift
+    case pet, meal, hungryMeal, play, catchFile, treat, gift, stretch
 
     static let dailyTotal = 30
     /// Petting again this soon after the last counted pet earns nothing.
@@ -135,6 +140,7 @@ enum StarSource: String, Codable {
         case .catchFile: 2
         case .treat: 2
         case .gift: 3
+        case .stretch: 2
         }
     }
 
@@ -149,6 +155,7 @@ enum StarSource: String, Codable {
         case .catchFile: 5
         case .treat: 3
         case .gift: 1
+        case .stretch: 5
         }
     }
 }
@@ -168,7 +175,7 @@ struct StarDay: Codable, Equatable {
 }
 
 enum CatEffect: String {
-    case heart, zzz, fish, note, ghost, bowl, bowlEmpty, treat, krathong, skyLantern, redLantern, giftFlower, giftBone, giftBall, giftFeather, yarn1, yarn2, teaser, laser, dizzy1, dizzy2, dizzy3
+    case heart, zzz, fish, note, code, ghost, bowl, bowlEmpty, treat, krathong, skyLantern, redLantern, giftFlower, giftBone, giftBall, giftFeather, yarn1, yarn2, teaser, laser, dizzy1, dizzy2, dizzy3
 }
 
 @MainActor
@@ -185,12 +192,13 @@ final class CatSprites {
     /// headphones in place of the hat while a pair is connected, or else a
     /// costume hat of the day (a party hat, a nightcap). The image
     /// grows upward when a hat rises above the art; the feet stay on the
-    /// bottom row. `swing` pushes the legs that many art pixels sideways.
+    /// bottom row. `swing` pushes the legs that many art pixels sideways;
+    /// `laptop` puts one in front of it, under its head, while it works.
     func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil,
-               headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0) -> CGImage? {
+               headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0, laptop: Bool = false) -> CGImage? {
         let hat = headphones ? nil : costume ?? hat?.rawValue
         let art = kind.artKey(frame)
-        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(headphones).\(swing)"
+        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(headphones).\(swing).\(laptop)"
         if let hit = cache[key] { return hit }
         guard let rows = CatArt.frames[art].map({ swing == 0 ? $0 : Self.swing($0, by: swing) }),
               let palette = CatArt.coats[kind.hasCoats ? coat.rawValue : kind.rawValue] else { return nil }
@@ -214,6 +222,18 @@ final class CatSprites {
         }
         if headphones, let (view, left, top) = CatArt.headphonesAt[art], let phones = CatArt.headphones[view] {
             for (y, line) in phones.enumerated() {
+                for (x, char) in line.enumerated() {
+                    if let rgb = CatArt.accessoryColors[char], left + x >= 0, left + x < width {
+                        overlay.append((left + x, top + y, rgb))
+                    }
+                }
+            }
+        }
+        if laptop, let computer = CatArt.accessories["laptop"], let anchor = CatArt.anchors[art] {
+            // On the floor, centred under the head.
+            let left = Int((anchor.0 - Double(computer[0].count) / 2).rounded())
+            let top = rows.count - computer.count
+            for (y, line) in computer.enumerated() {
                 for (x, char) in line.enumerated() {
                     if let rgb = CatArt.accessoryColors[char], left + x >= 0, left + x < width {
                         overlay.append((left + x, top + y, rgb))
@@ -268,6 +288,17 @@ final class CatSprites {
         if let hit = cache[key] { return hit }
         guard let rows = CatArt.effects[effect.rawValue] else { return nil }
         let image = Self.render(rows, palette: CatArt.effectColors)
+        cache[key] = image
+        return image
+    }
+
+    /// The character's home; with someone asleep inside, the doorway is
+    /// left open so the pet behind shows through it.
+    func home(_ kind: PetKind, occupied: Bool) -> CGImage? {
+        let key = "home.\(kind.rawValue).\(occupied)"
+        if let hit = cache[key] { return hit }
+        guard let rows = CatArt.homes[kind.rawValue] else { return nil }
+        let image = Self.render(rows.map { row in row.map { occupied && $0 == "d" ? nil : CatArt.homeColors[$0] } })
         cache[key] = image
         return image
     }

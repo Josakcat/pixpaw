@@ -5,7 +5,8 @@
 //  The voices, synthesised the first time they are needed: the cat's meow
 //  (two pitches), purr and chew, and the other characters' calls: the bee's
 //  buzz, the parrot's squawk, the dinosaur's rawr, the dog's bark, the
-//  hamster's squeak, the chicken's bawk. Made from sine waves and noise in
+//  hamster's squeak, the chicken's bawk, the giraffe's hum, the hippo's
+//  honk, the rabbit's thump and the shark's chomp. Made from sine waves and noise in
 //  code, so there are no sound files to license or ship.
 //
 
@@ -82,6 +83,18 @@ final class CatSounds {
         case .chicken:
             voice = Voice(calls: [Self.bawk(pitch: 1), Self.bawk(pitch: 1.12)].compactMap(sound),
                           content: sound(Self.cluckSamples()), chew: sound(Self.chewSamples()))
+        case .giraffe:
+            voice = Voice(calls: [Self.lowHum(pitch: 1), Self.lowHum(pitch: 1.15)].compactMap(sound),
+                          content: sound(Self.humSamples()), chew: sound(Self.chewSamples()))
+        case .hippo:
+            voice = Voice(calls: [Self.honk(pitch: 1, times: 2), Self.honk(pitch: 0.9, times: 3)].compactMap(sound),
+                          content: sound(Self.bubbles(pitch: 0.6)), chew: sound(Self.chewSamples()))
+        case .rabbit:
+            voice = Voice(calls: [Self.thump(times: 2), Self.squeak(pitch: 1.3, times: 1)].compactMap(sound),
+                          content: sound(Self.chitterSamples()), chew: sound(Self.chewSamples()))
+        case .shark:
+            voice = Voice(calls: [Self.chomp(times: 2), Self.chomp(times: 1)].compactMap(sound),
+                          content: sound(Self.bubbles(pitch: 1)), chew: sound(Self.chewSamples()))
         }
         voices[kind] = voice
         return voice
@@ -393,6 +406,99 @@ final class CatSounds {
     }
 
     /// 16-bit mono PCM in a WAV container, which NSSound plays directly.
+    /// "Mmmm": the low hum giraffes make at night, a soft warm tone that
+    /// slides down a little.
+    private static func lowHum(pitch: Double) -> [Float] {
+        let duration = 0.8
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var phase = 0.0
+        for i in 0..<count {
+            let t = Double(i) / sampleRate
+            let p = t / duration
+            phase += 2 * .pi * (120 - 25 * p) * pitch / sampleRate
+            let value = sin(phase) * 0.6 + sin(phase * 2) * 0.3 + sin(phase * 3) * 0.12
+            let envelope = min(1, t / 0.1) * min(1, (duration - t) / 0.3)
+            samples[i] = Float(value * envelope * 0.45)
+        }
+        return samples
+    }
+
+    /// "Honk-honk": short, deep, nasal blasts with a breathy edge.
+    private static func honk(pitch: Double, times: Int) -> [Float] {
+        let length = 0.18, gap = 0.1
+        let count = Int((Double(times) * (length + gap)) * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for n in 0..<times {
+            let from = Int(Double(n) * (length + gap) * sampleRate)
+            var phase = 0.0
+            var noise = 0.0
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let p = t / length
+                phase += 2 * .pi * (170 + 40 * sin(.pi * p)) * pitch / sampleRate
+                var value = 0.0
+                for k in 1...8 { value += sin(phase * Double(k)) * (k >= 3 && k <= 5 ? 0.9 : 0.35) / Double(k) }
+                noise = noise * 0.8 + Double.random(in: -1...1) * 0.2
+                let envelope = min(1, t / 0.015) * pow(1 - p, 1.2)
+                samples[from + j] = Float((value + noise * 0.4) * envelope * 0.4)
+            }
+        }
+        return samples
+    }
+
+    /// Thump-thump: a back foot stamped on the floor, a soft low knock.
+    private static func thump(times: Int) -> [Float] {
+        let length = 0.09, gap = 0.11
+        let count = Int((Double(times) * (length + gap)) * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for n in 0..<times {
+            let from = Int(Double(n) * (length + gap) * sampleRate)
+            var noise = 0.0
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                noise = noise * 0.9 + Double.random(in: -1...1) * 0.1
+                let knock = sin(2 * .pi * (95 - 300 * t) * t)
+                samples[from + j] = Float((knock * 0.8 + noise * 2) * exp(-t * 45) * 0.6)
+            }
+        }
+        return samples
+    }
+
+    /// Chomp: jaws snapping shut, a click on top of a dull thud.
+    private static func chomp(times: Int) -> [Float] {
+        let length = 0.12, gap = 0.08
+        let count = Int((Double(times) * (length + gap)) * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for n in 0..<times {
+            let from = Int(Double(n) * (length + gap) * sampleRate)
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let click = t < 0.006 ? Double.random(in: -1...1) : 0
+                let thud = sin(2 * .pi * 140 * t) * exp(-t * 30)
+                samples[from + j] = Float((click * 0.7 + thud) * 0.5)
+            }
+        }
+        return samples
+    }
+
+    /// Blub-blub: a few bubbles rising, each a quick upward chirp.
+    private static func bubbles(pitch: Double) -> [Float] {
+        let duration = 0.9
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for start in [0.0, 0.22, 0.38, 0.62] {
+            var phase = 0.0
+            let from = Int(start * sampleRate)
+            for j in 0..<Int(0.12 * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                phase += 2 * .pi * (300 + 2200 * t) * pitch / sampleRate
+                samples[from + j] += Float(sin(phase) * exp(-t * 25) * 0.35)
+            }
+        }
+        return samples
+    }
+
     private static func wav(_ samples: [Float]) -> Data {
         var data = Data()
         func append<T: FixedWidthInteger>(_ value: T) {

@@ -3,7 +3,8 @@
 //  Pixpaw
 //
 //  The things the cat tells you about: Mac notifications from other apps,
-//  calendar events about to start, the battery, and finished downloads. Each
+//  calendar events about to start, the battery, finished downloads, and you
+//  coming back to the Mac after a while away. Each
 //  source is its own small watcher that hands a line to `onLine` on the main
 //  actor. Nothing is stored or sent anywhere; a line is shown and forgotten.
 //
@@ -59,6 +60,10 @@ enum CatWords {
         case .dog: "Woof! I'm up."
         case .hamster: "Squeak! I'm up."
         case .chicken: "Bawk! I'm up."
+        case .giraffe: "Mmm… I'm up."
+        case .hippo: "Honk! I'm up."
+        case .rabbit: "Thump thump! I'm up."
+        case .shark: "Chomp! I'm up."
         }
     }
     static func purr(_ kind: PetKind) -> String {
@@ -70,11 +75,22 @@ enum CatWords {
         case .dog: "Wag wag wag!"
         case .hamster: "Squee…"
         case .chicken: "Bok bok bok…"
+        case .giraffe: "Hmmmm…"
+        case .hippo: "Blub blub…"
+        case .rabbit: "*happy binky*"
+        case .shark: "Blub… nice."
         }
     }
 
     static func batteryLow(_ percent: Int) -> String { "Battery at \(percent)%. Plug me in?" }
     static let charging = "Yum, power!"
+    static func stretchAlong(until end: Date) -> CatLine {
+        CatLine(text: "Stretch with me! ", symbol: "figure.cooldown", until: end)
+    }
+    static let stretchDone = CatLine(text: "Done? Click me!", symbol: "hand.tap.fill")
+    static let stretched = ["Nice stretch!", "Feel better?", "Great job!", "Ahh, that's better."]
+    static let yawn = ["*Yawn*", "So sleepy…", "Low on power…"]
+    static let welcomeBack = ["Welcome back!", "You're back!", "Missed you!", "There you are!"]
     static let fullyCharged = "Battery's full."
 
     static func downloaded(_ name: String) -> String { "Downloaded \(name)" }
@@ -112,10 +128,15 @@ final class BatteryWatcher {
     private var lastCharging: Bool?
     private var warned: Set<Int> = []
     private var wasFull = false
+    private var wasLow: Bool?
     private let onLine: (CatLine) -> Void
+    private let onLow: (Bool) -> Void
 
-    init(onLine: @escaping (CatLine) -> Void) {
+    /// `onLow` hears whether the Mac is on battery at 20% or less, each time
+    /// that changes: the pet is sleepy until it is plugged in.
+    init(onLine: @escaping (CatLine) -> Void, onLow: @escaping (Bool) -> Void = { _ in }) {
         self.onLine = onLine
+        self.onLow = onLow
     }
 
     func start() {
@@ -135,6 +156,7 @@ final class BatteryWatcher {
         if let source { CFRunLoopRemoveSource(CFRunLoopGetMain(), source, .defaultMode) }
         source = nil
         lastCharging = nil
+        wasLow = nil
     }
 
     private func check(announce: Bool = true) {
@@ -147,6 +169,11 @@ final class BatteryWatcher {
         else { return }
         let percent = current * 100 / max
         let charging = (details[kIOPSPowerSourceStateKey] as? String) == kIOPSACPowerValue
+        let low = !charging && percent <= 20
+        if low != wasLow {
+            wasLow = low
+            onLow(low)
+        }
 
         defer { lastCharging = charging }
         if charging {
@@ -241,8 +268,8 @@ final class DownloadsWatcher {
 
 // MARK: - Calendar
 
-/// Events about to start: five minutes before, once per event. Checks once a
-/// minute, only while calendar access is granted.
+/// Events about to start: two minutes before, once per event. Checks every
+/// half minute, only while calendar access is granted.
 @MainActor
 final class CalendarWatcher {
     private let store = EKEventStore()
@@ -292,10 +319,10 @@ final class CalendarWatcher {
 
     func start() {
         guard timer == nil else { return }
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.check() }
         }
-        timer?.tolerance = 10
+        timer?.tolerance = 5
         check()
     }
 
@@ -307,15 +334,61 @@ final class CalendarWatcher {
     private func check() {
         guard Self.hasAccess else { return }
         let now = Date()
-        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-60), end: now.addingTimeInterval(6 * 60), calendars: nil)
+        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-60), end: now.addingTimeInterval(3 * 60), calendars: nil)
         for event in store.events(matching: predicate) where !event.isAllDay {
             guard let start = event.startDate, let id = event.eventIdentifier, !announced.contains(id) else { continue }
             let minutes = Int((start.timeIntervalSince(now) / 60).rounded())
-            guard minutes <= 5, minutes >= -1 else { continue }
+            guard minutes <= 2, minutes >= -1 else { continue }
             announced.insert(id)
             onLine(CatLine(text: CatWords.eventSoon(event.title ?? "Event", minutes: max(0, minutes)), symbol: "calendar"))
         }
         if announced.count > 200 { announced = [] }
+    }
+}
+
+// MARK: - Coming back
+
+/// You back at the Mac after ten minutes or more away: the first input after
+/// the gap, once the screen is unlocked. Timed from when input happened, so a
+/// Mac that slept in between still counts the whole time away.
+@MainActor
+final class ReturnWatcher {
+    private static let away: TimeInterval = 10 * 60
+    private var timer: Timer?
+    private var lastInput: Date?
+    private let onReturn: () -> Void
+
+    init(onReturn: @escaping () -> Void) {
+        self.onReturn = onReturn
+    }
+
+    func start() {
+        guard timer == nil else { return }
+        timer = Timer.scheduledTimer(withTimeInterval: 2, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+        timer?.tolerance = 1
+        check()
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        lastInput = nil
+    }
+
+    private func check() {
+        // Typing a password at the lock screen is not being back yet.
+        guard !Self.screenIsLocked else { return }
+        let input = Date().addingTimeInterval(-CatController.secondsSinceInput())
+        defer { lastInput = input }
+        guard let lastInput, input.timeIntervalSince(lastInput) >= Self.away else { return }
+        onReturn()
+    }
+
+    private static var screenIsLocked: Bool {
+        guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
+        return (session["CGSSessionScreenIsLocked"] as? Bool) ?? false
     }
 }
 
@@ -1062,38 +1135,60 @@ final class QuietWatcher {
 
 // MARK: - Health
 
-/// Counts the time you spend at the Mac without a break, and when it reaches
-/// the interval, has the cat come over with a reminder: stretch, drink some
-/// water, rest your eyes, in turn. Five minutes away counts as a break and
-/// starts the count again. A reminder that falls due during a call waits
-/// until the call is over.
+/// One thing to be reminded of, every so many minutes.
+struct Reminder: Codable, Identifiable, Equatable {
+    var id: String
+    var text: String
+    var symbol: String
+    var minutes: Int
+    var isOn = true
+
+    /// Stretching, water and resting your eyes come with Pixpaw; the rest are yours.
+    var isYours: Bool { !Self.builtIn.contains { $0.id == id } }
+
+    static let stretchID = "stretch"
+    static let builtIn = [
+        Reminder(id: stretchID, text: "Stretch with me!", symbol: "figure.cooldown", minutes: 60),
+        Reminder(id: "water", text: "Drink some water.", symbol: "drop.fill", minutes: 45),
+        Reminder(id: "eyes", text: "Rest your eyes: look far away for 20 seconds.", symbol: "eye", minutes: 30),
+    ]
+    static let builtInTitles = [stretchID: "Stretch with me", "water": "Drink water", "eyes": "Rest your eyes"]
+    static let choices = [15, 20, 30, 45, 60, 90, 120, 180]
+
+    static func yours(_ text: String, minutes: Int) -> Reminder {
+        Reminder(id: UUID().uuidString, text: text, symbol: "bell.fill", minutes: minutes)
+    }
+}
+
+/// Has the cat come over with whichever reminder is due. Pixpaw's own count
+/// the time you spend at the Mac: five minutes away counts as a stretch and a
+/// rest for your eyes, and starts those again. Yours run on the clock. Only
+/// while you are at the Mac, never closer together than three minutes, and
+/// one that falls due during a call waits until the call is over.
 @MainActor
-final class HealthCoach {
+final class ReminderCoach {
     private static let tick: TimeInterval = 30
     private static let breakAfter: TimeInterval = 5 * 60
+    private static let spacing: TimeInterval = 3 * 60
 
-    var interval: TimeInterval
-    /// Whether the cat may talk right now (not quiet).
+    var reminders: [Reminder]
+    /// Whether the cat may talk right now (not quiet, not focusing).
     var canRemind: () -> Bool = { true }
-    private let onRemind: (CatLine) -> Void
+    private let onRemind: (Reminder) -> Void
     private var timer: Timer?
-    private var active: TimeInterval = 0
-    private var due = false
-    private var next = 0
+    private var started = Date()
+    private var active: [String: TimeInterval] = [:]
+    private var lastShown: [String: Date] = [:]
+    private var lastAny = Date.distantPast
 
-    private static let reminders: [(String, String)] = [
-        ("Time to stretch! Stand up for a minute.", "figure.cooldown"),
-        ("Drink some water.", "drop.fill"),
-        ("Rest your eyes: look far away for 20 seconds.", "eye"),
-    ]
-
-    init(interval: TimeInterval, onRemind: @escaping (CatLine) -> Void) {
-        self.interval = interval
+    init(reminders: [Reminder], onRemind: @escaping (Reminder) -> Void) {
+        self.reminders = reminders
         self.onRemind = onRemind
     }
 
     func start() {
         guard timer == nil else { return }
+        started = Date()
         timer = Timer.scheduledTimer(withTimeInterval: Self.tick, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.check() }
         }
@@ -1103,25 +1198,31 @@ final class HealthCoach {
     func stop() {
         timer?.invalidate()
         timer = nil
-        active = 0
-        due = false
+        active = [:]
+        lastShown = [:]
     }
 
     private func check() {
         guard let anyInput = CGEventType(rawValue: ~0) else { return }
         let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
-        if idle >= Self.breakAfter {
-            active = 0
-            due = false
-        } else if idle < 120 {
-            active += Self.tick
+        let now = Date()
+        for reminder in reminders where !reminder.isYours {
+            if idle >= Self.breakAfter, reminder.id != "water" {
+                active[reminder.id] = 0
+            } else if idle < 120 {
+                active[reminder.id, default: 0] += Self.tick
+            }
         }
-        if active >= interval { due = true }
-        guard due, canRemind() else { return }
-        due = false
-        active = 0
-        let (text, symbol) = Self.reminders[next % Self.reminders.count]
-        next += 1
-        onRemind(CatLine(text: text, symbol: symbol, seconds: 5))
+        guard idle < 120, now.timeIntervalSince(lastAny) >= Self.spacing, canRemind() else { return }
+        // The most overdue first.
+        let due = reminders.filter(\.isOn).compactMap { reminder -> (Reminder, Double)? in
+            let elapsed = reminder.isYours ? now.timeIntervalSince(lastShown[reminder.id] ?? started) : active[reminder.id, default: 0]
+            let share = elapsed / TimeInterval(max(1, reminder.minutes) * 60)
+            return share >= 1 ? (reminder, share) : nil
+        }
+        guard let (pick, _) = due.max(by: { $0.1 < $1.1 }) else { return }
+        if pick.isYours { lastShown[pick.id] = now } else { active[pick.id] = 0 }
+        lastAny = now
+        onRemind(pick)
     }
 }
