@@ -23,7 +23,6 @@ your desktop and talks to you. A Droplet for
 - Strikes a pose when you take a screenshot.
 - Stroke it with the pointer to pet it; shake it about and it lands dizzy.
 - Treats, a little gift for you once a day, and a photo of your pet to keep or share.
-- Focus sessions: it works along with you at its own little laptop, with a countdown over its head and beside the notch.
 - Festival hats, and Loy Krathong and Chinese New Year among the festivals.
 - The shelf widget counts your days together, pets, meals and games.
 - Six coats, and an optional friend cat that sits with it and plays tag.
@@ -40,11 +39,21 @@ your desktop and talks to you. A Droplet for
 - Welcome back: it runs over to say hello when you come back after a while away.
 - Goes quiet during calls and screen sharing, and optionally while mirroring.
 
+**Looks after you**
+- Drink water: it comes over to remind you, every 45 minutes to begin with.
+- Rest your eyes: look far away for 20 seconds, every 30 minutes.
+- Stand up and stretch with me: it stretches along with you for 20 seconds,
+  the time left in its bubble; click it afterwards for a star.
+- Your own reminders ("Take a pill", "Check the oven"), up to five, every 15
+  minutes to every 3 hours.
+- Each reminder has its own timer and switch, counts only while you're at the
+  Mac, and waits until a call or a focus session is over.
+- Focus sessions: it works along with you at its own little laptop, with a
+  countdown over its head and beside the notch.
+
 **Little extras**
-- Happiness stars (petting, meals, play, catches; up to 30 a day) unlock
-  pixel hats and collars.
-- Break reminders, each on its own timer: it stretches along with you, reminds you
-  to drink water and rest your eyes, and anything else you add.
+- Happiness stars (petting, meals, play, catches, stretches; up to 30 a day)
+  unlock pixel hats and collars, and at 500 a home of its own.
 - A hunger meter and a food bowl.
 - Synthesised sounds (meow, purr, buzz, bark, squeak and more); no sound files.
 - A shelf widget with its mood, stars, coats and quick controls.
@@ -57,6 +66,7 @@ your desktop and talks to you. A Droplet for
 | ![Playtime](Assets/Screenshot-2.png) | ![Wardrobe](Assets/Screenshot-3.png) |
 | ![Alerts](Assets/Screenshot-4.png) | ![Eleven friends](Assets/Screenshot-5.png) |
 | ![A home of its own](Assets/Screenshot-6.png) | ![Working together](Assets/Screenshot-7.png) |
+| ![Healthy breaks](Assets/Screenshot-8.png) | |
 
 Everything runs on your Mac. Notification text is shown and forgotten;
 nothing is stored or sent anywhere.

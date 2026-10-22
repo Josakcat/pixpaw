@@ -251,6 +251,26 @@ canvas(Int(W), Int(H), "Screenshot-7.png") { ctx in
     bubble(ctx, "Stretch with me! 0:20", symbol: "figure.cooldown", tip: CGPoint(x: stretch.x + 14.5 * big, y: stretch.y - 13.5 * big), scale: 2.4)
 }
 
+// 8. Break reminders: each on its own timer, and your own.
+canvas(Int(W), Int(H), "Screenshot-8.png") { ctx in
+    desktop(ctx, W, H, title: "Healthy breaks", subtitle: "Water, eye rest and stretching, each on its own timer, plus reminders of your own.")
+    let reminders: [(String, String, String, String, String)] = [
+        ("cat", "happy", "Drink some water.", "drop.fill", "Drink water · every 45 min"),
+        ("rabbit", "sit", "Rest your eyes: look far away for 20 seconds.", "eye", "Rest your eyes · every 30 min"),
+        ("dog", "crouch1", "Stretch with me! 0:20", "figure.cooldown", "Stand up & stretch · every hour"),
+        ("hamster", "happy", "Take a pill", "bell.fill", "Your own · every 2 hours"),
+    ]
+    for (i, item) in reminders.enumerated() {
+        let column = CGFloat(i % 2), row = CGFloat(i / 2)
+        let feet = CGPoint(x: 230 + column * 720, y: 560 + row * 300)
+        pet(ctx, item.0, item.1, feet: feet, px: 8)
+        // Over the rabbit's ears, not into them.
+        let above: CGFloat = item.0 == "rabbit" ? 17.5 : 14
+        bubble(ctx, item.2, symbol: item.3, tip: CGPoint(x: feet.x + 14.5 * 8, y: feet.y - above * 8), scale: 1.7)
+        label(item.4, at: CGPoint(x: feet.x + 190, y: feet.y - 70), size: 26, weight: .semibold, color: rgb(0xFFE08A))
+    }
+}
+
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in
     ctx.setFillColor(rgb(0x4446F4).cgColor)
