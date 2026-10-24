@@ -167,6 +167,14 @@ EFFECTS = {
         ".xxx.",
     ],
     # Code floating up from the laptop while it works with you.
+    # A bead of sweat, for a Mac working hard.
+    "sweat": [
+        "..c.",
+        ".cc.",
+        "cbhc",
+        "cbbc",
+        ".cc.",
+    ],
     "code": [
         ".c...c.c.",
         "c...c...c",

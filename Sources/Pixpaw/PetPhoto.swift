@@ -58,10 +58,10 @@ enum PetPhoto {
     }
 
     /// Asks where to keep it (the Desktop to begin with) and writes it there.
-    static func save(_ data: Data, named name: String) {
+    static func save(_ data: Data, named name: String, type: UTType = .png) {
         let panel = NSSavePanel()
         panel.nameFieldStringValue = name
-        panel.allowedContentTypes = [.png]
+        panel.allowedContentTypes = [type]
         panel.directoryURL = FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask).first
         NSApp.activate()
         panel.begin { response in

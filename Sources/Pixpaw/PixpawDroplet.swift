@@ -55,6 +55,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let tellsNotifications = "tellsNotifications"
         static let tellsCalendar = "tellsCalendar"
         static let tellsBattery = "tellsBattery"
+        static let tellsHeat = "tellsHeat"
+        static let typesAlong = "typesAlong"
+        static let carriesFiles = "carriesFiles"
+        /// The note on the sign it holds up, if any.
+        static let sign = "sign"
         static let tellsDownloads = "tellsDownloads"
         static let tellsScreenshots = "tellsScreenshots"
         static let meals = "meals"
@@ -71,6 +76,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let sounds = "sounds"
         static let friend = "friend"
         static let friendCoat = "friendCoat"
+        /// The friend's character; unset, the same as the pet's.
+        static let friendKind = "friendKind"
         static let health = "healthReminders"
         /// Before reminders had their own times: the stretch one's to begin with.
         static let healthMinutes = "healthMinutes"
@@ -89,6 +96,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private(set) var friend: CatController?
     @Published private(set) var hasFriend = false
     @Published private(set) var friendCoat: CatCoat = .gray
+    /// Who the friend is: nil for the same character as your pet.
+    @Published private(set) var friendKind: PetKind?
     @Published private(set) var isOut = false
     /// Whether the cat and its status get a row beside the notch. Off by
     /// default: the speech bubble already says everything.
@@ -98,6 +107,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var tellsNotifications = true
     @Published private(set) var tellsCalendar = true
     @Published private(set) var tellsBattery = true
+    @Published private(set) var tellsHeat = true
+    @Published private(set) var typesAlong = true
+    @Published private(set) var carriesFiles = true
+    /// The note it holds up on a sign, until you click it done.
+    @Published private(set) var signText: String?
     @Published private(set) var tellsDownloads = false
     @Published private(set) var tellsScreenshots = true
     /// The day you first let the pet out, for the shelf's tally.
@@ -157,6 +171,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var notificationsAllowed = false
     @Published private(set) var calendarAllowed = false
     private var battery: BatteryWatcher?
+    private var heat: HeatWatcher?
+    /// When it last said the Mac was working hard, so it says so now and then, not every time.
+    private var heatToldAt = Date.distantPast
     private var returns: ReturnWatcher?
     private var downloads: DownloadsWatcher?
     private var screenshots: ScreenshotWatcher?
@@ -210,6 +227,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         tellsNotifications = prefs.value(forKey: Key.tellsNotifications, default: true)
         tellsCalendar = prefs.value(forKey: Key.tellsCalendar, default: true)
         tellsBattery = prefs.value(forKey: Key.tellsBattery, default: true)
+        tellsHeat = prefs.value(forKey: Key.tellsHeat, default: true)
+        typesAlong = prefs.value(forKey: Key.typesAlong, default: true)
+        cat.typesAlong = typesAlong
+        carriesFiles = prefs.value(forKey: Key.carriesFiles, default: true)
+        cat.carriesFiles = carriesFiles
+        cat.onDeliver = { [weak self] urls in self?.addToShelf(urls) }
+        signText = prefs.value(forKey: Key.sign, as: String.self)
+        cat.holdSign(signText)
+        cat.onSignDone = { [weak self] in self?.setSign(nil) }
+        cat.onAskSign = { [weak self] in self?.askForSign() }
         // Watching Downloads can make macOS ask for folder access, so it waits
         // until it is switched on in Settings.
         tellsDownloads = prefs.value(forKey: Key.tellsDownloads, default: false)
@@ -224,6 +251,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         soundsOn = prefs.value(forKey: Key.sounds, default: true)
         hasFriend = prefs.value(forKey: Key.friend, default: false)
         friendCoat = CatCoat(rawValue: prefs.value(forKey: Key.friendCoat, default: CatCoat.gray.rawValue)) ?? .gray
+        friendKind = PetKind(rawValue: prefs.value(forKey: Key.friendKind, default: ""))
         healthOn = prefs.value(forKey: Key.health, default: true)
         reminders = Self.loadReminders(prefs)
         focusMinutes = prefs.value(forKey: Key.focusMinutes, default: 25)
@@ -356,7 +384,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Swaps the cat for another character, or back; the friend follows.
     func setKind(_ kind: PetKind) {
         cat?.kind = kind
-        friend?.kind = kind
+        friend?.kind = friendsKind
         persist()
     }
 
@@ -380,6 +408,72 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         setKind(kind)
     }
 
+    /// A note for the pet to hold up on a sign, or nil to put it down.
+    func setSign(_ text: String?) {
+        let text = text.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(CatSign.maxLength)) }.flatMap { $0.isEmpty ? nil : $0 }
+        signText = text
+        host?.preferences.setValue(text, forKey: Key.sign)
+        cat?.holdSign(text)
+    }
+
+    /// Asks what the sign should say.
+    func askForSign() {
+        let alert = NSAlert()
+        alert.messageText = "Hold a sign"
+        alert.informativeText = "Your pet carries it about until you click the sign to say it's done."
+        let field = NSTextField(frame: CGRect(x: 0, y: 0, width: 260, height: 24))
+        field.placeholderString = "Buy milk"
+        field.stringValue = signText ?? ""
+        alert.accessoryView = field
+        alert.addButton(withTitle: "Hold it up")
+        alert.addButton(withTitle: "Cancel")
+        alert.window.initialFirstResponder = field
+        NSApp.activate()
+        if alert.runModal() == .alertFirstButtonReturn { setSign(field.stringValue) }
+    }
+
+    func setCarriesFiles(_ on: Bool) {
+        carriesFiles = on
+        cat?.carriesFiles = on
+        friend?.carriesFiles = on
+        host?.preferences.setValue(on, forKey: Key.carriesFiles)
+    }
+
+    /// Puts files on Droppy's shelf the way its Services menu item, Add to
+    /// Droppy Shelf, does. Inside Droppy that is its own services provider,
+    /// called directly (asking the services server would wait on itself);
+    /// anywhere else, the service by name.
+    private func addToShelf(_ urls: [URL]) {
+        let board = NSPasteboard.withUniqueName()
+        board.clearContents()
+        board.writeObjects(urls as [NSURL])
+        let selector = NSSelectorFromString("addToShelf:userData:error:")
+        if let provider = NSApp.servicesProvider as? NSObject, provider.responds(to: selector),
+           let method = class_getInstanceMethod(type(of: provider), selector) {
+            typealias Service = @convention(c) (AnyObject, Selector, NSPasteboard, NSString, AutoreleasingUnsafeMutablePointer<NSString?>) -> Void
+            var problem: NSString?
+            unsafeBitCast(method_getImplementation(method), to: Service.self)(provider, selector, board, "" as NSString, &problem)
+            board.releaseGlobally()
+            cat?.say(problem == nil ? CatWords.shelved : CatWords.noShelf)
+            return
+        }
+        let name = board.name
+        DispatchQueue.global(qos: .userInitiated).async {
+            let done = NSPerformService("Add to Droppy Shelf", NSPasteboard(name: name))
+            DispatchQueue.main.async { [weak self] in
+                NSPasteboard(name: name).releaseGlobally()
+                self?.cat?.say(done ? CatWords.shelved : CatWords.noShelf)
+            }
+        }
+    }
+
+    func setTypesAlong(_ on: Bool) {
+        typesAlong = on
+        cat?.typesAlong = on
+        friend?.typesAlong = on
+        host?.preferences.setValue(on, forKey: Key.typesAlong)
+    }
+
     func setChases(_ chases: Bool) {
         cat?.chasesPointer = chases
         persist()
@@ -399,8 +493,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func setTells(
         notifications: Bool? = nil, calendar: Bool? = nil, battery: Bool? = nil,
         downloads: Bool? = nil, music: Bool? = nil, agents: Bool? = nil, levels: Bool? = nil,
-        headphones: Bool? = nil, screenshots: Bool? = nil
+        headphones: Bool? = nil, screenshots: Bool? = nil, heat: Bool? = nil
     ) {
+        if let heat { tellsHeat = heat; host?.preferences.setValue(heat, forKey: Key.tellsHeat) }
         if let screenshots { tellsScreenshots = screenshots; host?.preferences.setValue(screenshots, forKey: Key.tellsScreenshots) }
         if let headphones { tellsHeadphones = headphones; host?.preferences.setValue(headphones, forKey: Key.tellsHeadphones) }
         if let levels { tellsLevels = levels; host?.preferences.setValue(levels, forKey: Key.tellsLevels) }
@@ -676,9 +771,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func importOwnPet(replacing slot: Int? = nil) {
         guard slot != nil || OwnPets.freeSlot != nil else { return }
         let panel = NSOpenPanel()
-        panel.allowedContentTypes = [.png]
+        // A new pet may also come as a .pixpaw file someone shared.
+        panel.allowedContentTypes = slot == nil ? [.png, OwnPetPack.type] : [.png]
         panel.allowsMultipleSelection = false
-        panel.message = "Choose your pet's sprite sheet: one 20 × 20 cell for each pose, sitting first."
+        panel.message = slot == nil ? "Choose your pet's sprite sheet (one 20 × 20 cell for each pose, sitting first), or a .pixpaw file someone shared."
+            : "Choose your pet's sprite sheet: one 20 × 20 cell for each pose, sitting first."
         NSApp.activate()
         panel.begin { [weak self] response in
             guard response == .OK, let url = panel.url else { return }
@@ -689,6 +786,15 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func addOwnPet(from url: URL, replacing slot: Int?) {
         do {
             guard let data = try? Data(contentsOf: url) else { throw OwnPetProblem.unreadable }
+            if slot == nil, url.pathExtension.lowercased() == "pixpaw" {
+                guard let free = OwnPets.freeSlot else { return }
+                let pet = try OwnPets.unpack(data, into: free)
+                ownPetProblem = nil
+                ownPets.append(pet)
+                saveOwnPets()
+                setKind(pet.kind)
+                return
+            }
             let sheet = try OwnPets.sheet(from: data)
             ownPetProblem = nil
             if let slot, let index = ownPets.firstIndex(where: { $0.slot == slot }) {
@@ -723,6 +829,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func removeOwnPet(_ slot: Int) {
         guard let pet = ownPets.first(where: { $0.slot == slot }) else { return }
         ownPets.removeAll { $0.slot == slot }
+        if friendKind == pet.kind { setFriendKind(nil) }
         if cat?.kind == pet.kind { setKind(.cat) }
         saveOwnPets()
     }
@@ -765,6 +872,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func playOwnSound(_ sound: OwnSound, of slot: Int) {
         guard let pet = ownPets.first(where: { $0.slot == slot }), let url = OwnPets.sound(sound, of: pet.kind) else { return }
         CatSounds.shared.preview(url)
+    }
+
+    /// A pet you drew in one .pixpaw file, its sounds and all, for a friend
+    /// to bring in.
+    func sharePet(_ slot: Int) {
+        guard let pet = ownPets.first(where: { $0.slot == slot }), let data = OwnPets.pack(pet) else { return }
+        PetPhoto.save(data, named: "\(pet.name).pixpaw", type: OwnPetPack.type)
     }
 
     /// A character's sprite sheet, to draw over or to share.
@@ -863,6 +977,24 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             quiet?.start()
         } else {
             quiet?.stop()
+        }
+
+        if out, tellsHeat {
+            if heat == nil {
+                heat = HeatWatcher { [weak self] level in
+                    guard let self, let cat = self.cat else { return }
+                    cat.busyMac = level != .calm
+                    self.friend?.busyMac = level != .calm
+                    // Said at most every half hour.
+                    guard level != .calm, Date().timeIntervalSince(self.heatToldAt) > 30 * 60 else { return }
+                    self.heatToldAt = Date()
+                    cat.say(level == .hot ? CatWords.hotMac : CatWords.busyMac)
+                }
+            }
+            heat?.start()
+        } else {
+            heat?.stop()
+            cat.busyMac = false
         }
 
         if out, tellsBattery {
@@ -981,6 +1113,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         music?.stop()
         music = nil
         battery?.stop()
+        heat?.stop()
+        heat = nil
         returns?.stop()
         downloads?.stop()
         screenshots?.stop()
@@ -1052,7 +1186,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// cut short; the screen may still go dark. Let go the moment none is.
     /// A closed lid still sleeps a laptop that is not on an external display.
     private func refreshKeepAwake() {
-        let wanted = awakeForAgents && agents.values.contains { $0.state == .working }
+        // The pets code along at their laptops while one works.
+        let working = agents.values.contains { $0.state == .working }
+        cat?.agentWorking = working
+        friend?.agentWorking = working
+        let wanted = awakeForAgents && working
         if wanted, awakeAssertion == nil {
             var id = IOPMAssertionID(0)
             let made = IOPMAssertionCreateWithName(kIOPMAssertPreventUserIdleSystemSleep as CFString,
@@ -1101,6 +1239,19 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         updateFriend()
     }
 
+    /// A friend of another kind: a dog for your cat, a rabbit for your shark.
+    func setFriendKind(_ kind: PetKind?) {
+        friendKind = kind
+        host?.preferences.setValue(kind?.rawValue ?? "", forKey: Key.friendKind)
+        friend?.kind = friendsKind
+    }
+
+    /// The friend's character: the one chosen for it, or else your pet's.
+    var friendsKind: PetKind {
+        if let friendKind, !friendKind.isOwn || OwnPets.pet(friendKind) != nil { return friendKind }
+        return cat?.kind ?? .cat
+    }
+
     func setFriendCoat(_ coat: CatCoat) {
         friendCoat = coat
         host?.preferences.setValue(coat.rawValue, forKey: Key.friendCoat)
@@ -1118,10 +1269,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         if friend == nil {
             let friend = CatController(
-                kind: cat.kind, coat: friendCoat, chasesPointer: cat.chasesPointer, roaming: cat.roaming,
+                kind: friendsKind, coat: friendCoat, chasesPointer: cat.chasesPointer, roaming: cat.roaming,
                 pouncesOnDrags: cat.pouncesOnDrags, chatty: false, pets: 0, lastFed: cat.lastFed
             )
             friend.isFriend = true
+            friend.typesAlong = typesAlong
+            friend.carriesFiles = carriesFiles
+            friend.onDeliver = { [weak self] urls in self?.addToShelf(urls) }
             friend.forwardAward = { [weak cat] source in cat?.earn(source) }
             friend.buddy = cat
             cat.buddy = friend
@@ -1550,7 +1704,7 @@ extension PixpawDroplet: SettingsPaneProviding {
 
     public var settingsSearchEntries: [SettingsSearchEntry] {
         [
-            SettingsSearchEntry(title: "A second cat", keywords: ["cat", "friend", "two", "companion"]),
+            SettingsSearchEntry(title: "A second pet", keywords: ["cat", "friend", "two", "companion", "dog", "second", "pair"]),
             SettingsSearchEntry(title: "Wardrobe", keywords: ["cat", "hat", "collar", "points", "happiness", "unlock"]),
             SettingsSearchEntry(title: "Festival decorations", keywords: ["festival", "halloween", "new year", "christmas", "songkran", "valentine", "fireworks", "ghost", "snow"]),
             SettingsSearchEntry(title: "Focus session", keywords: ["focus", "pomodoro", "timer", "work", "break"]),
@@ -1560,12 +1714,16 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Your own pets", keywords: ["draw", "design", "custom", "own", "sprite", "pixel", "png", "aseprite", "piskel", "template", "import"]),
             SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal"]),
             SettingsSearchEntry(title: "Where the cat walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
+            SettingsSearchEntry(title: "Sign", keywords: ["sign", "note", "todo", "to-do", "reminder", "board", "placard"]),
+            SettingsSearchEntry(title: "Carry files to your shelf", keywords: ["shelf", "file", "drop", "carry", "fetch", "drag"]),
+            SettingsSearchEntry(title: "Type along", keywords: ["typing", "keyboard", "keys", "bongo", "laptop", "type"]),
             SettingsSearchEntry(title: "Follow the cursor", keywords: ["cat", "chase", "pointer", "mouse"]),
             SettingsSearchEntry(title: "Pounce on dragged files", keywords: ["cat", "drag", "file", "pounce", "play"]),
             SettingsSearchEntry(title: "Quiet during calls and screen sharing", keywords: ["cat", "quiet", "meeting", "privacy", "share", "zoom"]),
             SettingsSearchEntry(title: "Mac notifications", keywords: ["cat", "speech", "bubble", "alert", "banner"]),
             SettingsSearchEntry(title: "Calendar events", keywords: ["cat", "meeting", "reminder", "event", "appointment"]),
             SettingsSearchEntry(title: "Battery", keywords: ["cat", "battery", "charge", "power", "sleepy", "yawn"]),
+            SettingsSearchEntry(title: "Busy Mac", keywords: ["cpu", "heat", "hot", "busy", "fan", "load", "runcat", "sweat"]),
             SettingsSearchEntry(title: "Volume and brightness", keywords: ["cat", "sound", "volume", "mute", "brightness", "screen"]),
             SettingsSearchEntry(title: "Headphones", keywords: ["cat", "airpods", "bluetooth", "headset", "connect"]),
             SettingsSearchEntry(title: "Screenshots", keywords: ["screenshot", "photo", "pose", "camera"]),
@@ -1589,6 +1747,7 @@ private struct PixpawSettings: View {
     @State private var newReminder = ""
     @State private var newReminderMinutes = 60
     @State private var templateKind: PetKind = .cat
+    @State private var newSign = ""
     @State private var renamingSlot: Int?
     @State private var newName = ""
 
@@ -1645,6 +1804,7 @@ private struct PixpawSettings: View {
                         Button("Let it out") { droplet.setKind(pet.kind) }
                         Button("Rename…") { newName = pet.name; renamingSlot = pet.slot }
                         Button("New picture…") { droplet.importOwnPet(replacing: pet.slot) }
+                        Button("Share as a .pixpaw file…") { droplet.sharePet(pet.slot) }
                         Button("Save picture…") { droplet.saveSheet(of: pet.kind) }
                         Divider()
                         ForEach(OwnSound.allCases) { sound in
@@ -1679,6 +1839,11 @@ private struct PixpawSettings: View {
             Label("\(sound.title) sound, \(sound.when): \(has ? "its own" : "the \(pet.actsLike.title.lowercased())'s")",
                   systemImage: has ? "speaker.wave.2.fill" : "speaker.wave.2")
         }
+    }
+
+    private func holdSign() {
+        droplet.setSign(newSign)
+        newSign = ""
     }
 
     private func finishRenaming(_ pet: OwnPet) {
@@ -1746,6 +1911,28 @@ private struct PixpawSettings: View {
                         subtitle: "A meow when the cat talks, a purr when you pet it, crunching while it eats. Silent while quiet.",
                         isOn: Binding(get: { droplet.soundsOn }, set: { droplet.setSounds($0) })
                     )
+                    DropletControlRow(title: "Sign", icon: "signpost.right",
+                                      infoTip: "A note your pet holds up on a little sign and carries about until you click the sign to say it's done. Hidden while it's quiet. Also from its menu, or droppy://droplet/pixpaw/sign?text=…") {
+                        if let sign = droplet.signText {
+                            HStack(spacing: 6) {
+                                Text(sign)
+                                    .lineLimit(1)
+                                    .foregroundStyle(.secondary)
+                                    .frame(maxWidth: 180, alignment: .trailing)
+                                Button("Put down") { droplet.setSign(nil) }
+                            }
+                        } else {
+                            HStack(spacing: 6) {
+                                TextField("Sign", text: $newSign, prompt: Text("Buy milk…"))
+                                    .labelsHidden()
+                                    .textFieldStyle(.roundedBorder)
+                                    .frame(width: 170)
+                                    .onSubmit(holdSign)
+                                Button("Hold up", action: holdSign)
+                                    .disabled(newSign.trimmingCharacters(in: .whitespaces).isEmpty)
+                            }
+                        }
+                    }
                 }
             }
 
@@ -1763,8 +1950,8 @@ private struct PixpawSettings: View {
                     }
                     if droplet.ownPets.count < OwnPets.limit {
                         DropletControlRow(title: "Add a pet you drew", icon: "plus.circle",
-                                          infoTip: "Up to \(OwnPets.limit). It comes out as soon as it's in; pick another character to swap back.") {
-                            Button("Choose PNG…") { droplet.importOwnPet() }
+                                          infoTip: "A PNG you drew, or a .pixpaw file a friend shared. Up to \(OwnPets.limit); it comes out as soon as it's in, and picking another character swaps back.") {
+                            Button("Choose…") { droplet.importOwnPet() }
                         }
                     }
                     DropletControlRow(title: "Start from a template", icon: "square.grid.3x3",
@@ -1811,6 +1998,16 @@ private struct PixpawSettings: View {
                         title: "Follow the cursor",
                         subtitle: "The cat runs after your pointer whenever it moves far away. Off, it just wanders.",
                         isOn: Binding(get: { cat.chasesPointer }, set: { droplet.setChases($0) })
+                    )
+                    DropletToggleRow(
+                        title: "Carry files to your shelf",
+                        subtitle: "Hold a file you're dragging over your pet for a moment, then drop it: your pet runs it over to Droppy's shelf. A file dragged past it drops wherever you were taking it.",
+                        isOn: Binding(get: { droplet.carriesFiles }, set: { droplet.setCarriesFiles($0) })
+                    )
+                    DropletToggleRow(
+                        title: "Type along",
+                        subtitle: "While you type, your pet sits at its little laptop and taps along with your keys. Only how many keys go down is counted, never which ones, and it needs no permission.",
+                        isOn: Binding(get: { droplet.typesAlong }, set: { droplet.setTypesAlong($0) })
                     )
                     DropletToggleRow(
                         title: "Pounce on dragged files",
@@ -1882,11 +2079,21 @@ private struct PixpawSettings: View {
             } content: {
                 DropletSettingsCard {
                     DropletToggleRow(
-                        title: "A second cat",
-                        subtitle: "A friend that roams with your cat, sits with it and plays tag. It never talks, and its happiness counts for your cat.",
+                        title: "A second pet",
+                        subtitle: "A friend that roams with your pet, sits with it and plays tag. It never talks, and its happiness counts for your pet.",
                         isOn: Binding(get: { droplet.hasFriend }, set: { droplet.setFriend($0) })
                     )
-                    if cat.kind.hasCoats {
+                    DropletGroupedPickerRow(title: "Friend", subtitle: "Any character, or one you drew: a dog for your cat, a rabbit for your shark.") {
+                        Picker("Friend", selection: Binding(get: { droplet.friendKind }, set: { droplet.setFriendKind($0) })) {
+                            Text("Same as your pet").tag(PetKind?.none)
+                            ForEach(PetKind.alphabetical) { kind in
+                                Text(kind.title).tag(PetKind?.some(kind))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                    if droplet.friendsKind.hasCoats {
                         DropletGroupedPickerRow(title: "Friend's coat") {
                             Picker("Friend's coat", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
                                 ForEach(CatCoat.allCases) { coat in
@@ -1938,6 +2145,11 @@ private struct PixpawSettings: View {
                         title: "Battery",
                         subtitle: "Low battery at 20% and 10%, plugging in, and a full charge. Below 20% it gets sleepy, yawning and strolling slowly, until you plug in.",
                         isOn: Binding(get: { droplet.tellsBattery }, set: { droplet.setTells(battery: $0) })
+                    )
+                    DropletToggleRow(
+                        title: "Busy Mac",
+                        subtitle: "When the Mac works flat out for half a minute or runs hot, your pet hurries about with a bead of sweat, and says so now and then. Only the overall load is read, never which apps.",
+                        isOn: Binding(get: { droplet.tellsHeat }, set: { droplet.setTells(heat: $0) })
                     )
                     DropletToggleRow(
                         title: "Volume and brightness",
@@ -2029,7 +2241,7 @@ private struct PixpawSettings: View {
                 DropletSettingsCard {
                     DropletToggleRow(
                         title: "Agent updates",
-                        subtitle: "Says when an agent starts, finishes or needs you, and comes over when it needs you.",
+                        subtitle: "Says when an agent starts, finishes or needs you. While one works your pet codes along at its laptop; it celebrates when it's done and comes over when it needs you.",
                         isOn: Binding(get: { droplet.tellsAgents }, set: { droplet.setTells(agents: $0) })
                     )
                     DropletToggleRow(
@@ -2185,6 +2397,9 @@ extension PixpawDroplet: DropletURLHandling {
             setQuietByHand(["1", "on", "true"].contains(request.query["on"]?.lowercased() ?? "1"))
         case "agent":
             agentEvent(name: request.query["name"] ?? "", state: request.query["state"] ?? "", text: request.query["text"], usage: request.query["usage"])
+        case "sign":
+            // sign?text=Buy%20milk holds it up; sign with no text puts it down.
+            setSign(request.query["text"])
         case "say":
             // Bounded, and shown as plain text only.
             if let text = request.query["text"]?.prefix(140), !text.isEmpty { cat?.say(CatLine(text: String(text), symbol: "bubble.left.fill")) }

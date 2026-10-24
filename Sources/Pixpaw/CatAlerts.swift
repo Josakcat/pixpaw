@@ -34,6 +34,22 @@ enum CatWords {
     static let giftTaken = ["You like it?", "It's for you!", "I found it myself!"]
     /// Shaken about while carried.
     static let dizzy = ["Whoa…", "The room is spinning!", "Everything's wobbly…"]
+    /// The Mac working hard, or running hot.
+    static let busyMac = CatLine(text: "Phew! Your Mac is working hard.", symbol: "flame.fill", seconds: 4)
+    static let hotMac = CatLine(text: "It's getting hot in here!", symbol: "thermometer.high", seconds: 4)
+    /// A file held over it, and dropped on it for the shelf.
+    static let dropOnMe = CatLine(text: "Drop it on me! I'll take it to your shelf.", symbol: "tray.and.arrow.down.fill", seconds: 3)
+    static func carrying(_ count: Int) -> CatLine {
+        CatLine(text: count == 1 ? "Taking it to your shelf!" : "Taking all \(count) to your shelf!", symbol: "tray.and.arrow.down.fill", seconds: 3)
+    }
+    static let shelved = CatLine(text: "On your shelf!", symbol: "checkmark.circle.fill", seconds: 2)
+    static let noShelf = CatLine(text: "I couldn't reach your shelf.", symbol: "exclamationmark.triangle.fill", seconds: 3)
+    /// The sign clicked done.
+    static let signDone = ["Done! Nice work.", "One less thing!", "Ta-da!", "Crossed off!"]
+    /// Up the side of the screen.
+    static let climbed = ["Look how high I am!", "Hello up here!", "Nice view!"]
+    /// Thrown across the screen.
+    static let thrown = ["Wheee!", "Again! Again!", "I can fly!", "Whoooa!"]
     /// You just took a screenshot.
     static func screenshot() -> CatLine {
         CatLine(text: ["Did you get my good side?", "Cheese!", "Ooh, a photo!", "Was I in it?"].randomElement()!, symbol: "camera.fill")
@@ -1226,5 +1242,77 @@ final class ReminderCoach {
         if pick.isYours { lastShown[pick.id] = now } else { active[pick.id] = 0 }
         lastAny = now
         onRemind(pick)
+    }
+}
+
+/// Watches how hard the Mac is working, the way RunCat does: the processors'
+/// load over the last half minute, and the system's own thermal state. Busy
+/// is a load over 85% for that long, or the Mac running hot.
+@MainActor
+final class HeatWatcher {
+    enum Heat { case calm, busy, hot }
+
+    private var timer: Timer?
+    private var lastTicks: (busy: UInt64, total: UInt64)?
+    private var loads: [Double] = []
+    private var heat: Heat = .calm
+    private let onChange: (Heat) -> Void
+
+    init(onChange: @escaping (Heat) -> Void) {
+        self.onChange = onChange
+    }
+
+    func start() {
+        guard timer == nil else { return }
+        lastTicks = Self.ticks()
+        timer = Timer.scheduledTimer(withTimeInterval: 5, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.check() }
+        }
+    }
+
+    func stop() {
+        timer?.invalidate()
+        timer = nil
+        loads = []
+        lastTicks = nil
+        if heat != .calm { heat = .calm; onChange(.calm) }
+    }
+
+    private func check() {
+        if let now = Self.ticks(), let last = lastTicks, now.total > last.total {
+            loads.append(Double(now.busy - last.busy) / Double(now.total - last.total))
+            loads = Array(loads.suffix(6))
+            lastTicks = now
+        }
+        let thermal = ProcessInfo.processInfo.thermalState
+        let busy = loads.count == 6 && loads.allSatisfy { $0 > 0.85 }
+        // Calming down takes a little longer than heating up, so it doesn't flicker.
+        let calm = loads.suffix(2).allSatisfy { $0 < 0.6 }
+        let next: Heat
+        if thermal == .serious || thermal == .critical {
+            next = .hot
+        } else if busy || (heat == .busy && !calm) {
+            next = .busy
+        } else {
+            next = .calm
+        }
+        guard next != heat else { return }
+        heat = next
+        onChange(next)
+    }
+
+    /// Ticks every processor has spent busy, and in all, since startup.
+    private static func ticks() -> (busy: UInt64, total: UInt64)? {
+        var info = host_cpu_load_info()
+        var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
+        let result = withUnsafeMutablePointer(to: &info) {
+            $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
+                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+            }
+        }
+        guard result == KERN_SUCCESS else { return nil }
+        let user = UInt64(info.cpu_ticks.0), system = UInt64(info.cpu_ticks.1)
+        let idle = UInt64(info.cpu_ticks.2), nice = UInt64(info.cpu_ticks.3)
+        return (user + system + nice, user + system + idle + nice)
     }
 }

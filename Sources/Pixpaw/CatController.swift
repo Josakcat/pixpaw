@@ -45,6 +45,8 @@ enum CatMood: Equatable {
     case playing
     /// Dropping to whatever is below: let go of, or its window gone.
     case falling
+    /// Up the side of the screen, feet to the wall, then letting go.
+    case climbing
 
     var title: String {
         switch self {
@@ -63,6 +65,7 @@ enum CatMood: Equatable {
         case .pouncing: "Pounce!"
         case .playing: "Playing with yarn"
         case .falling: "Falling"
+        case .climbing: "Climbing the wall"
         }
     }
 
@@ -83,6 +86,7 @@ enum CatMood: Equatable {
         case .pouncing: "Pounce!"
         case .playing: "Playing"
         case .falling: "Whoa"
+        case .climbing: "Climbing"
         }
     }
 
@@ -171,6 +175,9 @@ final class CatController: ObservableObject {
     private var stretchTicks = 0
     /// Low battery: it yawns now and then and strolls slowly, until plugged in.
     @Published var lowBattery = false
+    /// The Mac working hard or running hot: it hurries about, sweating, the
+    /// way RunCat runs faster the busier the Mac is.
+    @Published var busyMac = false { didSet { if busyMac != oldValue { redraw() } } }
     private var yawnTicks = 0
     /// 1 just after a meal, 0 after `hungerHours` without one.
     @Published private(set) var fullness: Double = 1
@@ -187,10 +194,33 @@ final class CatController: ObservableObject {
     var onPhoto: (() -> Void)?
     /// Start or stop a focus session; the droplet keeps the clock.
     var onFocus: (() -> Void)?
+    /// Files dropped on it, to take to the shelf when it gets there.
+    var onDeliver: (([URL]) -> Void)?
+    /// Takes files dropped on it to the shelf.
+    var carriesFiles = true
+    /// A dragged file held over it since then; after a moment it takes the drop.
+    private var dropHoverSince: Date?
+    /// Taking drops right now: a file has been held over it long enough.
+    fileprivate private(set) var acceptsDrop = false
+    /// Files it is carrying, handed over when it stops.
+    private var delivering: [URL]?
     /// A focus session is on: it sits by you quietly and keeps to itself.
     @Published var focusing = false { didSet { if focusing != oldValue { redraw() } } }
-    /// At its laptop, working along with you: sitting during a focus session.
-    var atLaptop: Bool { focusing && mood == .sitting }
+    /// A coding agent is working: it mostly sits at its laptop and codes along.
+    @Published var agentWorking = false { didSet { if agentWorking != oldValue { redraw() } } }
+    /// Types along at its laptop while you type, bobbing with your keys.
+    var typesAlong = true { didSet { if !typesAlong { typingUntil = .distantPast } } }
+    /// Until when you count as typing: a few seconds after the last key.
+    private var typingUntil = Date.distantPast
+    /// How many keys have gone down since the Mac started, as macOS counts
+    /// them. Only the count is read, never which keys.
+    private var keyCount: UInt32 = 0
+    /// Ticks left of the little bob for the latest key.
+    private var tapTicks = 0
+    private var typing: Bool { typesAlong && Date() < typingUntil }
+    /// At its laptop, working along with you: sitting during a focus session,
+    /// while an agent works, or while you type.
+    var atLaptop: Bool { (focusing || agentWorking || typing) && mood == .sitting }
     /// The other cat, when there are two. Each sometimes wanders over to sit
     /// with the other, or runs at it for a game of tag.
     weak var buddy: CatController?
@@ -226,6 +256,13 @@ final class CatController: ObservableObject {
 
     private var panel: CatPanel?
     private let bubble = CatBubble()
+    /// A note it holds up on a sign until you click it done.
+    private let sign = CatSign()
+    /// The sign was clicked: what it said is done.
+    var onSignDone: (() -> Void)?
+    /// Hold a sign… was chosen from its menu.
+    var onAskSign: (() -> Void)?
+    var signText: String? { sign.text }
     private var catLayer: CALayer?
     private var effectLayer: CALayer?
     private var bowlPanel: CatPanel?
@@ -261,6 +298,17 @@ final class CatController: ObservableObject {
     /// Seconds since any keyboard or mouse input, read twice a second.
     private var idleSeconds: Double = 0
     private var fallSpeed: CGFloat = 0
+    /// Sideways speed while thrown, points a second; it bounces off the
+    /// screen's edges and slows in the air.
+    private var flingSpeed: CGFloat = 0
+    /// Climbing: which side of the screen (-1 left, 1 right), how high it
+    /// means to go, and, once there, how long it hangs on.
+    private var climbSide: CGFloat?
+    private var climbTop: CGFloat = 0
+    private var hangTicks = 0
+    /// Where the pointer was over the last moments of a carry, to tell how
+    /// hard it was let go.
+    private var dragTrail: [(time: TimeInterval, point: CGPoint)] = []
     private var dragOffset: CGPoint?
     /// Where the press began, so a twitch of the hand is not a drag.
     private var pressPoint: CGPoint = .zero
@@ -313,7 +361,7 @@ final class CatController: ObservableObject {
     var toyKind: ToyKind? { toy?.kind }
 
     /// Something to stalk and pounce on: a dragged file, the teaser or the laser.
-    private var hasPrey: Bool { (isDraggingFile && pouncesOnDrags) || (toy.map { $0.kind != .yarn } ?? false) }
+    private var hasPrey: Bool { (isDraggingFile && pouncesOnDrags && !acceptsDrop) || (toy.map { $0.kind != .yarn } ?? false) }
 
     private func prey(_ mouse: CGPoint) -> CGPoint {
         guard let toy, toy.kind != .yarn else { return mouse }
@@ -451,11 +499,14 @@ final class CatController: ObservableObject {
     var statusTitle: String {
         let kind = kind.actsLike
         if focusing, mood.isIdle { return "Keeping you company" }
+        if agentWorking, mood == .sitting { return "Coding along" }
+        if typing, mood == .sitting { return "Typing along" }
         if bowlIsTreat, mood == .goingToBowl { return "Off for a treat" }
         if bowlIsTreat, mood == .eating { return "Munching a treat" }
         if isHungry, mood.isIdle { return "Hungry" }
         if musicPlaying, mood == .sitting { return "Vibing to the music" }
         if lowBattery, mood.isIdle { return "Sleepy, low battery" }
+        if busyMac, mood.isIdle { return "Feeling the heat" }
         if kind == .bee {
             switch mood {
             case .sitting: return "Hovering"
@@ -536,6 +587,8 @@ final class CatController: ObservableObject {
     var statusShortTitle: String {
         let kind = kind.actsLike
         if focusing, mood.isIdle { return "Focus" }
+        if agentWorking, mood == .sitting { return "Coding" }
+        if typing, mood == .sitting { return "Typing" }
         if isHungry, mood.isIdle { return "Hungry" }
         if musicPlaying, mood == .sitting { return "Vibing" }
         if kind == .bee {
@@ -660,17 +713,22 @@ final class CatController: ObservableObject {
     /// A little celebration, when the cat is free for one.
     func celebrate() {
         guard panel != nil, mood.isIdle || mood == .happy else { return }
-        enter(.happy)
+        guard moves != .anywhere else { return enter(.happy) }
+        // A little jump for joy, landing pleased.
+        startFalling()
+        fallSpeed = -720
     }
 
     // MARK: Showing and hiding
 
     func show() {
         guard panel == nil else { return }
+        sign.onClick = { [weak self] in self?.signDone() }
         let size = CatSprites.catSize
         let panel = CatPanel(contentRect: CGRect(x: 0, y: 0, width: size.width, height: size.height + Self.effectHeight))
         let view = CatView(frame: CGRect(origin: .zero, size: panel.frame.size))
         view.controller = self
+        view.registerForDraggedTypes([.fileURL])
         view.wantsLayer = true
 
         let cat = CALayer()
@@ -734,6 +792,7 @@ final class CatController: ObservableObject {
         observers = []
         catView?.stopDisplayLink()
         catView = nil
+        sign.place(paw: nil)
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
@@ -1012,6 +1071,7 @@ final class CatController: ObservableObject {
         tick += 1
         stateTicks += 1
         if tick % 6 == 0 { idleSeconds = Self.secondsSinceInput() }
+        if typesAlong { watchTyping() }
         yawnTicks = mood == .sitting ? max(0, yawnTicks - 1) : 0
         if isStretching { stepStretch() }
         if tick % Int(Self.fps * 10) == 0 { refreshHunger() }
@@ -1040,7 +1100,7 @@ final class CatController: ObservableObject {
             if tick % 6 == 0, route?.jump == nil { planChase(to: mouse) }
             if advance(speed: Self.runSpeed) { enter(.sitting) }
         case .walking:
-            if hasPrey { buddyPlan = nil; startHunt(target) } else if toy?.kind == .yarn { buddyPlan = nil; enter(.playing) } else if bowlHasFood { buddyPlan = nil; headToBowl() } else if wantsToChase(mouse) { buddyPlan = nil; startChase(to: mouse) } else if advance(speed: buddyPlan == .tag ? Self.runSpeed : Self.walkSpeed * (lowBattery ? 0.55 : 1)) { arrived() }
+            if hasPrey { buddyPlan = nil; startHunt(target) } else if toy?.kind == .yarn { buddyPlan = nil; enter(.playing) } else if bowlHasFood { buddyPlan = nil; headToBowl() } else if wantsToChase(mouse) { buddyPlan = nil; startChase(to: mouse) } else if advance(speed: buddyPlan == .tag || busyMac || delivering != nil ? Self.runSpeed : Self.walkSpeed * (lowBattery ? 0.55 : 1)) { arrived() }
         case .sitting, .grooming:
             if dizzyTicks > 0 {
                 // Sits it out, looking this way and that.
@@ -1096,10 +1156,13 @@ final class CatController: ObservableObject {
             if stateTicks >= stateLength { finishMeal() }
         case .falling:
             fall()
+        case .climbing:
+            climb()
         }
         keepOnScreen()
         animate()
         glide(from: before)
+        placeSign(at: shown)
         bubble.update(anchor: bubbleAnchor())
     }
 
@@ -1133,6 +1196,7 @@ final class CatController: ObservableObject {
             x: glideFrom.x + (position.x - glideFrom.x) * t,
             y: glideFrom.y + (position.y - glideFrom.y) * t
         ))
+        placeSign(at: shown)
         if bubble.isShowing { bubble.update(anchor: bubbleAnchor()) }
         if let toy {
             toy.panel.setFrameOrigin(toy.kind != .yarn ? Self.spot(of: toy.kind, at: NSEvent.mouseLocation, size: toy.size) : CGPoint(
@@ -1149,12 +1213,35 @@ final class CatController: ObservableObject {
         panel?.setFrameOrigin(point)
     }
 
+    /// Holds up a note on a sign, or puts the sign down with nil.
+    func holdSign(_ text: String?) {
+        sign.hold(text)
+        placeSign(at: shown)
+    }
+
+    /// Its stick in the front paw; put away while it climbs, while it's quiet
+    /// (a note may be private on a shared screen) and while it's indoors.
+    private func placeSign(at point: CGPoint) {
+        guard sign.text != nil else { return }
+        let size = CatSprites.catSize
+        let up = panel != nil && quietReason == nil && mood != .climbing && !asleepAtHome
+        sign.place(paw: up ? CGPoint(x: point.x + size.width * (facesRight ? 0.8 : 0.2), y: point.y + 8) : nil)
+    }
+
+    /// The sign clicked: done, and pleased about it.
+    private func signDone() {
+        onSignDone?()
+        if let line = CatWords.signDone.randomElement() { remark(line) }
+        if mood.isIdle || mood == .happy { enter(.happy) }
+    }
+
     /// Over the cat's head, above any heart or Zzz.
     private func bubbleAnchor() -> CatBubble.Anchor? {
         guard panel != nil else { return nil }
         let size = CatSprites.catSize
         let headX = facesRight ? size.width * 0.72 : size.width * 0.28
-        let top = spriteHeight
+        // Over the sign, when it holds one up.
+        let top = max(spriteHeight, (sign.top ?? 0) - shown.y)
         let lift: CGFloat = (effectLayer?.opacity ?? 0) > 0 ? Self.effectHeight : 0
         return CatBubble.Anchor(point: CGPoint(x: shown.x + headX, y: shown.y + top + lift), pointsUp: false)
     }
@@ -1165,6 +1252,12 @@ final class CatController: ObservableObject {
         if headingHome {
             headingHome = false
             return settleAtHome()
+        }
+        if let side = climbSide {
+            return startClimbing(side)
+        }
+        if delivering != nil {
+            return enter(.happy)
         }
         let plan = buddyPlan
         buddyPlan = nil
@@ -1187,6 +1280,16 @@ final class CatController: ObservableObject {
         }
         // Focusing: it stays put at its laptop and works along with you.
         if focusing {
+            enter(.sitting)
+            return
+        }
+        // You're typing: it stays at its laptop and types along.
+        if typing {
+            enter(.sitting)
+            return
+        }
+        // An agent at work: back to its own laptop three times in four.
+        if agentWorking, Int.random(in: 0..<4) != 0 {
             enter(.sitting)
             return
         }
@@ -1234,6 +1337,11 @@ final class CatController: ObservableObject {
             leaveGift()
             return
         }
+        // Now and then, off to climb the side of the screen.
+        if canClimb, Int.random(in: 0..<14) == 0 {
+            goClimb()
+            return
+        }
         switch Int.random(in: 0..<10) {
         case 0..<5:
             let (spot, surface) = randomSpot()
@@ -1249,6 +1357,11 @@ final class CatController: ObservableObject {
     private func enter(_ next: CatMood) {
         if next != mood { log?("mood \(mood) -> \(next) at \(position)") }
         if next != .walking { headingHome = false }
+        if next != .walking, let files = delivering {
+            delivering = nil
+            onDeliver?(files)
+        }
+        if next != .walking, next != .climbing { climbSide = nil }
         if asleepAtHome, next != .sleeping {
             asleepAtHome = false
             // Up on a branch or in the hutch: back down to the floor first.
@@ -1816,23 +1929,116 @@ final class CatController: ObservableObject {
         perchOrigin = CGPoint(x: nowX, y: now.y)
     }
 
+    // MARK: Climbing
+
+    /// Walkers on the floor climb; fliers and perchers have better ways up.
+    private var canClimb: Bool {
+        moves != .anywhere && !kind.fliesWhenMoving && perch == nil && !asleepAtHome
+    }
+
+    /// Walks to the nearer side of the screen, to climb it when it gets there.
+    private func goClimb() {
+        let size = CatSprites.catSize
+        let floor = floorSurface(near: position)
+        let side: CGFloat = position.x + size.width / 2 < (floor.minX + floor.maxX) / 2 ? -1 : 1
+        let x = side < 0 ? floor.minX : floor.maxX - size.width
+        planRoute(to: CGPoint(x: x, y: floor.y), on: floor)
+        climbSide = side
+        enter(.walking)
+    }
+
+    private func startClimbing(_ side: CGFloat) {
+        let size = CatSprites.catSize
+        guard let area = (Self.screen(containing: CGPoint(x: position.x + size.width / 2, y: position.y + 1)) ?? NSScreen.main)?.visibleFrame
+        else { return enter(.sitting) }
+        position.x = side < 0 ? area.minX : area.maxX - size.width
+        climbTop = position.y + (area.height - size.height) * CGFloat.random(in: 0.3...0.7)
+        hangTicks = 0
+        facesRight = side > 0
+        enter(.climbing)
+        climbSide = side
+    }
+
+    /// Up the wall at a steady pace; at the top, hangs on a moment and lets go.
+    private func climb() {
+        if hangTicks > 0 {
+            hangTicks -= 1
+            if hangTicks == 0 { letGoOfWall() }
+            return
+        }
+        position.y += Self.climbSpeed / CGFloat(Self.fps)
+        if position.y >= climbTop {
+            position.y = climbTop
+            hangTicks = Int(Self.fps * Double.random(in: 1.2...2.4))
+            if Int.random(in: 0..<3) == 0, let line = CatWords.climbed.randomElement() { remark(line) }
+        }
+    }
+
+    /// Off the wall, a little push away from it, and down it goes.
+    private func letGoOfWall() {
+        let side = climbSide ?? 1
+        climbSide = nil
+        startFalling()
+        flingSpeed = -side * 160
+        facesRight = side < 0
+    }
+
+    private static let climbSpeed: CGFloat = 60
+
     private func startFalling() {
         route = nil
         perch = nil
         perchOrigin = nil
         fallSpeed = 0
+        flingSpeed = 0
         enter(.falling)
     }
 
     private func fall() {
+        let dt = 1 / CGFloat(Self.fps)
+        if flingSpeed != 0 || fallSpeed < 0 { flyThrown(dt) }
+        // A flier, thrown, glides to a stop where it is instead of falling.
+        if moves == .anywhere {
+            fallSpeed *= pow(0.08, dt)
+            position.y -= fallSpeed * dt
+            if abs(flingSpeed) < 30, abs(fallSpeed) < 30 { flingSpeed = 0; enter(.sitting) }
+            return
+        }
         let below = surface(below: CGPoint(x: position.x + CatSprites.catSize.width / 2, y: position.y))
-        fallSpeed += Self.gravity / CGFloat(Self.fps)
-        position.y -= fallSpeed / CGFloat(Self.fps)
+        fallSpeed += Self.gravity * dt
+        position.y -= fallSpeed * dt
         if position.y <= below.y {
             position.y = below.y
             land(on: below)
             lastMouseMove = .distantPast
+            // Thrown hard, it lands seeing stars for a moment.
+            if fallSpeed > 1500 || abs(flingSpeed) > 900 {
+                dizzyTicks = max(dizzyTicks, Int(Self.fps * 1.5))
+            }
+            flingSpeed = 0
             enter(bowlHasFood || dizzyTicks > 0 ? .sitting : .happy)
+        }
+    }
+
+    /// Sideways through the air, slowing, off the screen's sides and top.
+    private func flyThrown(_ dt: CGFloat) {
+        let size = CatSprites.catSize
+        position.x += flingSpeed * dt
+        flingSpeed *= pow(moves == .anywhere ? 0.08 : 0.6, dt)
+        let centre = CGPoint(x: position.x + size.width / 2, y: position.y + size.height / 2)
+        guard let area = (Self.screen(containing: centre) ?? NSScreen.main)?.visibleFrame else { return }
+        if position.x < area.minX {
+            position.x = area.minX
+            flingSpeed = abs(flingSpeed) * 0.55
+            facesRight = true
+        } else if position.x > area.maxX - size.width {
+            position.x = area.maxX - size.width
+            flingSpeed = -abs(flingSpeed) * 0.55
+            facesRight = false
+        }
+        if position.y > area.maxY - size.height, fallSpeed < 0 {
+            position.y = area.maxY - size.height
+            fallSpeed = abs(fallSpeed) * 0.3
         }
     }
 
@@ -1945,10 +2151,12 @@ final class CatController: ObservableObject {
         case .walking, .goingToBowl:
             // A four-beat walk, 1-2-3-2, at six steps a second.
             next = route?.jump != nil ? .run1
-                : buddyPlan == .tag ? ((tick / 2) % 2 == 0 ? .run1 : .run2)
+                : buddyPlan == .tag || busyMac || delivering != nil ? ((tick / 2) % 2 == 0 ? .run1 : .run2)
                 : [CatFrame.walk1, .walk2, .walk3, .walk2][(tick / 2) % 4]
         case .chasing: next = route?.jump != nil ? .run1 : ((tick / 2) % 2 == 0 ? .run1 : .run2)
         case .jumping: next = .run1
+        // Hand over hand up the wall; still at the top, looking about.
+        case .climbing: next = hangTicks > 0 ? .sit : [CatFrame.walk1, .walk2, .walk3, .walk2][(tick / 3) % 4]
         case .hunting: next = route?.jump != nil ? .run1 : ((tick / 2) % 2 == 0 ? .run1 : .run2)
         case .crouching: next = (stateTicks / 2) % 2 == 0 ? .crouch1 : .crouch2
         case .pouncing: next = .run1
@@ -1975,6 +2183,8 @@ final class CatController: ObservableObject {
         if mood != .held { legSwing = 0 }
         if next != frame { frame = next }
         bob = (mood == .sitting && musicPlaying && (tick / 5) % 2 == 1) ? CatSprites.scale * 2 : 0
+        // A key went down: it taps along, a pixel up and back.
+        if atLaptop, tapTicks > 0 { bob += CatSprites.scale }
         if kind.flies, mood != .held, mood != .sleeping, mood != .eating {
             // A gentle hover, one art pixel up and down.
             bob += [0, 1, 2, 1][(tick / 3) % 4] * CatSprites.scale / 2
@@ -1997,8 +2207,8 @@ final class CatController: ObservableObject {
 
     private func redraw() {
         guard let catLayer, let effectLayer else { return }
-        let effectShowing = mood == .happy || mood == .sleeping || (mood == .sitting && (isHungry || musicPlaying || dizzyTicks > 0 || yawnTicks > 0 || focusing))
-        let look = "\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(wearsHeadphones)|\(costume ?? "")|\(legSwing)|\(atLaptop)"
+        let effectShowing = mood == .happy || mood == .sleeping || (mood == .sitting && (isHungry || musicPlaying || dizzyTicks > 0 || yawnTicks > 0 || focusing || agentWorking || typing || busyMac)) || (mood == .walking && busyMac)
+        let look = "\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(wearsHeadphones)|\(costume ?? "")|\(legSwing)|\(atLaptop)|\(mood == .climbing ? climbSide ?? 0 : 0)"
         if let drawn, drawn.frame == frame, drawn.coat == coat, drawn.right == facesRight, drawn.bob == bob,
            drawn.look == look, !effectShowing, effectLayer.opacity == 0 {
             return
@@ -2015,7 +2225,16 @@ final class CatController: ObservableObject {
             // Feet on the window's floor; a hat makes the image taller, upward.
             catLayer.position = CGPoint(x: CatSprites.catSize.width / 2, y: h / 2 + bob)
         }
-        catLayer.setAffineTransform(facesRight || mood == .held ? .identity : CGAffineTransform(scaleX: -1, y: 1))
+        if mood == .climbing, let side = climbSide, let sprite {
+            // Feet to the wall, head up: turned a quarter, hugging that side.
+            let w = CGFloat(sprite.width) * CatSprites.scale, h = CGFloat(sprite.height) * CatSprites.scale
+            let size = CatSprites.catSize
+            catLayer.position = CGPoint(x: side > 0 ? size.width - h / 2 : h / 2, y: w / 2)
+            catLayer.setAffineTransform(side > 0 ? CGAffineTransform(rotationAngle: .pi / 2)
+                                                 : CGAffineTransform(scaleX: -1, y: 1).concatenating(CGAffineTransform(rotationAngle: -.pi / 2)))
+        } else {
+            catLayer.setAffineTransform(facesRight || mood == .held ? .identity : CGAffineTransform(scaleX: -1, y: 1))
+        }
 
         let size = CatSprites.catSize
         let scale = CatSprites.scale
@@ -2026,8 +2245,9 @@ final class CatController: ObservableObject {
         case .sitting where dizzyTicks > 0: effect = [CatEffect.dizzy1, .dizzy2, .dizzy3][(tick / 2) % 3]
         case .sitting where yawnTicks > 0: effect = .zzz
         case .sitting where isHungry: effect = .fish
+        case .sitting where busyMac, .walking where busyMac: effect = .sweat
         // Working along with you: a little code floats up from the laptop.
-        case .sitting where focusing: effect = .code
+        case .sitting where focusing || agentWorking || typing: effect = .code
         case .sitting where musicPlaying: effect = .note
         default: effect = nil
         }
@@ -2061,12 +2281,44 @@ final class CatController: ObservableObject {
         panel?.setFrameOrigin(position)
     }
 
+    /// Files dropped on it: it runs them over beneath the notch, to the shelf.
+    fileprivate func carry(_ urls: [URL]) {
+        acceptsDrop = false
+        dropHoverSince = nil
+        guard !urls.isEmpty else { return }
+        say(CatWords.carrying(urls.count))
+        let size = CatSprites.catSize
+        let area = (Self.screen(containing: CGPoint(x: position.x + size.width / 2, y: position.y + 1)) ?? NSScreen.main)?.visibleFrame ?? .zero
+        delivering = urls
+        if moves == .anywhere {
+            planRoute(to: clamp(CGPoint(x: area.midX - size.width / 2, y: area.maxY - size.height), near: CGPoint(x: area.midX, y: area.midY)), on: nil)
+        } else {
+            let floor = floorSurface(near: position)
+            planRoute(to: CGPoint(x: min(max(area.midX - size.width / 2, floor.minX), floor.maxX - size.width), y: floor.y), on: floor)
+        }
+        enter(.walking)
+    }
+
     /// Only the cat's own rectangle takes clicks; everything around it passes through.
     private func updateClickThrough(_ mouse: CGPoint) {
         guard let panel, dragOffset == nil else { return }
         let body = CGRect(origin: position, size: CatSprites.catSize).insetBy(dx: 6, dy: 2)
-        // While a file is dragged the cat must never be a drop target.
-        let ignores = isDraggingFile || !body.contains(mouse)
+        let over = body.contains(mouse)
+        // A file dragged past it drops wherever it was going; held over it
+        // for a moment, it takes it.
+        if isDraggingFile, carriesFiles, over, NSEvent.pressedMouseButtons & 1 != 0 {
+            let since = dropHoverSince ?? Date()
+            dropHoverSince = since
+            if !acceptsDrop, Date().timeIntervalSince(since) >= 0.5 {
+                acceptsDrop = true
+                if mood != .held { enter(.sitting) }
+                say(CatWords.dropOnMe)
+            }
+        } else {
+            dropHoverSince = nil
+            acceptsDrop = false
+        }
+        let ignores = isDraggingFile ? !(acceptsDrop && over) : !over
         if panel.ignoresMouseEvents != ignores { panel.ignoresMouseEvents = ignores }
     }
 
@@ -2101,6 +2353,7 @@ final class CatController: ObservableObject {
             perchOrigin = nil
             carrySpeed = 0
             shakes = []
+            dragTrail = []
             carryDirection = 0
             enter(.held)
         } else {
@@ -2115,6 +2368,9 @@ final class CatController: ObservableObject {
                 shakes.removeAll { now - $0 > 1.5 }
             }
         }
+        let now = CACurrentMediaTime()
+        dragTrail.append((now, screenPoint))
+        dragTrail.removeAll { now - $0.time > 0.12 }
         // Held up under the arms: the head sits just below the pointer, the
         // rest of the cat hanging from it.
         position = CGPoint(x: screenPoint.x - Self.heldGrip.x, y: screenPoint.y - Self.heldGrip.y)
@@ -2147,11 +2403,41 @@ final class CatController: ObservableObject {
         }
         shakes = []
         position = clamp(position, near: CGPoint(x: position.x + CatSprites.catSize.width / 2, y: position.y))
-        // Let go in mid-air, it drops to whatever is below unless it may
-        // stand anywhere.
-        if moves == .anywhere { enter(.sitting) } else { startFalling() }
+        let fling = throwSpeed()
+        dragTrail = []
+        if hypot(fling.dx, fling.dy) > Self.throwThreshold {
+            // Let go mid-swing: it flies off the way it was going.
+            startFalling()
+            flingSpeed = fling.dx
+            fallSpeed = -fling.dy
+            facesRight = fling.dx >= 0
+            if Int.random(in: 0..<3) == 0, let line = CatWords.thrown.randomElement() { remark(line) }
+        } else if moves == .anywhere {
+            // Let go in mid-air, it drops to whatever is below unless it may
+            // stand anywhere.
+            enter(.sitting)
+        } else {
+            startFalling()
+        }
         animate()
         place()
+    }
+
+    /// Faster than this when let go, in points a second, and it's a throw.
+    private static let throwThreshold: CGFloat = 650
+    /// The fastest a throw goes, so a flick of the trackpad can't send it
+    /// across three screens.
+    private static let throwLimit: CGFloat = 2400
+
+    /// How fast the pointer was going when it let go, over the last tenth of a second.
+    private func throwSpeed() -> CGVector {
+        guard let first = dragTrail.first, let last = dragTrail.last, last.time - first.time > 0.01,
+              CACurrentMediaTime() - last.time < 0.08 else { return .zero }
+        let time = CGFloat(last.time - first.time)
+        var speed = CGVector(dx: (last.point.x - first.point.x) / time, dy: (last.point.y - first.point.y) / time)
+        let size = hypot(speed.dx, speed.dy)
+        if size > Self.throwLimit { speed = CGVector(dx: speed.dx * Self.throwLimit / size, dy: speed.dy * Self.throwLimit / size) }
+        return speed
     }
 
     /// A click, or a stroke with the pointer: a purr and a pleased moment.
@@ -2245,6 +2531,23 @@ final class CatController: ObservableObject {
 
     private static func screen(containing point: CGPoint) -> NSScreen? {
         NSScreen.screens.first { NSMouseInRect(point, $0.frame, false) }
+    }
+
+    /// Counts keys going down (only how many, never which) and sits down at
+    /// the laptop to type along when you start.
+    private func watchTyping() {
+        let count = CGEventSource.counterForEventType(.combinedSessionState, eventType: .keyDown)
+        tapTicks = max(0, tapTicks - 1)
+        guard count != keyCount else { return }
+        let first = keyCount == 0
+        keyCount = count
+        guard !first else { return }
+        let started = !typing
+        typingUntil = Date().addingTimeInterval(4)
+        tapTicks = 2
+        // Starting to type: an idle pet sits down at its laptop.
+        if started, mood == .walking, route?.jump == nil, buddyPlan == nil, toy == nil { enter(.sitting) }
+        if started { redraw() }
     }
 
     static func secondsSinceInput() -> Double {
@@ -2358,6 +2661,23 @@ final class CatView: NSView {
         MainActor.assumeIsolated { controller?.displayFrame() }
     }
 
+    // A file held over the cat for a moment: dropped, it carries it to the shelf.
+    override func draggingEntered(_ sender: NSDraggingInfo) -> NSDragOperation { dropOperation }
+    override func draggingUpdated(_ sender: NSDraggingInfo) -> NSDragOperation { dropOperation }
+
+    private var dropOperation: NSDragOperation {
+        MainActor.assumeIsolated { controller?.acceptsDrop == true ? .copy : [] }
+    }
+
+    override func performDragOperation(_ sender: NSDraggingInfo) -> Bool {
+        let urls = sender.draggingPasteboard.readObjects(forClasses: [NSURL.self], options: [.urlReadingFileURLsOnly: true]) as? [URL] ?? []
+        return MainActor.assumeIsolated {
+            guard let controller, controller.acceptsDrop, !urls.isEmpty else { return false }
+            controller.carry(urls)
+            return true
+        }
+    }
+
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
     /// Hold on the cat for half a second to get its menu.
@@ -2407,6 +2727,9 @@ final class CatView: NSView {
         menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
         menu.addItem(item("Take a photo", "camera.fill", #selector(photo)))
         menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
+        let holding = MainActor.assumeIsolated { controller.signText != nil }
+        menu.addItem(holding ? item("Put the sign down", "signpost.right.fill", #selector(dropSign))
+                     : item("Hold a sign…", "signpost.right", #selector(askSign)))
         let focusing = MainActor.assumeIsolated { controller.focusing }
         menu.addItem(focusing ? item("Stop focusing", "stop.circle", #selector(focus)) : item("Focus", "timer", #selector(focus)))
         let asleep = MainActor.assumeIsolated { controller.isAsleep }
@@ -2461,6 +2784,8 @@ final class CatView: NSView {
     @objc private func treat() { MainActor.assumeIsolated { controller?.giveTreat() } }
     @objc private func photo() { MainActor.assumeIsolated { controller?.onPhoto?() } }
     @objc private func stretch() { MainActor.assumeIsolated { controller?.stretchWithMe() } }
+    @objc private func askSign() { MainActor.assumeIsolated { controller?.onAskSign?() } }
+    @objc private func dropSign() { MainActor.assumeIsolated { controller?.onSignDone?() } }
     @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
     @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
     @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }

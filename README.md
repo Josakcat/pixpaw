@@ -21,25 +21,29 @@ your desktop and talks to you. A Droplet for
 - Celebrates your birthday with confetti and a party hat.
 - From midnight to 5 am it wears a nightcap and, once a night, tells you it's late.
 - Strikes a pose when you take a screenshot.
-- Stroke it with the pointer to pet it; shake it about and it lands dizzy.
+- Stroke it with the pointer to pet it; shake it about and it lands dizzy; throw it and it bounces off the screen's edges.
+- Climbs the sides of the screen now and then, and types along at its laptop while you type.
 - Treats, a little gift for you once a day, and a photo of your pet to keep or share.
 - Festival hats, and Loy Krathong and Chinese New Year among the festivals.
 - The shelf widget counts your days together, pets, meals and games.
-- Six coats, and an optional friend cat that sits with it and plays tag.
+- Six coats, and an optional friend of any kind that sits with it and plays tag.
+- Hold a dragged file over it and drop it: it carries the file to Droppy's shelf.
+- Give it a note and it holds it up on a little sign until you click it done.
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
   between perches), a shark (swims through the air), a dinosaur, a dog, a
   hamster, a chicken, a giraffe, a hippo or a rabbit, each with its own sounds. Switch from the portrait on the shelf or in Settings.
 - Or draw your own: bring in a PNG from any pixel editor (one 20 × 20
   sitting pose is enough) under Settings → Your own pets, and pick which
   character it acts like. Give it sounds of its own if you like. Up to
-  five; save a sheet to share it.
+  five; share one as a single `.pixpaw` file, sounds and all.
 - Wears headphones while yours are connected.
 
 **Talks in a speech bubble**
 - Mac notifications, and calendar events two minutes ahead (it comes over to tell you).
 - Song changes in Apple Music and Spotify (and it stops to dance on every new song). It dances to anything else playing too: YouTube in your browser, a video, another player.
-- Claude Code and Codex finishing or needing you, with the plan usage left.
+- Claude Code and Codex finishing or needing you, with the plan usage left. While one works, your pet codes along at its laptop.
 - Volume and brightness, headphones connecting, the battery (and it gets sleepy below 20%), downloads.
+- A busy Mac: working flat out or running hot, it hurries about with a bead of sweat.
 - Welcome back: it runs over to say hello when you come back after a while away.
 - Goes quiet during calls and screen sharing, and optionally while mirroring.
 
@@ -71,9 +75,19 @@ your desktop and talks to you. A Droplet for
 | ![Alerts](Assets/Screenshot-4.png) | ![Eleven friends](Assets/Screenshot-5.png) |
 | ![A home of its own](Assets/Screenshot-6.png) | ![Working together](Assets/Screenshot-7.png) |
 | ![Healthy breaks](Assets/Screenshot-8.png) | ![Draw your own](Assets/Screenshot-9.png) |
+| ![Full of beans](Assets/Screenshot-10.png) | ![Right beside you](Assets/Screenshot-11.png) |
 
 Everything runs on your Mac. Notification text is shown and forgotten;
 nothing is stored or sent anywhere.
+
+## Updates
+
+From 1.5.0, Pixpaw looks here for a newer release whenever you open its page
+in Droppy's Settings, and offers an **Update** button; **Check for updates** in
+its options menu looks straight away. Updating keeps your pet, stars, hats and
+settings. Droppy asks you to approve each new version before it runs, and the
+update takes effect after Droppy restarts. Coming from 1.4.0 or earlier,
+install 1.5.0 by hand once.
 
 ## Building
 
@@ -113,7 +127,7 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
 
 `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…`): `show`, `hide`,
 `come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|stop`, `wear?hat=…&collar=…`,
-`quiet?on=1|0`, `say?text=…`, `agent?name=…&state=…&text=…&usage=…`,
+`quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
 `roam?mode=anywhere|floor|windows`,
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
 

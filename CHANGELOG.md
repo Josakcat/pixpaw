@@ -1,5 +1,24 @@
 # Changelog
 
+## [Unreleased]
+
+## [1.5.0] - 2026-10-24
+
+Throw it, watch it climb, give it a note to hold, and let it carry your files. Updates now come straight from GitHub.
+
+### Added
+
+- Updates from GitHub. Droppy now checks Pixpaw's GitHub releases when you open its Settings page and offers an Update button for a newer version (or Check for updates in its options menu). Install this version by hand once; every one after it can come in with a click.
+- Hold a sign. Give your pet a note ("Buy milk", "Call Mum at 5") and it holds it up on a little wooden sign, carrying it about wherever it goes, until you click the sign to say it's done ("Crossed off!"). From its menu (Hold a sign…), Settings → Sign, or `droppy://droplet/pixpaw/sign?text=…` for Shortcuts. The sign is put away while it's quiet, so a note never shows on a shared screen, and it's still there after a restart.
+- Carry files to your shelf. Hold a file you're dragging over your pet for a moment ("Drop it on me!") and drop it: your pet runs it over beneath the notch and puts it on Droppy's shelf, the way Add to Droppy Shelf in the Services menu does. A file just dragged past it still drops wherever you were taking it. Switch it off with Carry files to your shelf in Settings.
+- Share a pet you drew as one `.pixpaw` file: its picture, name, the character it acts like and its own sounds (⋯ → Share as a .pixpaw file). A friend brings it in with Choose… under Your own pets; its sounds are checked and evened out like any you choose.
+- A friend of another kind. The second pet can be any character, or one you drew: a dog for your cat, a rabbit for your shark (Settings → Friend).
+- Throw your pet. Let go while you're still swinging it and it flies off the way you threw it, bouncing off the sides and top of the screen, and lands where it falls ("Wheee!"). Thrown hard, it lands seeing stars for a moment. Bees and sharks glide to a stop in the air.
+- Coding along. While Claude Code, Codex or another agent works, your pet sits at its laptop and codes along with it, and when the agent is done it jumps for joy. It still wanders off now and then on a long run.
+- Type along. While you type, your pet sits down at its little laptop and taps along with your keys, bobbing with each one, like Bongo Cat. Only how many keys go down is counted, never which ones, and it needs no permission. Switch it off with Type along in Settings.
+- Climbing the walls. Now and then a walking pet heads to the side of the screen and climbs up it, feet to the wall ("Look how high I am!"), hangs on a moment, then lets go and drops back down.
+- A busy Mac. When the Mac works flat out for half a minute or starts running hot, your pet hurries about with a bead of sweat ("Phew! Your Mac is working hard."), the way RunCat runs faster the busier the Mac is. Only the overall load is read, never which apps. Switch it off with Busy Mac in Settings.
+
 ## [1.4.0] - 2026-10-22
 
 Draw your own pet, bring it in, and give it sounds of its own.

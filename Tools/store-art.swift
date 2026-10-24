@@ -5,6 +5,7 @@
 //   swiftc -O Sources/Pixpaw/CatSprites.generated.swift /tmp/main.swift -o /tmp/store-art
 //   /tmp/store-art Assets
 import AppKit
+import UniformTypeIdentifiers
 
 let out = CommandLine.arguments.dropFirst().first ?? "Assets"
 
@@ -331,6 +332,108 @@ canvas(Int(W), Int(H), "Screenshot-9.png") { ctx in
     bubble(ctx, "Ribbit!", symbol: "speaker.wave.2.fill", tip: CGPoint(x: feet.x + 14.5 * big, y: feet.y - 14.5 * big), scale: 2.4)
     label("Sounds of its own", at: CGPoint(x: feet.x + 330, y: feet.y - 150), size: 26, weight: .semibold, color: rgb(0xFFE08A))
     label("Acts like any character", at: CGPoint(x: feet.x + 330, y: feet.y - 105), size: 26, weight: .semibold, color: rgb(0xFFE08A))
+}
+
+/// A character drawn turned a quarter, feet to a wall: `side` 1 for the
+/// right wall, -1 for the left, `top` its top-left corner once turned.
+func climbing(_ ctx: CGContext, _ kind: String, _ frame: String, side: CGFloat, top: CGPoint, px: CGFloat) {
+    let key = kind == "cat" ? frame : "\(kind).\(frame)"
+    guard let rows = CatArt.frames[key] else { return }
+    let w = CGFloat(rows[0].count) * px, h = CGFloat(rows.count) * px
+    ctx.saveGState()
+    ctx.translateBy(x: top.x + h / 2, y: top.y + w / 2)
+    ctx.rotate(by: side > 0 ? -.pi / 2 : .pi / 2)
+    if side < 0 { ctx.scaleBy(x: -1, y: 1) }
+    pet(ctx, kind, frame, feet: CGPoint(x: -w / 2, y: h / 2), px: px)
+    ctx.restoreGState()
+}
+
+/// The sign it holds up: a cream board in a brown frame on a stick, the
+/// stick's foot at `paw`.
+func sign(_ ctx: CGContext, _ text: String, paw: CGPoint, scale: CGFloat) {
+    let wood = rgb(0x6B4524)
+    let attrs: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 12.5 * scale, weight: .bold).rounded, .foregroundColor: rgb(0x4A2E17)]
+    let size = (text as NSString).size(withAttributes: attrs)
+    let stick = 44 * scale
+    ctx.setFillColor(wood.cgColor)
+    ctx.fill(CGRect(x: paw.x - 2 * scale, y: paw.y - stick, width: 4 * scale, height: stick))
+    let board = CGRect(x: paw.x - size.width / 2 - 10 * scale, y: paw.y - stick - size.height - 12 * scale,
+                       width: size.width + 20 * scale, height: size.height + 12 * scale)
+    let path = NSBezierPath(roundedRect: board, xRadius: 3 * scale, yRadius: 3 * scale)
+    rgb(0xF7E3B8).setFill(); path.fill()
+    wood.setStroke(); path.lineWidth = 2.5 * scale; path.stroke()
+    (text as NSString).draw(at: CGPoint(x: board.minX + 10 * scale, y: board.minY + 6 * scale), withAttributes: attrs)
+}
+
+extension NSFont {
+    var rounded: NSFont {
+        fontDescriptor.withDesign(.rounded).flatMap { NSFont(descriptor: $0, size: pointSize) } ?? self
+    }
+}
+
+// 10. Throwing, climbing, and a busy Mac.
+canvas(Int(W), Int(H), "Screenshot-10.png") { ctx in
+    desktop(ctx, W, H, title: "Full of beans", subtitle: "Throw it across the screen, watch it climb the walls, and see it sweat when your Mac works hard.")
+    // Thrown: the path it flew, dashed, and it at the top of the arc.
+    let throwPx: CGFloat = 8
+    let path = CGMutablePath()
+    path.move(to: CGPoint(x: 130, y: 860))
+    path.addQuadCurve(to: CGPoint(x: 600, y: 470), control: CGPoint(x: 250, y: 420))
+    ctx.addPath(path)
+    ctx.setStrokeColor(rgb(0xFFFFFF, 0.55).cgColor)
+    ctx.setLineWidth(6); ctx.setLineCap(.round); ctx.setLineDash(phase: 0, lengths: [2, 22])
+    ctx.strokePath(); ctx.setLineDash(phase: 0, lengths: [])
+    let flying = CGPoint(x: 540, y: 560)
+    cat(ctx, "held1", feet: flying, px: throwPx)
+    bubble(ctx, "Wheee!", symbol: "sparkles", tip: CGPoint(x: flying.x + 14.5 * throwPx, y: flying.y - 21 * throwPx), scale: 2.2)
+
+    // Climbing the right-hand wall.
+    let climbPx: CGFloat = 8
+    let frameRows = CatArt.frames["walk1"]!
+    let climbTop = CGPoint(x: W - CGFloat(frameRows.count) * climbPx, y: 330)
+    climbing(ctx, "cat", "walk1", side: 1, top: climbTop, px: climbPx)
+    bubble(ctx, "Look how high I am!", symbol: "arrow.up", tip: CGPoint(x: W - 260, y: climbTop.y - 6), scale: 2.2)
+
+    // Hurrying about with a bead of sweat while the Mac works flat out.
+    let runPx: CGFloat = 8, run = CGPoint(x: 820, y: floorY)
+    pet(ctx, "dog", "run1", feet: run, px: runPx)
+    sprite(ctx, CatArt.effects["sweat"]!, palette: CatArt.effectColors, at: CGPoint(x: run.x + 19 * runPx, y: run.y - 17 * runPx), px: runPx * 0.8)
+    bubble(ctx, "Phew! Your Mac is working hard.", symbol: "flame.fill", tip: CGPoint(x: run.x + 14.5 * runPx, y: run.y - 18 * runPx), scale: 2.2)
+}
+
+// 11. A note on a sign, typing along, and files to the shelf.
+canvas(Int(W), Int(H), "Screenshot-11.png") { ctx in
+    desktop(ctx, W, H, title: "Right beside you", subtitle: "It holds up your notes, types along with you and carries files to your shelf.")
+    let big: CGFloat = 9
+    // The notch and Droppy's shelf open beneath it, two files on it.
+    let shelf = CGRect(x: 1050, y: 230, width: 420, height: 150)
+    ctx.setFillColor(rgb(0x000000).cgColor)
+    ctx.addPath(CGPath(roundedRect: shelf, cornerWidth: 34, cornerHeight: 34, transform: nil)); ctx.fillPath()
+    ctx.fill(CGRect(x: shelf.minX, y: shelf.minY, width: shelf.width, height: 40))
+    for (i, type) in [UTType.pdf, UTType.png].enumerated() {
+        let icon = NSWorkspace.shared.icon(for: type)
+        icon.draw(in: CGRect(x: shelf.minX + 70 + CGFloat(i) * 150, y: shelf.minY + 25, width: 110, height: 110),
+                  from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+    label("Droppy's shelf", at: CGPoint(x: shelf.midX, y: shelf.maxY + 14), size: 24, weight: .semibold, color: rgb(0xFFFFFF, 0.8), centered: true)
+    // Running a file over beneath it.
+    let carry = CGPoint(x: 1130, y: floorY)
+    pet(ctx, "rabbit", "walk1", feet: carry, px: big)
+    bubble(ctx, "Taking all 2 to your shelf!", symbol: "tray.and.arrow.down.fill", tip: CGPoint(x: carry.x + 13 * big, y: carry.y - 13 * big), scale: 2)
+
+    // Holding up a note.
+    let sitter = CGPoint(x: 110, y: floorY)
+    // In the app a pixel is 3 points: the stick in its front paw, 8 points up.
+    let width = CGFloat(CatArt.frames["sit"]![0].count)
+    sign(ctx, "Call Mum at 5", paw: CGPoint(x: sitter.x + 0.8 * width * big, y: sitter.y - 8 * big / 3), scale: big / 3)
+    cat(ctx, "sit", feet: sitter, px: big)
+
+    // Typing along at its laptop.
+    let typer = CGPoint(x: 620, y: floorY)
+    pet(ctx, "hamster", "sit", feet: typer, px: big, laptop: true)
+    label("Types along with you", at: CGPoint(x: typer.x + 10 * big, y: typer.y - 17 * big), size: 28, weight: .semibold,
+          color: rgb(0xFFE08A), centered: true)
 }
 
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.

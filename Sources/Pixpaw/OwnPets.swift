@@ -9,6 +9,7 @@
 
 import AppKit
 import AVFoundation
+import UniformTypeIdentifiers
 
 /// A pet you drew, acting like one of the built-in characters: it sounds,
 /// talks, moves and lives like that one, in your picture.
@@ -26,6 +27,20 @@ struct OwnPet: Codable, Equatable, Identifiable {
 
     var id: Int { slot }
     var kind: PetKind { PetKind(rawValue: "own\(slot)") ?? .own1 }
+}
+
+/// A pet you drew, in one file to share: its picture, its name, the
+/// character it acts like and its own sounds. JSON, `.pixpaw`.
+struct OwnPetPack: Codable {
+    var pixpaw = 1
+    var name: String
+    var actsLike: String
+    var sheet: Data
+    var sounds: [String: Data]?
+
+    static let type = UTType(filenameExtension: "pixpaw", conformingTo: .json) ?? .json
+    /// Bigger than any pet with three short sounds needs to be.
+    static let largest = 8_000_000
 }
 
 /// The sounds a pet you drew can have of its own.
@@ -61,6 +76,7 @@ enum OwnPetProblem: LocalizedError {
     case size(Int, Int)
     case noSittingPose
     case unplayable
+    case notAPet
     case tooLong(Double)
 
     var errorDescription: String? {
@@ -71,6 +87,8 @@ enum OwnPetProblem: LocalizedError {
             "That picture is \(width) × \(height). A pet is 20 pixels tall, with one 20 × 20 cell for each pose side by side (up to 18). Scaled up evenly is fine."
         case .noSittingPose:
             "The first cell, the sitting pose, is empty. Draw your pet there first."
+        case .notAPet:
+            "That isn't a Pixpaw pet. Bring in a PNG, or a .pixpaw file someone shared."
         case .unplayable:
             "Pixpaw can't play that sound. Try a WAV, MP3, M4A or AIFF file."
         case let .tooLong(seconds):
@@ -179,6 +197,38 @@ enum OwnPets {
                                       commonFormat: .pcmFormatFloat32, interleaved: false)
         try written.write(from: out)
         return name
+    }
+
+    /// A pet in one file, its sounds and all, to share.
+    static func pack(_ pet: OwnPet) -> Data? {
+        let sounds = (pet.sounds ?? [:]).compactMapValues { name in
+            soundFolder.flatMap { try? Data(contentsOf: $0.appendingPathComponent(name)) }
+        }
+        let pack = OwnPetPack(name: pet.name, actsLike: pet.actsLike.rawValue, sheet: pet.sheet, sounds: sounds.isEmpty ? nil : sounds)
+        let encoder = JSONEncoder()
+        encoder.outputFormatting = [.sortedKeys]
+        return try? encoder.encode(pack)
+    }
+
+    /// A shared pet, checked: its picture read like any sheet, and each sound
+    /// brought in like one you chose, evened out and kept for `slot`. A sound
+    /// that won't play is left out.
+    static func unpack(_ data: Data, into slot: Int) throws -> OwnPet {
+        guard data.count <= OwnPetPack.largest,
+              let pack = try? JSONDecoder().decode(OwnPetPack.self, from: data), pack.pixpaw == 1 else { throw OwnPetProblem.notAPet }
+        let sheet = try sheet(from: pack.sheet)
+        var kept: [String: String] = [:]
+        for (key, sound) in pack.sounds ?? [:] {
+            guard let which = OwnSound(rawValue: key) else { continue }
+            let file = FileManager.default.temporaryDirectory.appendingPathComponent("pixpaw-\(UUID().uuidString).wav")
+            defer { try? FileManager.default.removeItem(at: file) }
+            guard (try? sound.write(to: file)) != nil, let name = try? keep(file, as: which, for: slot) else { continue }
+            kept[which.rawValue] = name
+        }
+        let actsLike = PetKind(rawValue: pack.actsLike).flatMap { $0.isOwn ? nil : $0 } ?? .cat
+        let name = pack.name.trimmingCharacters(in: .whitespacesAndNewlines)
+        return OwnPet(slot: slot, name: String((name.isEmpty ? "My pet" : name).prefix(30)), actsLike: actsLike, sheet: sheet,
+                      sounds: kept.isEmpty ? nil : kept)
     }
 
     /// Deletes kept sounds no pet uses any more.

@@ -3713,6 +3713,13 @@ enum CatArt {
             "xRRRx",
             ".xxx.",
         ],
+        "sweat": [
+            "..c.",
+            ".cc.",
+            "cbhc",
+            "cbbc",
+            ".cc.",
+        ],
         "code": [
             ".c...c.c.",
             "c...c...c",
