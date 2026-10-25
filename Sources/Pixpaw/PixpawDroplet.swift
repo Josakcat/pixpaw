@@ -58,8 +58,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let tellsHeat = "tellsHeat"
         static let typesAlong = "typesAlong"
         static let carriesFiles = "carriesFiles"
-        /// The note on the sign it holds up, if any.
+        /// Before the to-do list: the one note on its sign, if any.
         static let sign = "sign"
+        static let notes = "notes"
+        static let noteStreak = "noteStreak"
+        static let nudges = "nudges"
+        static let distractions = "distractions"
+        static let pomodoro = "pomodoro"
         static let tellsDownloads = "tellsDownloads"
         static let tellsScreenshots = "tellsScreenshots"
         static let meals = "meals"
@@ -110,8 +115,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var tellsHeat = true
     @Published private(set) var typesAlong = true
     @Published private(set) var carriesFiles = true
-    /// The note it holds up on a sign, until you click it done.
-    @Published private(set) var signText: String?
+    /// Your to-do list: it holds the first note up on a sign until you
+    /// click it done, then the next.
+    @Published private(set) var notes: [PetNote] = []
+    @Published private(set) var noteStreak = NoteStreak()
+    /// During a focus session, comes over when you wander off somewhere distracting.
+    @Published private(set) var nudgesOn = true
+    @Published private(set) var distractionWords = DistractionWatcher.defaultWords
+    private let distractions = DistractionWatcher()
     @Published private(set) var tellsDownloads = false
     @Published private(set) var tellsScreenshots = true
     /// The day you first let the pet out, for the shelf's tally.
@@ -134,6 +145,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var focusStartedAt: Date?
     @Published private(set) var focusEndsAt: Date?
     @Published private(set) var focusMinutes = 25
+    /// Pomodoro: four focus sessions with a break after each, the fourth a long one.
+    @Published private(set) var pomodoroOn = false
+    @Published private(set) var pomodoroRound = 1
+    @Published private(set) var breakStartedAt: Date?
+    @Published private(set) var breakEndsAt: Date?
+    private var breakTimer: Timer?
+    /// Focusing or on a break between rounds.
+    var inSession: Bool { focusEndsAt != nil || breakEndsAt != nil }
     /// The pets you drew, and what went wrong bringing the last one in.
     @Published private(set) var ownPets: [OwnPet] = []
     @Published private(set) var ownPetProblem: String?
@@ -233,10 +252,17 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         carriesFiles = prefs.value(forKey: Key.carriesFiles, default: true)
         cat.carriesFiles = carriesFiles
         cat.onDeliver = { [weak self] urls in self?.addToShelf(urls) }
-        signText = prefs.value(forKey: Key.sign, as: String.self)
-        cat.holdSign(signText)
-        cat.onSignDone = { [weak self] in self?.setSign(nil) }
-        cat.onAskSign = { [weak self] in self?.askForSign() }
+        notes = prefs.value(forKey: Key.notes, as: [PetNote].self)
+            ?? prefs.value(forKey: Key.sign, as: String.self).map { [PetNote(text: $0)] } ?? []
+        noteStreak = prefs.value(forKey: Key.noteStreak, as: NoteStreak.self) ?? NoteStreak()
+        showTopNote()
+        cat.onSignDone = { [weak self] in self?.completeNote() }
+        cat.onAskSign = { [weak self] in self?.askForNote() }
+        nudgesOn = prefs.value(forKey: Key.nudges, default: true)
+        distractionWords = prefs.value(forKey: Key.distractions, as: [String].self) ?? DistractionWatcher.defaultWords
+        distractions.words = distractionWords
+        distractions.onNudge = { [weak self] _ in self?.nudgeBackToWork() }
+        pomodoroOn = prefs.value(forKey: Key.pomodoro, default: false)
         // Watching Downloads can make macOS ask for folder access, so it waits
         // until it is switched on in Settings.
         tellsDownloads = prefs.value(forKey: Key.tellsDownloads, default: false)
@@ -286,6 +312,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         ) { [weak self] in
             self?.toggle()
         }
+        host.shortcuts.register(
+            id: "add-note",
+            title: "Give your pet a note",
+            defaultShortcut: DropletKeyboardShortcut(
+                keyCode: 45, // N
+                modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue
+            )
+        ) { [weak self] in
+            self?.askForNote()
+        }
         host.shortcuts.register(id: "call-cat", title: "Call the cat over", defaultShortcut: nil) { [weak self] in
             self?.callOver()
         }
@@ -320,6 +356,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                 self?.refreshFestival()
                 self?.refreshLateNight()
                 self?.refreshMorning()
+                self?.remindDueNotes()
             }
         }
         screenWatch = NotificationCenter.default.addObserver(
@@ -338,6 +375,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         focusTimer = nil
         focusStartedAt = nil
         focusEndsAt = nil
+        breakTimer?.invalidate()
+        breakTimer = nil
+        breakStartedAt = nil
+        breakEndsAt = nil
+        distractions.stop()
         festivalCheck = nil
         if let screenWatch { NotificationCenter.default.removeObserver(screenWatch) }
         screenWatch = nil
@@ -408,28 +450,105 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         setKind(kind)
     }
 
-    /// A note for the pet to hold up on a sign, or nil to put it down.
-    func setSign(_ text: String?) {
-        let text = text.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(CatSign.maxLength)) }.flatMap { $0.isEmpty ? nil : $0 }
-        signText = text
-        host?.preferences.setValue(text, forKey: Key.sign)
-        cat?.holdSign(text)
+    // MARK: Notes
+
+    /// Adds a note to the end of the list; a time in it ("in 10 min",
+    /// "at 5pm") is when the pet comes to remind you.
+    func addNote(_ raw: String) {
+        let text = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(CatSign.maxLength))
+        guard !text.isEmpty, notes.count < PetNote.limit else { return }
+        notes.append(PetNote(text: text, due: NoteTime.due(in: text)))
+        saveNotes()
     }
 
-    /// Asks what the sign should say.
-    func askForSign() {
+    /// Done: the first note, or the one named, off the list for a star, and
+    /// a day on the streak.
+    func completeNote(_ id: UUID? = nil) {
+        guard let index = id.map({ id in notes.firstIndex { $0.id == id } }) ?? (notes.isEmpty ? nil : 0) else { return }
+        notes.remove(at: index)
+        saveNotes()
+        cat?.earn(.note)
+        if noteStreak.countToday() {
+            host?.preferences.setValue(noteStreak, forKey: Key.noteStreak)
+            if noteStreak.days >= 2 { cat?.say(CatWords.noteStreak(noteStreak.days)) }
+        }
+    }
+
+    /// Off the list without counting as done.
+    func removeNote(_ id: UUID) {
+        notes.removeAll { $0.id == id }
+        saveNotes()
+    }
+
+    /// Up to the sign, ahead of the rest.
+    func moveNoteToTop(_ id: UUID) {
+        guard let index = notes.firstIndex(where: { $0.id == id }), index > 0 else { return }
+        notes.insert(notes.remove(at: index), at: 0)
+        saveNotes()
+    }
+
+    private func saveNotes() {
+        host?.preferences.setValue(notes, forKey: Key.notes)
+        showTopNote()
+    }
+
+    private func showTopNote() {
+        cat?.holdSign(notes.first?.text, more: max(0, notes.count - 1))
+    }
+
+    /// A note whose time is up: up onto the sign, and the pet comes to say
+    /// it. One at a time, and not while it's quiet.
+    private func remindDueNotes() {
+        guard let cat, isOut, cat.quietReason == nil,
+              let index = notes.firstIndex(where: { !$0.told && ($0.due ?? .distantFuture) <= Date() }) else { return }
+        notes[index].told = true
+        let note = notes.remove(at: index)
+        notes.insert(note, at: 0)
+        saveNotes()
+        cat.callOver()
+        cat.say(CatWords.noteDue(note.text), essential: true)
+    }
+
+    /// Asks for a note to add.
+    func askForNote() {
         let alert = NSAlert()
-        alert.messageText = "Hold a sign"
-        alert.informativeText = "Your pet carries it about until you click the sign to say it's done."
-        let field = NSTextField(frame: CGRect(x: 0, y: 0, width: 260, height: 24))
+        alert.messageText = "Give your pet a note"
+        let full = notes.count >= PetNote.limit
+        alert.informativeText = full
+            ? "Its list is full (\(PetNote.limit) notes). Click the sign when one is done to make room."
+            : "It holds the first note up on its sign until you click it done, then the next. Add a time like “in 10 min” or “at 5pm” and it comes over to remind you."
+        let field = NSTextField(frame: CGRect(x: 0, y: 0, width: 280, height: 24))
         field.placeholderString = "Buy milk"
-        field.stringValue = signText ?? ""
-        alert.accessoryView = field
-        alert.addButton(withTitle: "Hold it up")
-        alert.addButton(withTitle: "Cancel")
+        if !full { alert.accessoryView = field }
+        alert.addButton(withTitle: full ? "OK" : "Add")
+        if !full { alert.addButton(withTitle: "Cancel") }
         alert.window.initialFirstResponder = field
+        if !isOut { setOut(true) }
         NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn { setSign(field.stringValue) }
+        if alert.runModal() == .alertFirstButtonReturn, !full { addNote(field.stringValue) }
+    }
+
+    // MARK: Nudges
+
+    func setNudges(_ on: Bool) {
+        nudgesOn = on
+        host?.preferences.setValue(on, forKey: Key.nudges)
+        if on, focusEndsAt != nil { distractions.start() } else if !on { distractions.stop() }
+    }
+
+    /// Your words, comma-separated: app names and words in window titles.
+    func setDistractions(_ raw: String) {
+        let words = raw.split(separator: ",").map { $0.trimmingCharacters(in: .whitespaces) }.filter { !$0.isEmpty }
+        distractionWords = words
+        distractions.words = words
+        host?.preferences.setValue(words, forKey: Key.distractions)
+    }
+
+    /// Two minutes somewhere distracting in a focus session: it comes to ask.
+    private func nudgeBackToWork() {
+        guard let cat, let end = focusEndsAt, cat.quietReason == nil else { return }
+        cat.callOver()
+        cat.say(CatWords.backToWork(minutesLeft: Int((end.timeIntervalSinceNow / 60).rounded())))
     }
 
     func setCarriesFiles(_ on: Bool) {
@@ -678,13 +797,19 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     // MARK: Focus
 
-    func toggleFocus() { focusEndsAt == nil ? startFocus() : stopFocus() }
+    /// The timer on the shelf and in its menu: starts a session, stops one,
+    /// or skips a Pomodoro break.
+    func toggleFocus() {
+        if breakEndsAt != nil { endBreak() } else if focusEndsAt == nil { startFocus() } else { stopFocus() }
+    }
 
     /// A focus session: the pet sits by you without a sound, the time left
     /// shows over its head (between anything else it has to tell you) and
     /// beside the notch, and when it is up the pet comes to say so.
-    func startFocus(minutes: Int? = nil) {
+    func startFocus(minutes: Int? = nil, round: Int = 1) {
         if !isOut { setOut(true) }
+        clearBreak()
+        pomodoroRound = round
         let length = TimeInterval((minutes ?? focusMinutes) * 60)
         focusStartedAt = Date()
         focusEndsAt = Date().addingTimeInterval(length)
@@ -694,26 +819,87 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         focusTimer = Timer.scheduledTimer(withTimeInterval: length, repeats: false) { [weak self] _ in
             MainActor.assumeIsolated { self?.finishFocus() }
         }
+        if nudgesOn { distractions.start() }
         applyQuiet()
         publishActivity()
     }
 
+    /// Ends the session, a Pomodoro break included.
     func stopFocus() {
-        focusTimer?.invalidate()
-        focusTimer = nil
-        focusStartedAt = nil
-        focusEndsAt = nil
-        cat?.focusing = false
+        clearFocus()
+        clearBreak()
         cat?.keepSaying(nil)
         applyQuiet()
         publishActivity()
     }
 
+    private func clearFocus() {
+        focusTimer?.invalidate()
+        focusTimer = nil
+        focusStartedAt = nil
+        focusEndsAt = nil
+        cat?.focusing = false
+        distractions.stop()
+    }
+
+    private func clearBreak() {
+        breakTimer?.invalidate()
+        breakTimer = nil
+        breakStartedAt = nil
+        breakEndsAt = nil
+        cat?.onBreak = false
+    }
+
     private func finishFocus() {
         let minutes = Int(((focusEndsAt ?? Date()).timeIntervalSince(focusStartedAt ?? Date()) / 60).rounded())
-        stopFocus()
+        guard pomodoroOn else {
+            stopFocus()
+            cat?.callOver()
+            cat?.say(CatWords.focusDone(minutes: minutes))
+            return
+        }
+        startBreak()
+    }
+
+    /// Pomodoro: five minutes off after each round, fifteen after the
+    /// fourth, starting with a stretch together.
+    private func startBreak() {
+        clearFocus()
+        let round = pomodoroRound
+        let minutes = round % 4 == 0 ? 15 : 5
+        let end = Date().addingTimeInterval(TimeInterval(minutes * 60))
+        breakStartedAt = Date()
+        breakEndsAt = end
+        cat?.onBreak = true
         cat?.callOver()
-        cat?.say(CatWords.focusDone(minutes: minutes))
+        cat?.say(CatWords.breakStarts(round: round, minutes: minutes))
+        cat?.keepSaying(CatWords.onBreak(until: end, round: round))
+        cat?.stretchWithMe()
+        breakTimer = Timer.scheduledTimer(withTimeInterval: end.timeIntervalSinceNow, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endBreak() }
+        }
+        applyQuiet()
+        publishActivity()
+    }
+
+    /// The break is over (or skipped): the next round, or after the fourth
+    /// round's long break, done.
+    private func endBreak() {
+        let round = pomodoroRound
+        clearBreak()
+        cat?.callOver()
+        if round % 4 == 0 {
+            stopFocus()
+            cat?.say(CatWords.pomodoroDone)
+        } else {
+            cat?.say(CatWords.backToIt(round: round + 1))
+            startFocus(round: round + 1)
+        }
+    }
+
+    func setPomodoro(_ on: Bool) {
+        pomodoroOn = on
+        host?.preferences.setValue(on, forKey: Key.pomodoro)
     }
 
     func setFocusMinutes(_ minutes: Int) {
@@ -1316,7 +1502,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func publishActivity() {
         // Indoors, or the row switched off: nothing beside the notch. A
         // focus session shows its clock there either way.
-        guard isOut, isPinned || focusEndsAt != nil, let cat else {
+        guard isOut, isPinned || inSession, let cat else {
             activitySubject.send(nil)
             return
         }
@@ -1489,7 +1675,11 @@ private struct PixpawWidget: View {
     /// the bell is drawn as a symbol rather than spelled out as a string.
     private var subline: Text {
         if let start = droplet.focusStartedAt, let end = droplet.focusEndsAt {
-            return Text("\(Image(systemName: "timer")) Focus, ") + Text(timerInterval: start...end, countsDown: true) + Text(" left")
+            let round = droplet.pomodoroOn ? " \(droplet.pomodoroRound)/4" : ""
+            return Text("\(Image(systemName: "timer")) Focus\(round), ") + Text(timerInterval: start...end, countsDown: true) + Text(" left")
+        }
+        if let start = droplet.breakStartedAt, let end = droplet.breakEndsAt {
+            return Text("\(Image(systemName: "cup.and.saucer.fill")) Break, ") + Text(timerInterval: start...end, countsDown: true) + Text(" left")
         }
         if let reason = cat.quietReason { return Text("\(Image(systemName: "bell.slash.fill")) Quiet, \(reason)") }
         return Text(pointsLine)
@@ -1598,11 +1788,11 @@ private struct PixpawWidget: View {
             Button {
                 droplet.toggleFocus()
             } label: {
-                Image(systemName: droplet.focusEndsAt == nil ? "timer" : "stop.fill")
+                Image(systemName: droplet.breakEndsAt != nil ? "forward.end.fill" : droplet.focusEndsAt == nil ? "timer" : "stop.fill")
             }
             .buttonStyle(DroppyCircleButtonStyle(size: 24))
-            .help(droplet.focusEndsAt == nil ? "Focus for \(droplet.focusMinutes) minutes" : "Stop focusing")
-            .accessibilityLabel(droplet.focusEndsAt == nil ? "Start focusing" : "Stop focusing")
+            .help(droplet.breakEndsAt != nil ? "Skip the break" : droplet.focusEndsAt == nil ? "Focus for \(droplet.focusMinutes) minutes" : "Stop focusing")
+            .accessibilityLabel(droplet.breakEndsAt != nil ? "Skip the break" : droplet.focusEndsAt == nil ? "Start focusing" : "Stop focusing")
             Button(cat.mood == .sleeping ? "Wake up" : "Come here") {
                 droplet.callOver()
             }
@@ -1670,14 +1860,14 @@ private struct CatWingMood: View {
     private var label: String { droplet.agentShortStatus ?? cat.statusShortTitle }
 
     var body: some View {
-        if let start = droplet.focusStartedAt, let end = droplet.focusEndsAt {
+        if let start = droplet.focusStartedAt ?? droplet.breakStartedAt, let end = droplet.focusEndsAt ?? droplet.breakEndsAt {
             // The time left, ticking down by itself.
             Text(timerInterval: start...end, countsDown: true)
                 .monospacedDigit()
                 .font(.system(size: DroppyLiveActivityMetrics.labelFontSize, weight: .medium, design: .rounded))
                 .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
                 .lineLimit(1)
-                .accessibilityLabel("Focus time left")
+                .accessibilityLabel(droplet.focusEndsAt != nil ? "Focus time left" : "Break time left")
         } else {
             mood
         }
@@ -1714,7 +1904,9 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Your own pets", keywords: ["draw", "design", "custom", "own", "sprite", "pixel", "png", "aseprite", "piskel", "template", "import"]),
             SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal"]),
             SettingsSearchEntry(title: "Where the cat walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
-            SettingsSearchEntry(title: "Sign", keywords: ["sign", "note", "todo", "to-do", "reminder", "board", "placard"]),
+            SettingsSearchEntry(title: "Notes", keywords: ["sign", "note", "todo", "to-do", "task", "list", "reminder", "board", "placard", "streak"]),
+            SettingsSearchEntry(title: "Pomodoro", keywords: ["pomodoro", "focus", "break", "timer", "rounds", "tomato"]),
+            SettingsSearchEntry(title: "Nudge me back to work", keywords: ["distraction", "focus", "youtube", "procrastinate", "nudge", "social"]),
             SettingsSearchEntry(title: "Carry files to your shelf", keywords: ["shelf", "file", "drop", "carry", "fetch", "drag"]),
             SettingsSearchEntry(title: "Type along", keywords: ["typing", "keyboard", "keys", "bongo", "laptop", "type"]),
             SettingsSearchEntry(title: "Follow the cursor", keywords: ["cat", "chase", "pointer", "mouse"]),
@@ -1748,6 +1940,7 @@ private struct PixpawSettings: View {
     @State private var newReminderMinutes = 60
     @State private var templateKind: PetKind = .cat
     @State private var newSign = ""
+    @State private var distractionText: String?
     @State private var renamingSlot: Int?
     @State private var newName = ""
 
@@ -1841,8 +2034,39 @@ private struct PixpawSettings: View {
         }
     }
 
+    private func saveDistractions() {
+        guard let distractionText else { return }
+        droplet.setDistractions(distractionText)
+        self.distractionText = nil
+    }
+
+    /// A note on the list: when it's due, done, and moving it up or off.
+    private func noteRow(_ note: PetNote, first: Bool) -> some View {
+        DropletControlRow(title: note.text, icon: first ? "signpost.right.fill" : "circle") {
+            HStack(spacing: 6) {
+                if let due = note.due {
+                    Label(due.formatted(date: Calendar.current.isDateInToday(due) ? .omitted : .abbreviated, time: .shortened),
+                          systemImage: note.told ? "alarm.fill" : "alarm")
+                        .foregroundStyle(.secondary)
+                }
+                Button("Done") { droplet.completeNote(note.id) }
+                Menu {
+                    if !first { Button("Hold it up first") { droplet.moveNoteToTop(note.id) } }
+                    Button("Remove") { droplet.removeNote(note.id) }
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .menuIndicator(.hidden)
+                .tint(.secondary)
+                .fixedSize()
+                .accessibilityLabel("More for \(note.text)")
+            }
+        }
+    }
+
     private func holdSign() {
-        droplet.setSign(newSign)
+        droplet.addNote(newSign)
         newSign = ""
     }
 
@@ -1911,27 +2135,25 @@ private struct PixpawSettings: View {
                         subtitle: "A meow when the cat talks, a purr when you pet it, crunching while it eats. Silent while quiet.",
                         isOn: Binding(get: { droplet.soundsOn }, set: { droplet.setSounds($0) })
                     )
-                    DropletControlRow(title: "Sign", icon: "signpost.right",
-                                      infoTip: "A note your pet holds up on a little sign and carries about until you click the sign to say it's done. Hidden while it's quiet. Also from its menu, or droppy://droplet/pixpaw/sign?text=…") {
-                        if let sign = droplet.signText {
-                            HStack(spacing: 6) {
-                                Text(sign)
-                                    .lineLimit(1)
+                    DropletControlRow(title: "Notes", icon: "signpost.right",
+                                      infoTip: "Your to-do list. Your pet holds the first note up on a little sign and carries it about until you click the sign to say it's done (a star, up to five a day), then holds up the next. Put a time in a note (“in 10 min”, “at 5pm”) and it comes over to remind you. Hidden while it's quiet. Also with Control-Option-N, from its menu, or droppy://droplet/pixpaw/note?text=…") {
+                        HStack(spacing: 6) {
+                            if droplet.noteStreak.current >= 2 {
+                                Label("\(droplet.noteStreak.current) days", systemImage: "flame.fill")
                                     .foregroundStyle(.secondary)
-                                    .frame(maxWidth: 180, alignment: .trailing)
-                                Button("Put down") { droplet.setSign(nil) }
+                                    .help("Days in a row with a note done")
                             }
-                        } else {
-                            HStack(spacing: 6) {
-                                TextField("Sign", text: $newSign, prompt: Text("Buy milk…"))
-                                    .labelsHidden()
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 170)
-                                    .onSubmit(holdSign)
-                                Button("Hold up", action: holdSign)
-                                    .disabled(newSign.trimmingCharacters(in: .whitespaces).isEmpty)
-                            }
+                            TextField("Note", text: $newSign, prompt: Text("Buy milk…"))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 170)
+                                .onSubmit(holdSign)
+                            Button("Add", action: holdSign)
+                                .disabled(newSign.trimmingCharacters(in: .whitespaces).isEmpty || droplet.notes.count >= PetNote.limit)
                         }
+                    }
+                    ForEach(Array(droplet.notes.enumerated()), id: \.element.id) { index, note in
+                        noteRow(note, first: index == 0)
                     }
                 }
             }
@@ -2292,6 +2514,29 @@ private struct PixpawSettings: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                     }
+                    DropletToggleRow(
+                        title: "Pomodoro",
+                        subtitle: "Four focus sessions in a row, with a 5-minute break after each and 15 minutes off after the fourth. Each break starts with a stretch together.",
+                        isOn: Binding(get: { droplet.pomodoroOn }, set: { droplet.setPomodoro($0) })
+                    )
+                    DropletToggleRow(
+                        title: "Nudge me back to work",
+                        subtitle: "During a focus session, after two minutes in an app or on a page with one of these words in its name, your pet comes over to ask. Only the app in front and its window title are read, while focusing, and nothing is kept. Pages need Accessibility for Droppy.",
+                        isOn: Binding(get: { droplet.nudgesOn }, set: { droplet.setNudges($0) })
+                    )
+                    if droplet.nudgesOn {
+                        DropletControlRow(title: "Distractions", icon: "eyes", infoTip: "Comma-separated: app names, and words in window titles such as a browser tab's.") {
+                            TextField("Distractions", text: Binding(
+                                get: { distractionText ?? droplet.distractionWords.joined(separator: ", ") },
+                                set: { distractionText = $0 }
+                            ))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 260)
+                            .onSubmit { saveDistractions() }
+                            .onDisappear { saveDistractions() }
+                        }
+                    }
                 }
             }
 
@@ -2397,9 +2642,10 @@ extension PixpawDroplet: DropletURLHandling {
             setQuietByHand(["1", "on", "true"].contains(request.query["on"]?.lowercased() ?? "1"))
         case "agent":
             agentEvent(name: request.query["name"] ?? "", state: request.query["state"] ?? "", text: request.query["text"], usage: request.query["usage"])
-        case "sign":
-            // sign?text=Buy%20milk holds it up; sign with no text puts it down.
-            setSign(request.query["text"])
+        case "sign", "note":
+            // sign?text=Buy%20milk adds a note to the list; sign with no text
+            // marks the one on the sign done.
+            if let text = request.query["text"], !text.trimmingCharacters(in: .whitespaces).isEmpty { addNote(text) } else { cat?.signDone() }
         case "say":
             // Bounded, and shown as plain text only.
             if let text = request.query["text"]?.prefix(140), !text.isEmpty { cat?.say(CatLine(text: String(text), symbol: "bubble.left.fill")) }

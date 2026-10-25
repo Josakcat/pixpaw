@@ -19,6 +19,7 @@ final class CatSign {
     private var panel: CatPanel?
     private var hosting: SignHostingView?
     private(set) var text: String?
+    private var more = 0
     /// Clicked: whatever it said is done.
     var onClick: (() -> Void)?
 
@@ -26,13 +27,15 @@ final class CatSign {
     var top: CGFloat? { panel?.isVisible == true ? panel?.frame.maxY : nil }
 
     /// The note to hold up, or nil to put it down.
-    func hold(_ text: String?) {
-        guard text != self.text else { return }
+    /// `more`: how many notes wait behind this one.
+    func hold(_ text: String?, more: Int = 0) {
+        guard text != self.text || more != self.more else { return }
         self.text = text
+        self.more = more
         guard let text else { return close() }
         let font = NSFont.systemFont(ofSize: 12.5, weight: .bold)
         let natural = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 4
-        let view = SignBoard(text: text, textWidth: min(natural, Self.maxWidth))
+        let view = SignBoard(text: text, more: more, textWidth: min(max(natural, 40), Self.maxWidth))
         if let hosting {
             hosting.rootView = view
         } else {
@@ -77,19 +80,27 @@ final class SignHostingView: NSHostingView<SignBoard> {
 /// A cream board with a brown frame, the note in the middle, on a stick.
 struct SignBoard: View {
     let text: String
+    var more = 0
     let textWidth: CGFloat
 
     private static let wood = Color(red: 0.42, green: 0.27, blue: 0.14)
 
     var body: some View {
         VStack(spacing: 0) {
-            Text(text)
-                .font(.system(size: 12.5, weight: .bold, design: .rounded))
-                .foregroundStyle(Color(red: 0.29, green: 0.18, blue: 0.09))
-                .multilineTextAlignment(.center)
-                .lineLimit(3)
-                .frame(width: textWidth)
-                .fixedSize(horizontal: false, vertical: true)
+            VStack(spacing: 1) {
+                Text(text)
+                    .font(.system(size: 12.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(Color(red: 0.29, green: 0.18, blue: 0.09))
+                    .multilineTextAlignment(.center)
+                    .lineLimit(3)
+                    .frame(width: textWidth)
+                    .fixedSize(horizontal: false, vertical: true)
+                if more > 0 {
+                    Text("+\(more) more")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color(red: 0.42, green: 0.27, blue: 0.14).opacity(0.8))
+                }
+            }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
                 .background(
@@ -104,6 +115,6 @@ struct SignBoard: View {
         }
         .fixedSize()
         .help("Click when it's done")
-        .accessibilityLabel("Sign: \(text). Click when it's done.")
+        .accessibilityLabel(more > 0 ? "Sign: \(text), and \(more) more. Click when it's done." : "Sign: \(text). Click when it's done.")
     }
 }

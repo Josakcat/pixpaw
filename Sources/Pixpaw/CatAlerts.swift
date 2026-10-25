@@ -29,6 +29,30 @@ enum CatWords {
     static func focusDone(minutes: Int) -> CatLine {
         CatLine(text: "Time for a break! \(minutes) minutes of focus done.", symbol: "cup.and.saucer.fill", seconds: 5)
     }
+    /// Pomodoro: a round of focus done, a break until `end`.
+    static func onBreak(until end: Date, round: Int) -> CatLine {
+        CatLine(text: round % 4 == 0 ? "Long break · " : "Break · ", symbol: "cup.and.saucer.fill", until: end)
+    }
+    static func breakStarts(round: Int, minutes: Int) -> CatLine {
+        CatLine(text: round % 4 == 0 ? "Four rounds done! Take \(minutes) minutes off." : "Round \(round) done! \(minutes)-minute break.",
+                symbol: "cup.and.saucer.fill", seconds: 4)
+    }
+    static func backToIt(round: Int) -> CatLine {
+        CatLine(text: "Back to it! Round \(round) of 4.", symbol: "timer", seconds: 4)
+    }
+    static let pomodoroDone = CatLine(text: "That's a full Pomodoro. Great work!", symbol: "star.fill", seconds: 5)
+    /// Somewhere distracting during a focus session.
+    static func backToWork(minutesLeft: Int) -> CatLine {
+        let ask = ["Back to work?", "Psst… focus time!", "Is this part of the plan?", "I'm still focusing… are you?"].randomElement()!
+        return CatLine(text: minutesLeft > 0 ? "\(ask) \(minutesLeft) min left." : ask, symbol: "eyes", seconds: 5)
+    }
+    /// A note's time is up.
+    static func noteDue(_ text: String) -> CatLine {
+        CatLine(text: text, symbol: "alarm.fill", seconds: 8)
+    }
+    static func noteStreak(_ days: Int) -> CatLine {
+        CatLine(text: "\(days) days in a row of getting things done!", symbol: "flame.fill", seconds: 4)
+    }
     static let treat = ["Yum!", "Crunchy!", "More, please?"]
     static let gift = "I brought you something!"
     static let giftTaken = ["You like it?", "It's for you!", "I found it myself!"]

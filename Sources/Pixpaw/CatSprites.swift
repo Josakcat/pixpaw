@@ -139,7 +139,7 @@ enum CatAccessory: String, CaseIterable, Identifiable, Codable {
 /// a day it counts, so stars take days of real care rather than a minute of
 /// clicking.
 enum StarSource: String, Codable {
-    case pet, meal, hungryMeal, play, catchFile, treat, gift, stretch
+    case pet, meal, hungryMeal, play, catchFile, treat, gift, stretch, note
 
     static let dailyTotal = 30
     /// Petting again this soon after the last counted pet earns nothing.
@@ -155,6 +155,7 @@ enum StarSource: String, Codable {
         case .treat: 2
         case .gift: 3
         case .stretch: 2
+        case .note: 2
         }
     }
 
@@ -170,6 +171,7 @@ enum StarSource: String, Codable {
         case .treat: 3
         case .gift: 1
         case .stretch: 5
+        case .note: 5
         }
     }
 }

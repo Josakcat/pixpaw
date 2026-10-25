@@ -2,6 +2,16 @@
 
 ## [Unreleased]
 
+## [1.6.0] - 2026-10-25
+
+Get things done together: a to-do list on its sign, Pomodoro rounds and a nudge back to work.
+
+### Added
+
+- Notes: the sign is now your to-do list. Add notes with Control-Option-N from anywhere (or its menu, Settings → Notes, or `droppy://droplet/pixpaw/note?text=…`). Your pet holds the first one up, with how many more are waiting, and when you click it done it earns a star (up to five a day) and holds up the next. Put a time in a note ("Tea in 10 min", "Call Mum at 5", "standup at 9:30") and it comes over to remind you when it's up. Days in a row with a note done count as a streak.
+- Pomodoro. Switch it on under Focus session and a session runs four rounds: a 5-minute break after each, starting with a stretch together, and 15 minutes off after the fourth. The time left shows over its head, on the shelf and beside the notch; skip a break from the timer button or its menu.
+- Nudge me back to work. During a focus session, two minutes in an app or on a page with one of your words in its name (YouTube, Netflix, Reddit… you choose) and your pet comes over: "Back to work? 12 min left." Only the app in front and its window title are read, only while focusing, and nothing is kept.
+
 ## [1.5.0] - 2026-10-24
 
 Throw it, watch it climb, give it a note to hold, and let it carry your files. Updates now come straight from GitHub.

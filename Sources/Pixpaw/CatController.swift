@@ -206,6 +206,8 @@ final class CatController: ObservableObject {
     private var delivering: [URL]?
     /// A focus session is on: it sits by you quietly and keeps to itself.
     @Published var focusing = false { didSet { if focusing != oldValue { redraw() } } }
+    /// A Pomodoro break between focus sessions.
+    var onBreak = false
     /// A coding agent is working: it mostly sits at its laptop and codes along.
     @Published var agentWorking = false { didSet { if agentWorking != oldValue { redraw() } } }
     /// Types along at its laptop while you type, bobbing with your keys.
@@ -1213,9 +1215,10 @@ final class CatController: ObservableObject {
         panel?.setFrameOrigin(point)
     }
 
-    /// Holds up a note on a sign, or puts the sign down with nil.
-    func holdSign(_ text: String?) {
-        sign.hold(text)
+    /// Holds up a note on a sign, or puts the sign down with nil; `more`
+    /// notes wait behind it.
+    func holdSign(_ text: String?, more: Int = 0) {
+        sign.hold(text, more: more)
         placeSign(at: shown)
     }
 
@@ -1229,7 +1232,7 @@ final class CatController: ObservableObject {
     }
 
     /// The sign clicked: done, and pleased about it.
-    private func signDone() {
+    func signDone() {
         onSignDone?()
         if let line = CatWords.signDone.randomElement() { remark(line) }
         if mood.isIdle || mood == .happy { enter(.happy) }
@@ -2727,11 +2730,14 @@ final class CatView: NSView {
         menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
         menu.addItem(item("Take a photo", "camera.fill", #selector(photo)))
         menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
-        let holding = MainActor.assumeIsolated { controller.signText != nil }
-        menu.addItem(holding ? item("Put the sign down", "signpost.right.fill", #selector(dropSign))
-                     : item("Hold a sign…", "signpost.right", #selector(askSign)))
+        menu.addItem(item("Add a note…", "signpost.right", #selector(askSign)))
+        if MainActor.assumeIsolated({ controller.signText != nil }) {
+            menu.addItem(item("Done with this note", "checkmark.circle", #selector(dropSign)))
+        }
         let focusing = MainActor.assumeIsolated { controller.focusing }
-        menu.addItem(focusing ? item("Stop focusing", "stop.circle", #selector(focus)) : item("Focus", "timer", #selector(focus)))
+        let onBreak = MainActor.assumeIsolated { controller.onBreak }
+        menu.addItem(focusing ? item("Stop focusing", "stop.circle", #selector(focus))
+                     : onBreak ? item("Skip the break", "forward.end", #selector(focus)) : item("Focus", "timer", #selector(focus)))
         let asleep = MainActor.assumeIsolated { controller.isAsleep }
         let home = MainActor.assumeIsolated { controller.hasHome && controller.homeOn }
         menu.addItem(asleep ? item("Wake up", "sun.max", #selector(wake))
@@ -2785,7 +2791,7 @@ final class CatView: NSView {
     @objc private func photo() { MainActor.assumeIsolated { controller?.onPhoto?() } }
     @objc private func stretch() { MainActor.assumeIsolated { controller?.stretchWithMe() } }
     @objc private func askSign() { MainActor.assumeIsolated { controller?.onAskSign?() } }
-    @objc private func dropSign() { MainActor.assumeIsolated { controller?.onSignDone?() } }
+    @objc private func dropSign() { MainActor.assumeIsolated { controller?.signDone() } }
     @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
     @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
     @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }

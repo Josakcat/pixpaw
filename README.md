@@ -28,7 +28,7 @@ your desktop and talks to you. A Droplet for
 - The shelf widget counts your days together, pets, meals and games.
 - Six coats, and an optional friend of any kind that sits with it and plays tag.
 - Hold a dragged file over it and drop it: it carries the file to Droppy's shelf.
-- Give it a note and it holds it up on a little sign until you click it done.
+- Your to-do list on a little sign: add notes with Control-Option-N, it holds up the first until you click it done (a star), then the next. A note with a time ("in 10 min", "at 5pm") brings it over to remind you.
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
   between perches), a shark (swims through the air), a dinosaur, a dog, a
   hamster, a chicken, a giraffe, a hippo or a rabbit, each with its own sounds. Switch from the portrait on the shelf or in Settings.
@@ -57,7 +57,8 @@ your desktop and talks to you. A Droplet for
 - Each reminder has its own timer and switch, counts only while you're at the
   Mac, and waits until a call or a focus session is over.
 - Focus sessions: it works along with you at its own little laptop, with a
-  countdown over its head and beside the notch.
+  countdown over its head and beside the notch. Pomodoro runs four rounds with
+  breaks in between, and it nudges you back if you wander off to YouTube.
 
 **Little extras**
 - Happiness stars (petting, meals, play, catches, stretches; up to 30 a day)
@@ -76,6 +77,7 @@ your desktop and talks to you. A Droplet for
 | ![A home of its own](Assets/Screenshot-6.png) | ![Working together](Assets/Screenshot-7.png) |
 | ![Healthy breaks](Assets/Screenshot-8.png) | ![Draw your own](Assets/Screenshot-9.png) |
 | ![Full of beans](Assets/Screenshot-10.png) | ![Right beside you](Assets/Screenshot-11.png) |
+| ![Getting things done](Assets/Screenshot-12.png) | |
 
 Everything runs on your Mac. Notification text is shown and forgotten;
 nothing is stored or sent anywhere.

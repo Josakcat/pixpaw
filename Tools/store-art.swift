@@ -350,20 +350,29 @@ func climbing(_ ctx: CGContext, _ kind: String, _ frame: String, side: CGFloat, 
 
 /// The sign it holds up: a cream board in a brown frame on a stick, the
 /// stick's foot at `paw`.
-func sign(_ ctx: CGContext, _ text: String, paw: CGPoint, scale: CGFloat) {
+func sign(_ ctx: CGContext, _ text: String, more: Int = 0, paw: CGPoint, scale: CGFloat) {
     let wood = rgb(0x6B4524)
     let attrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 12.5 * scale, weight: .bold).rounded, .foregroundColor: rgb(0x4A2E17)]
+    let small: [NSAttributedString.Key: Any] = [
+        .font: NSFont.systemFont(ofSize: 9.5 * scale, weight: .semibold).rounded, .foregroundColor: rgb(0x6B4524, 0.8)]
+    let extra = more > 0 ? "+\(more) more" : nil
     let size = (text as NSString).size(withAttributes: attrs)
+    let extraSize = extra.map { ($0 as NSString).size(withAttributes: small) } ?? .zero
     let stick = 44 * scale
     ctx.setFillColor(wood.cgColor)
     ctx.fill(CGRect(x: paw.x - 2 * scale, y: paw.y - stick, width: 4 * scale, height: stick))
-    let board = CGRect(x: paw.x - size.width / 2 - 10 * scale, y: paw.y - stick - size.height - 12 * scale,
-                       width: size.width + 20 * scale, height: size.height + 12 * scale)
+    let height = size.height + (extra == nil ? 0 : extraSize.height + scale)
+    let board = CGRect(x: paw.x - size.width / 2 - 10 * scale, y: paw.y - stick - height - 12 * scale,
+                       width: size.width + 20 * scale, height: height + 12 * scale)
     let path = NSBezierPath(roundedRect: board, xRadius: 3 * scale, yRadius: 3 * scale)
     rgb(0xF7E3B8).setFill(); path.fill()
     wood.setStroke(); path.lineWidth = 2.5 * scale; path.stroke()
     (text as NSString).draw(at: CGPoint(x: board.minX + 10 * scale, y: board.minY + 6 * scale), withAttributes: attrs)
+    if let extra {
+        (extra as NSString).draw(at: CGPoint(x: board.midX - extraSize.width / 2, y: board.minY + 6 * scale + size.height + scale),
+                                 withAttributes: small)
+    }
 }
 
 extension NSFont {
@@ -433,6 +442,50 @@ canvas(Int(W), Int(H), "Screenshot-11.png") { ctx in
     let typer = CGPoint(x: 620, y: floorY)
     pet(ctx, "hamster", "sit", feet: typer, px: big, laptop: true)
     label("Types along with you", at: CGPoint(x: typer.x + 10 * big, y: typer.y - 17 * big), size: 28, weight: .semibold,
+          color: rgb(0xFFE08A), centered: true)
+}
+
+// 12. Getting things done: notes on the sign, Pomodoro, a nudge back.
+canvas(Int(W), Int(H), "Screenshot-12.png") { ctx in
+    desktop(ctx, W, H, title: "Getting things done", subtitle: "Your to-do list on its sign, Pomodoro rounds, and a nudge when you wander off.")
+    let big: CGFloat = 9
+
+    // The list on its sign, the rest waiting behind.
+    let sitter = CGPoint(x: 120, y: floorY)
+    let width = CGFloat(CatArt.frames["sit"]![0].count)
+    sign(ctx, "Call Mum at 5", more: 2, paw: CGPoint(x: sitter.x + 0.8 * width * big, y: sitter.y - 8 * big / 3), scale: big / 3)
+    cat(ctx, "sit", feet: sitter, px: big)
+    label("Notes · ⌃⌥N", at: CGPoint(x: sitter.x + 0.5 * width * big + 40, y: sitter.y + 20), size: 28, weight: .semibold,
+          color: rgb(0xFFE08A), centered: true)
+
+    // Pomodoro: focusing at its laptop, round 2 of 4.
+    let focus = CGPoint(x: 640, y: floorY)
+    pet(ctx, "dog", "sit", feet: focus, px: big, laptop: true)
+    bubble(ctx, "Focus 2/4 · 18:42", symbol: "timer", tip: CGPoint(x: focus.x + 14.5 * big, y: focus.y - 14 * big), scale: 2)
+    label("Pomodoro", at: CGPoint(x: focus.x + 10 * big, y: focus.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+    for i in 0..<4 {
+        ctx.setFillColor((i < 1 ? rgb(0xFF6B5A) : rgb(0xFFFFFF, 0.3)).cgColor)
+        ctx.fillEllipse(in: CGRect(x: focus.x + 10 * big - 58 + CGFloat(i) * 32, y: focus.y + 66, width: 20, height: 20))
+    }
+
+    // A nudge back from a video during a focus session.
+    let window = CGRect(x: 1110, y: 270, width: 400, height: 250)
+    ctx.setFillColor(rgb(0x18181C, 0.92).cgColor)
+    ctx.addPath(CGPath(roundedRect: window, cornerWidth: 16, cornerHeight: 16, transform: nil)); ctx.fillPath()
+    label("YouTube", at: CGPoint(x: window.minX + 24, y: window.minY + 16), size: 22, weight: .semibold, color: rgb(0xFFFFFF, 0.75))
+    ctx.setFillColor(rgb(0x2C2C34).cgColor)
+    ctx.fill(CGRect(x: window.minX + 24, y: window.minY + 56, width: window.width - 48, height: window.height - 80))
+    ctx.setFillColor(rgb(0xFF3B30).cgColor)
+    let play = CGMutablePath()
+    play.move(to: CGPoint(x: window.midX - 18, y: window.midY - 6))
+    play.addLine(to: CGPoint(x: window.midX + 22, y: window.midY + 16))
+    play.addLine(to: CGPoint(x: window.midX - 18, y: window.midY + 38))
+    play.closeSubpath()
+    ctx.addPath(play); ctx.fillPath()
+    let nudger = CGPoint(x: 1180, y: floorY)
+    pet(ctx, "rabbit", "sit", feet: nudger, px: big)
+    bubble(ctx, "Back to work? 12 min left.", symbol: "eyes", tip: CGPoint(x: nudger.x + 13 * big, y: nudger.y - 17.5 * big), scale: 2)
+    label("Nudges you back", at: CGPoint(x: nudger.x + 10 * big, y: nudger.y + 20), size: 28, weight: .semibold,
           color: rgb(0xFFE08A), centered: true)
 }
 
