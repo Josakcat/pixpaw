@@ -20,6 +20,7 @@ final class CatSign {
     private var hosting: SignHostingView?
     private(set) var text: String?
     private var more = 0
+    private var footer: String?
     /// Clicked: whatever it said is done.
     var onClick: (() -> Void)?
 
@@ -27,15 +28,19 @@ final class CatSign {
     var top: CGFloat? { panel?.isVisible == true ? panel?.frame.maxY : nil }
 
     /// The note to hold up, or nil to put it down.
-    /// `more`: how many notes wait behind this one.
-    func hold(_ text: String?, more: Int = 0) {
-        guard text != self.text || more != self.more else { return }
+    /// `more`: how many notes wait behind this one; `footer`: a line under
+    /// it (a countdown).
+    func hold(_ text: String?, more: Int = 0, footer: String? = nil) {
+        guard text != self.text || more != self.more || footer != self.footer else { return }
         self.text = text
         self.more = more
+        self.footer = footer
         guard let text else { return close() }
         let font = NSFont.systemFont(ofSize: 12.5, weight: .bold)
         let natural = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 4
-        let view = SignBoard(text: text, more: more, textWidth: min(max(natural, 40), Self.maxWidth))
+        let small = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
+        let under = footer.map { ceil(($0 as NSString).size(withAttributes: [.font: small]).width) + 18 } ?? 0
+        let view = SignBoard(text: text, more: more, footer: footer, textWidth: min(max(natural, under, 40), Self.maxWidth))
         if let hosting {
             hosting.rootView = view
         } else {
@@ -81,6 +86,7 @@ final class SignHostingView: NSHostingView<SignBoard> {
 struct SignBoard: View {
     let text: String
     var more = 0
+    var footer: String?
     let textWidth: CGFloat
 
     private static let wood = Color(red: 0.42, green: 0.27, blue: 0.14)
@@ -100,6 +106,12 @@ struct SignBoard: View {
                         .font(.system(size: 9.5, weight: .semibold, design: .rounded))
                         .foregroundStyle(Color(red: 0.42, green: 0.27, blue: 0.14).opacity(0.8))
                 }
+                if let footer {
+                    Label(footer, systemImage: "calendar")
+                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .foregroundStyle(Color(red: 0.42, green: 0.27, blue: 0.14).opacity(0.85))
+                        .lineLimit(1)
+                }
             }
                 .padding(.horizontal, 10)
                 .padding(.vertical, 6)
@@ -115,6 +127,6 @@ struct SignBoard: View {
         }
         .fixedSize()
         .help("Click when it's done")
-        .accessibilityLabel(more > 0 ? "Sign: \(text), and \(more) more. Click when it's done." : "Sign: \(text). Click when it's done.")
+        .accessibilityLabel("Sign: \(text)\(more > 0 ? ", and \(more) more" : "")\(footer.map { ". \($0)" } ?? ""). Click when it's done.")
     }
 }

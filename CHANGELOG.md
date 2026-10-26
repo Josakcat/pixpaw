@@ -1,6 +1,19 @@
 # Changelog
 
-## [Unreleased]
+## [1.7.0] - 2026-10-26
+
+Join your calls with a click, count down to the days ahead, capture a whole Safari page, and a tidier Settings page.
+
+### Added
+
+- Join a call with a click. When your pet comes over two minutes before an event with a Zoom, Google Meet, Teams, Webex, FaceTime or other video-call link (in the event's URL, location or notes), click it to join ("Team sync in 2 min · click me to join"), right up to ten minutes into the call. Also "Join …" in its menu, a Join your next video call shortcut, and `droppy://droplet/pixpaw/join`.
+- Countdowns. Add a day to count down to under Settings → Notes ("Trip to Japan", 24 December) and the nearest one shows on its sign, under the note it holds or on the sign by itself: "Trip to Japan · 12 days". On the day your pet comes over to celebrate, and the day after it's gone. Up to five; also `droppy://droplet/pixpaw/countdown?title=…&date=2026-12-24`.
+- Capture a whole Safari page. Choose "Capture the Safari page" from its menu and your pet scrolls the page in Safari's front window from top to bottom, joins the screens into one tall PNG (headers that stay put show only once) and puts the page back where it was. The picture is saved where your screenshots go and your pet carries it to your shelf. It sees what you see, signed in and all, and needs Safari's Settings → Developer → Allow JavaScript from Apple Events and Screen Recording for Droppy. Also from Settings → What it tells you, a Capture the whole Safari page shortcut, and `droppy://droplet/pixpaw/capture`.
+
+### Changed
+
+- A tidier Settings page. Showing your pet, its character and sounds stay up top; everything else moved onto pages of their own, the way System Settings does it: Notes, Breaks and focus, Moving about, Your own pets, Wardrobe and home, Friend, What it tells you, and Festivals and birthday. Each link says what's inside, and Notes shows how many you have. Needs DroppyKit 1.18 (any Droppy from 15.3).
+- Pixpaw's permissions now list Apple Events and Screen capture, which Capture the Safari page uses. Nothing is captured until you ask.
 
 ## [1.6.0] - 2026-10-25
 

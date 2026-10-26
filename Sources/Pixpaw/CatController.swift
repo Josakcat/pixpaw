@@ -192,6 +192,8 @@ final class CatController: ObservableObject {
     var onPersist: (() -> Void)?
     /// Take a photo of it; the droplet knows how long you have been together.
     var onPhoto: (() -> Void)?
+    /// Capture the whole page in Safari.
+    var onCapturePage: (() -> Void)?
     /// Start or stop a focus session; the droplet keeps the clock.
     var onFocus: (() -> Void)?
     /// Files dropped on it, to take to the shelf when it gets there.
@@ -261,10 +263,13 @@ final class CatController: ObservableObject {
     /// A note it holds up on a sign until you click it done.
     private let sign = CatSign()
     /// The sign was clicked: what it said is done.
-    var onSignDone: (() -> Void)?
+    /// The sign clicked: whether a note came off it.
+    var onSignDone: (() -> Bool)?
     /// Hold a sign… was chosen from its menu.
     var onAskSign: (() -> Void)?
     var signText: String? { sign.text }
+    /// Whether the sign holds a note to cross off, not just a countdown.
+    var signIsNote = false
     private var catLayer: CALayer?
     private var effectLayer: CALayer?
     private var bowlPanel: CatPanel?
@@ -1217,8 +1222,8 @@ final class CatController: ObservableObject {
 
     /// Holds up a note on a sign, or puts the sign down with nil; `more`
     /// notes wait behind it.
-    func holdSign(_ text: String?, more: Int = 0) {
-        sign.hold(text, more: more)
+    func holdSign(_ text: String?, more: Int = 0, footer: String? = nil) {
+        sign.hold(text, more: more, footer: footer)
         placeSign(at: shown)
     }
 
@@ -1233,7 +1238,8 @@ final class CatController: ObservableObject {
 
     /// The sign clicked: done, and pleased about it.
     func signDone() {
-        onSignDone?()
+        // A sign with only a countdown on it has nothing to cross off.
+        guard onSignDone?() == true else { return }
         if let line = CatWords.signDone.randomElement() { remark(line) }
         if mood.isIdle || mood == .happy { enter(.happy) }
     }
@@ -2285,7 +2291,7 @@ final class CatController: ObservableObject {
     }
 
     /// Files dropped on it: it runs them over beneath the notch, to the shelf.
-    fileprivate func carry(_ urls: [URL]) {
+    func carry(_ urls: [URL]) {
         acceptsDrop = false
         dropHoverSince = nil
         guard !urls.isEmpty else { return }
@@ -2381,11 +2387,38 @@ final class CatController: ObservableObject {
         place()
     }
 
+    /// A meeting it came over about: a click on it joins, until it has been
+    /// on for ten minutes.
+    private var joinOffer: (title: String, until: Date, join: () -> Void)?
+
+    func offerJoin(_ title: String, until: Date, join: @escaping () -> Void) {
+        joinOffer = (title, until, join)
+    }
+
+    func clearJoinOffer() { joinOffer = nil }
+
+    /// The meeting a click joins now, if any.
+    var joinTitle: String? {
+        guard let joinOffer, joinOffer.until > Date() else { return nil }
+        return joinOffer.title
+    }
+
+    func joinMeeting() {
+        guard let joinOffer, joinOffer.until > Date() else { return }
+        self.joinOffer = nil
+        joinOffer.join()
+    }
+
     fileprivate func mouseUp() {
         guard dragOffset != nil else { return }
         dragOffset = nil
         if didDrag {
             letGo()
+        } else if joinTitle != nil {
+            joinMeeting()
+            if mood.isIdle { enter(.happy) }
+            animate()
+            place()
         } else if stretchWaitsUntil != nil {
             finishStretch()
             animate()
@@ -2729,9 +2762,15 @@ final class CatView: NSView {
         menu.addItem(item("Feed", "fork.knife", #selector(feed)))
         menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
         menu.addItem(item("Take a photo", "camera.fill", #selector(photo)))
+        if PageCapture.safariIsOpen {
+            menu.addItem(item("Capture the Safari page", "camera.viewfinder", #selector(capturePage)))
+        }
         menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
+        if let meeting = MainActor.assumeIsolated({ controller.joinTitle }) {
+            menu.addItem(item("Join “\(meeting)”", "video.fill", #selector(joinMeeting)))
+        }
         menu.addItem(item("Add a note…", "signpost.right", #selector(askSign)))
-        if MainActor.assumeIsolated({ controller.signText != nil }) {
+        if MainActor.assumeIsolated({ controller.signIsNote }) {
             menu.addItem(item("Done with this note", "checkmark.circle", #selector(dropSign)))
         }
         let focusing = MainActor.assumeIsolated { controller.focusing }
@@ -2792,6 +2831,8 @@ final class CatView: NSView {
     @objc private func stretch() { MainActor.assumeIsolated { controller?.stretchWithMe() } }
     @objc private func askSign() { MainActor.assumeIsolated { controller?.onAskSign?() } }
     @objc private func dropSign() { MainActor.assumeIsolated { controller?.signDone() } }
+    @objc private func capturePage() { MainActor.assumeIsolated { controller?.onCapturePage?() } }
+    @objc private func joinMeeting() { MainActor.assumeIsolated { controller?.joinMeeting() } }
     @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
     @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
     @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }

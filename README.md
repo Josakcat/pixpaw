@@ -28,7 +28,8 @@ your desktop and talks to you. A Droplet for
 - The shelf widget counts your days together, pets, meals and games.
 - Six coats, and an optional friend of any kind that sits with it and plays tag.
 - Hold a dragged file over it and drop it: it carries the file to Droppy's shelf.
-- Your to-do list on a little sign: add notes with Control-Option-N, it holds up the first until you click it done (a star), then the next. A note with a time ("in 10 min", "at 5pm") brings it over to remind you.
+- Your to-do list on a little sign: add notes with Control-Option-N, it holds up the first until you click it done (a star), then the next. A note with a time ("in 10 min", "at 5pm") brings it over to remind you, and a countdown ("Trip to Japan · 12 days") rides along under it.
+- Captures a whole Safari page for you: it scrolls the page top to bottom, joins the screens into one tall PNG and carries it to Droppy's shelf. Needs Safari's Settings → Developer → Allow JavaScript from Apple Events, and Screen Recording for Droppy.
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
   between perches), a shark (swims through the air), a dinosaur, a dog, a
   hamster, a chicken, a giraffe, a hippo or a rabbit, each with its own sounds. Switch from the portrait on the shelf or in Settings.
@@ -39,7 +40,7 @@ your desktop and talks to you. A Droplet for
 - Wears headphones while yours are connected.
 
 **Talks in a speech bubble**
-- Mac notifications, and calendar events two minutes ahead (it comes over to tell you).
+- Mac notifications, and calendar events two minutes ahead (it comes over to tell you; click it to join the Zoom, Meet or Teams call).
 - Song changes in Apple Music and Spotify (and it stops to dance on every new song). It dances to anything else playing too: YouTube in your browser, a video, another player.
 - Claude Code and Codex finishing or needing you, with the plan usage left. While one works, your pet codes along at its laptop.
 - Volume and brightness, headphones connecting, the battery (and it gets sleepy below 20%), downloads.
@@ -77,7 +78,8 @@ your desktop and talks to you. A Droplet for
 | ![A home of its own](Assets/Screenshot-6.png) | ![Working together](Assets/Screenshot-7.png) |
 | ![Healthy breaks](Assets/Screenshot-8.png) | ![Draw your own](Assets/Screenshot-9.png) |
 | ![Full of beans](Assets/Screenshot-10.png) | ![Right beside you](Assets/Screenshot-11.png) |
-| ![Getting things done](Assets/Screenshot-12.png) | |
+| ![Getting things done](Assets/Screenshot-12.png) | ![Click to join](Assets/Screenshot-13.png) |
+| ![The whole page](Assets/Screenshot-14.png) | |
 
 Everything runs on your Mac. Notification text is shown and forgotten;
 nothing is stored or sent anywhere.
@@ -130,7 +132,8 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
 `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…`): `show`, `hide`,
 `come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|stop`, `wear?hat=…&collar=…`,
 `quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
-`roam?mode=anywhere|floor|windows`,
+`note?text=…`, `join` (your next video call), `countdown?title=…&date=2026-12-24`,
+`capture` (the whole Safari page), `roam?mode=anywhere|floor|windows`,
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
 
 ## Art

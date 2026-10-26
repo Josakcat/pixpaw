@@ -50,6 +50,24 @@ enum CatWords {
     static func noteDue(_ text: String) -> CatLine {
         CatLine(text: text, symbol: "alarm.fill", seconds: 8)
     }
+    static func joining(_ title: String) -> CatLine {
+        CatLine(text: "Joining \(title)…", symbol: "video.fill", seconds: 3)
+    }
+    static let noMeeting = CatLine(text: "No call to join right now.", symbol: "video.slash", seconds: 3)
+    /// Capturing the whole page in Safari, and what can stop it.
+    static let capturingPage = CatLine(text: "Hold still, Safari! Scrolling all the way down…", symbol: "camera.viewfinder", seconds: 3)
+    static func pageProblem(_ problem: PageCaptureProblem) -> CatLine {
+        switch problem {
+        case .noPage: CatLine(text: "Open a page in Safari first.", symbol: "safari", seconds: 4)
+        case .notAllowed: CatLine(text: "Let Droppy control Safari in Privacy & Security → Automation.", symbol: "lock.fill", seconds: 6)
+        case .noJavaScript: CatLine(text: "In Safari, turn on Settings → Developer → Allow JavaScript from Apple Events, then ask again.", symbol: "safari", seconds: 7)
+        case .noScreenRecording: CatLine(text: "Droppy needs Screen Recording in Privacy & Security for that.", symbol: "lock.fill", seconds: 6)
+        case .failed: CatLine(text: "That page wouldn't hold still. Try again?", symbol: "exclamationmark.triangle.fill", seconds: 4)
+        }
+    }
+    static func countdownDay(_ title: String) -> CatLine {
+        CatLine(text: "\(title) is today! 🎉", symbol: "party.popper.fill", seconds: 6)
+    }
     static func noteStreak(_ days: Int) -> CatLine {
         CatLine(text: "\(days) days in a row of getting things done!", symbol: "flame.fill", seconds: 4)
     }
@@ -318,9 +336,12 @@ final class CalendarWatcher {
     private var timer: Timer?
     private var announced: Set<String> = []
     private let onLine: (CatLine) -> Void
+    /// An event with a video call to join, as it is announced.
+    private let onMeeting: ((Meeting) -> Void)?
 
-    init(onLine: @escaping (CatLine) -> Void) {
+    init(onLine: @escaping (CatLine) -> Void, onMeeting: ((Meeting) -> Void)? = nil) {
         self.onLine = onLine
+        self.onMeeting = onMeeting
     }
 
     /// Droppy's own answer, which is the one that counts: Droppy owns the
@@ -382,7 +403,13 @@ final class CalendarWatcher {
             let minutes = Int((start.timeIntervalSince(now) / 60).rounded())
             guard minutes <= 2, minutes >= -1 else { continue }
             announced.insert(id)
-            onLine(CatLine(text: CatWords.eventSoon(event.title ?? "Event", minutes: max(0, minutes)), symbol: "calendar"))
+            let soon = CatWords.eventSoon(event.title ?? "Event", minutes: max(0, minutes))
+            if let link = MeetingLink.find(in: event) {
+                onLine(CatLine(text: soon + " · click me to join", symbol: "video.fill", seconds: 6))
+                onMeeting?(Meeting(title: event.title ?? "Meeting", start: start, link: link))
+            } else {
+                onLine(CatLine(text: soon, symbol: "calendar"))
+            }
         }
         if announced.count > 200 { announced = [] }
     }

@@ -350,25 +350,26 @@ func climbing(_ ctx: CGContext, _ kind: String, _ frame: String, side: CGFloat, 
 
 /// The sign it holds up: a cream board in a brown frame on a stick, the
 /// stick's foot at `paw`.
-func sign(_ ctx: CGContext, _ text: String, more: Int = 0, paw: CGPoint, scale: CGFloat) {
+func sign(_ ctx: CGContext, _ text: String, more: Int = 0, footer: String? = nil, paw: CGPoint, scale: CGFloat) {
     let wood = rgb(0x6B4524)
     let attrs: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 12.5 * scale, weight: .bold).rounded, .foregroundColor: rgb(0x4A2E17)]
     let small: [NSAttributedString.Key: Any] = [
         .font: NSFont.systemFont(ofSize: 9.5 * scale, weight: .semibold).rounded, .foregroundColor: rgb(0x6B4524, 0.8)]
-    let extra = more > 0 ? "+\(more) more" : nil
+    let extra = footer.map { "📅 " + $0 } ?? (more > 0 ? "+\(more) more" : nil)
     let size = (text as NSString).size(withAttributes: attrs)
     let extraSize = extra.map { ($0 as NSString).size(withAttributes: small) } ?? .zero
     let stick = 44 * scale
     ctx.setFillColor(wood.cgColor)
     ctx.fill(CGRect(x: paw.x - 2 * scale, y: paw.y - stick, width: 4 * scale, height: stick))
     let height = size.height + (extra == nil ? 0 : extraSize.height + scale)
-    let board = CGRect(x: paw.x - size.width / 2 - 10 * scale, y: paw.y - stick - height - 12 * scale,
-                       width: size.width + 20 * scale, height: height + 12 * scale)
+    let wide = max(size.width, extraSize.width)
+    let board = CGRect(x: paw.x - wide / 2 - 10 * scale, y: paw.y - stick - height - 12 * scale,
+                       width: wide + 20 * scale, height: height + 12 * scale)
     let path = NSBezierPath(roundedRect: board, xRadius: 3 * scale, yRadius: 3 * scale)
     rgb(0xF7E3B8).setFill(); path.fill()
     wood.setStroke(); path.lineWidth = 2.5 * scale; path.stroke()
-    (text as NSString).draw(at: CGPoint(x: board.minX + 10 * scale, y: board.minY + 6 * scale), withAttributes: attrs)
+    (text as NSString).draw(at: CGPoint(x: board.midX - size.width / 2, y: board.minY + 6 * scale), withAttributes: attrs)
     if let extra {
         (extra as NSString).draw(at: CGPoint(x: board.midX - extraSize.width / 2, y: board.minY + 6 * scale + size.height + scale),
                                  withAttributes: small)
@@ -487,6 +488,168 @@ canvas(Int(W), Int(H), "Screenshot-12.png") { ctx in
     bubble(ctx, "Back to work? 12 min left.", symbol: "eyes", tip: CGPoint(x: nudger.x + 13 * big, y: nudger.y - 17.5 * big), scale: 2)
     label("Nudges you back", at: CGPoint(x: nudger.x + 10 * big, y: nudger.y + 20), size: 28, weight: .semibold,
           color: rgb(0xFFE08A), centered: true)
+}
+
+/// A webpage, made up: a header, pictures and lines of text, `width` wide,
+/// drawn from `top` (page points) for `height`, at `origin` and `scale`.
+let pageLength: CGFloat = 1500
+func webpage(_ ctx: CGContext, origin: CGPoint, top: CGFloat, height: CGFloat, scale: CGFloat) {
+    let width: CGFloat = 600
+    ctx.saveGState()
+    ctx.clip(to: CGRect(x: origin.x, y: origin.y, width: width * scale, height: height * scale))
+    func box(_ y: CGFloat, _ h: CGFloat, _ x: CGFloat = 40, _ w: CGFloat = 520, _ color: NSColor, radius: CGFloat = 0) {
+        let rect = CGRect(x: origin.x + x * scale, y: origin.y + (y - top) * scale, width: w * scale, height: h * scale)
+        ctx.setFillColor(color.cgColor)
+        ctx.addPath(CGPath(roundedRect: rect, cornerWidth: radius * scale, cornerHeight: radius * scale, transform: nil)); ctx.fillPath()
+    }
+    box(top, height, 0, width, rgb(0xFFFFFF))
+    box(0, 70, 0, width, rgb(0xFF8A3D))
+    box(24, 22, 40, 200, rgb(0xFFFFFF, 0.9), radius: 6)
+    box(100, 26, 40, 380, rgb(0x2A2A2E), radius: 6)
+    box(146, 210, 40, 520, rgb(0xFFD08A), radius: 14)
+    box(196, 90, 230, 140, rgb(0xFF8A3D), radius: 45)
+    for (i, y) in stride(from: 384, to: 600, by: 30).enumerated() { box(CGFloat(y), 14, 40, i % 3 == 2 ? 300 : 520, rgb(0xD5D5DC), radius: 7) }
+    box(630, 24, 40, 300, rgb(0x2A2A2E), radius: 6)
+    box(676, 240, 40, 250, rgb(0x9ED9A8), radius: 14)
+    box(676, 240, 310, 250, rgb(0x8EC5F0), radius: 14)
+    for (i, y) in stride(from: 946, to: 1180, by: 30).enumerated() { box(CGFloat(y), 14, 40, i % 4 == 3 ? 260 : 520, rgb(0xD5D5DC), radius: 7) }
+    box(1210, 24, 40, 340, rgb(0x2A2A2E), radius: 6)
+    box(1254, 120, 40, 520, rgb(0xF2E3FF), radius: 14)
+    box(1410, 90, 0, width, rgb(0x2A2A2E))
+    ctx.restoreGState()
+}
+
+/// Droppy's shelf open beneath the notch, files on it.
+func shelf(_ ctx: CGContext, _ rect: CGRect, files: [UTType]) {
+    ctx.setFillColor(rgb(0x000000).cgColor)
+    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 34, cornerHeight: 34, transform: nil)); ctx.fillPath()
+    ctx.fill(CGRect(x: rect.minX, y: rect.minY, width: rect.width, height: 40))
+    for (i, type) in files.enumerated() {
+        NSWorkspace.shared.icon(for: type).draw(in: CGRect(x: rect.minX + 70 + CGFloat(i) * 150, y: rect.minY + 25, width: 110, height: 110),
+                                                from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+    label("Droppy's shelf", at: CGPoint(x: rect.midX, y: rect.maxY + 14), size: 24, weight: .semibold, color: rgb(0xFFFFFF, 0.8), centered: true)
+}
+
+/// An SF Symbol, white, in a box of `size`.
+func symbol(_ name: String, in rect: CGRect, color: NSColor = .white) {
+    guard let image = NSImage(systemSymbolName: name, accessibilityDescription: nil)?
+        .withSymbolConfiguration(.init(pointSize: rect.height * 0.62, weight: .semibold)) else { return }
+    let tinted = NSImage(size: image.size, flipped: false) { r in image.draw(in: r); color.set(); r.fill(using: .sourceAtop); return true }
+    tinted.draw(in: CGRect(x: rect.midX - image.size.width / 2, y: rect.midY - image.size.height / 2, width: image.size.width, height: image.size.height),
+                from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+}
+
+// 13. Right on time: click to join a call, countdowns, Settings on pages.
+canvas(Int(W), Int(H), "Screenshot-13.png") { ctx in
+    desktop(ctx, W, H, title: "Right on time", subtitle: "Click it to join your next call, count down to the days ahead, and find every setting fast.")
+    let big: CGFloat = 9
+
+    // Come over two minutes early with the call: a click joins.
+    let caller = CGPoint(x: 210, y: floorY)
+    cat(ctx, "sit", feet: caller, px: big)
+    bubble(ctx, "Team sync in 2 min · click me to join", symbol: "video.fill", tip: CGPoint(x: caller.x + 14.5 * big, y: caller.y - 17.5 * big), scale: 2)
+    if let arrow = NSCursor.pointingHand.image.copy() as? NSImage {
+        arrow.draw(in: CGRect(x: caller.x + 17 * big, y: caller.y - 6 * big, width: arrow.size.width * 2.4, height: arrow.size.height * 2.4),
+                   from: .zero, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+    }
+    label("Click to join", at: CGPoint(x: caller.x + 10 * big, y: caller.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // A countdown under the note on its sign.
+    let counter = CGPoint(x: 660, y: floorY)
+    let width = CGFloat(CatArt.frames["sit"]![0].count)
+    sign(ctx, "Pack the bags", footer: "Trip to Japan · 12 days", paw: CGPoint(x: counter.x + 0.8 * width * big, y: counter.y - 8 * big / 3), scale: big / 3)
+    pet(ctx, "dog", "sit", feet: counter, px: big)
+    label("Countdowns", at: CGPoint(x: counter.x + 10 * big, y: counter.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // Settings, one page a subject.
+    let panel = CGRect(x: 1090, y: 250, width: 430, height: 600)
+    ctx.setFillColor(rgb(0x1C1C20, 0.95).cgColor)
+    ctx.addPath(CGPath(roundedRect: panel, cornerWidth: 22, cornerHeight: 22, transform: nil)); ctx.fillPath()
+    let pages: [(String, String, String, UInt32)] = [
+        ("Notes", "3 notes · 1 countdown", "signpost.right.fill", 0xFF9F0A),
+        ("Breaks and focus", "Reminders, Pomodoro", "timer", 0xFF453A),
+        ("Moving about", "Walking, typing, files", "figure.walk", 0x30D158),
+        ("Your own pets", "Draw your own", "paintbrush.pointed.fill", 0xBF5AF2),
+        ("Wardrobe and home", "Hats, collars, a home", "tshirt.fill", 0xFF375F),
+        ("Friend", "A second pet", "pawprint.fill", 0x40C8E0),
+        ("What it tells you", "Calendar, music, agents", "bubble.left.fill", 0x0A84FF),
+        ("Festivals and birthday", "Your special days", "party.popper.fill", 0xFFD60A),
+    ]
+    for (i, page) in pages.enumerated() {
+        let y = panel.minY + 22 + CGFloat(i) * 70
+        let tile = CGRect(x: panel.minX + 22, y: y + 8, width: 44, height: 44)
+        ctx.setFillColor(rgb(page.3).cgColor)
+        ctx.addPath(CGPath(roundedRect: tile, cornerWidth: 11, cornerHeight: 11, transform: nil)); ctx.fillPath()
+        symbol(page.2, in: tile.insetBy(dx: 6, dy: 6))
+        label(page.0, at: CGPoint(x: tile.maxX + 16, y: y + 4), size: 21, weight: .semibold)
+        label(page.1, at: CGPoint(x: tile.maxX + 16, y: y + 30), size: 16, weight: .regular, color: rgb(0xFFFFFF, 0.55))
+        label("›", at: CGPoint(x: panel.maxX - 34, y: y + 8), size: 30, weight: .regular, color: rgb(0xFFFFFF, 0.4))
+    }
+    label("Settings on pages", at: CGPoint(x: panel.midX, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
+// 14. The whole page: Safari scrolled top to bottom, one tall picture, on the shelf.
+canvas(Int(W), Int(H), "Screenshot-14.png") { ctx in
+    desktop(ctx, W, H, title: "The whole page", subtitle: "It scrolls a Safari page to the bottom and hands you one tall picture.")
+    let big: CGFloat = 9
+
+    // Safari, a screen of the page showing.
+    let window = CGRect(x: 70, y: 250, width: 600, height: 440)
+    ctx.saveGState()
+    ctx.setShadow(offset: CGSize(width: 0, height: 12), blur: 30, color: rgb(0x000000, 0.35).cgColor)
+    ctx.setFillColor(rgb(0x2A2A2E).cgColor)
+    ctx.addPath(CGPath(roundedRect: window, cornerWidth: 16, cornerHeight: 16, transform: nil)); ctx.fillPath()
+    ctx.restoreGState()
+    for (i, color) in [0xFF5F57, 0xFEBC2E, 0x28C840].enumerated() {
+        ctx.setFillColor(rgb(UInt32(color)).cgColor)
+        ctx.fillEllipse(in: CGRect(x: window.minX + 20 + CGFloat(i) * 24, y: window.minY + 19, width: 14, height: 14))
+    }
+    let field = CGRect(x: window.minX + 150, y: window.minY + 12, width: 300, height: 28)
+    ctx.setFillColor(rgb(0xFFFFFF, 0.12).cgColor)
+    ctx.addPath(CGPath(roundedRect: field, cornerWidth: 8, cornerHeight: 8, transform: nil)); ctx.fillPath()
+    label("recipes.example", at: CGPoint(x: field.midX, y: field.minY + 4), size: 16, weight: .medium, color: rgb(0xFFFFFF, 0.75), centered: true)
+    let shown = window.height - 52
+    ctx.saveGState()
+    ctx.addPath(CGPath(roundedRect: window, cornerWidth: 16, cornerHeight: 16, transform: nil)); ctx.clip()
+    webpage(ctx, origin: CGPoint(x: window.minX, y: window.minY + 52), top: 0, height: shown, scale: 1)
+    ctx.restoreGState()
+
+    // The pet scrolling it.
+    let scroller = CGPoint(x: 250, y: floorY)
+    cat(ctx, "sit", feet: scroller, px: big)
+    bubble(ctx, "Hold still, Safari!", symbol: "camera.viewfinder", tip: CGPoint(x: scroller.x + 14.5 * big, y: scroller.y - 17.5 * big), scale: 2)
+    label("Scrolls to the bottom", at: CGPoint(x: scroller.x + 10 * big, y: scroller.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // The arrow, and the page in one piece, with where the screens joined.
+    let arrow = CGMutablePath()
+    arrow.move(to: CGPoint(x: 700, y: 470)); arrow.addLine(to: CGPoint(x: 780, y: 470))
+    arrow.move(to: CGPoint(x: 760, y: 450)); arrow.addLine(to: CGPoint(x: 782, y: 470)); arrow.addLine(to: CGPoint(x: 760, y: 490))
+    ctx.addPath(arrow); ctx.setStrokeColor(rgb(0xFFFFFF, 0.85).cgColor); ctx.setLineWidth(6); ctx.setLineCap(.round); ctx.setLineJoin(.round); ctx.strokePath()
+    let scale: CGFloat = 0.44
+    let tall = CGRect(x: 830, y: 225, width: 600 * scale, height: pageLength * scale)
+    ctx.saveGState()
+    ctx.setShadow(offset: CGSize(width: 0, height: 12), blur: 30, color: rgb(0x000000, 0.35).cgColor)
+    ctx.setFillColor(rgb(0xFFFFFF).cgColor); ctx.fill(tall.insetBy(dx: -6, dy: -6))
+    ctx.restoreGState()
+    webpage(ctx, origin: tall.origin, top: 0, height: pageLength, scale: scale)
+    ctx.setStrokeColor(rgb(0x4446F4, 0.8).cgColor); ctx.setLineWidth(2.5); ctx.setLineDash(phase: 0, lengths: [8, 6])
+    var y = shown
+    var n = 1
+    while y < pageLength {
+        ctx.move(to: CGPoint(x: tall.minX - 6, y: tall.minY + y * scale)); ctx.addLine(to: CGPoint(x: tall.maxX + 6, y: tall.minY + y * scale))
+        ctx.strokePath()
+        y += shown; n += 1
+    }
+    ctx.setLineDash(phase: 0, lengths: [])
+    label("\(n) screens, one PNG", at: CGPoint(x: tall.midX, y: tall.maxY + 18), size: 22, weight: .semibold, color: rgb(0xFFFFFF, 0.85), centered: true)
+
+    // And onto the shelf.
+    shelf(ctx, CGRect(x: 1200, y: 225, width: 340, height: 150), files: [.png])
+    let carrier = CGPoint(x: 1300, y: floorY)
+    pet(ctx, "hamster", "walk1", feet: carrier, px: big)
+    bubble(ctx, "On your shelf!", symbol: "checkmark.circle.fill", tip: CGPoint(x: carrier.x + 13 * big, y: carrier.y - 13 * big), scale: 2)
+    label("To your shelf", at: CGPoint(x: carrier.x + 10 * big, y: carrier.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
 }
 
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.

@@ -61,6 +61,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         /// Before the to-do list: the one note on its sign, if any.
         static let sign = "sign"
         static let notes = "notes"
+        static let countdowns = "countdowns"
         static let noteStreak = "noteStreak"
         static let nudges = "nudges"
         static let distractions = "distractions"
@@ -119,6 +120,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// click it done, then the next.
     @Published private(set) var notes: [PetNote] = []
     @Published private(set) var noteStreak = NoteStreak()
+    /// Days it counts down to, the nearest under the note on its sign.
+    @Published private(set) var countdowns: [Countdown] = []
     /// During a focus session, comes over when you wander off somewhere distracting.
     @Published private(set) var nudgesOn = true
     @Published private(set) var distractionWords = DistractionWatcher.defaultWords
@@ -196,6 +199,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var returns: ReturnWatcher?
     private var downloads: DownloadsWatcher?
     private var screenshots: ScreenshotWatcher?
+    private var capturingPage = false
     private var calendar: CalendarWatcher?
     private var notifications: NotificationWatcher?
 
@@ -232,6 +236,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.homeOn = prefs.value(forKey: Key.homeOn, default: true)
         cat.onPersist = { [weak self] in self?.persist() }
         cat.onPhoto = { [weak self] in self?.takePhoto() }
+        cat.onCapturePage = { [weak self] in self?.captureSafariPage() }
         cat.onFocus = { [weak self] in self?.toggleFocus() }
         // Counted from the first time the droplet ran, which its folder
         // remembers for anyone who had it before the tally existed.
@@ -255,8 +260,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         notes = prefs.value(forKey: Key.notes, as: [PetNote].self)
             ?? prefs.value(forKey: Key.sign, as: String.self).map { [PetNote(text: $0)] } ?? []
         noteStreak = prefs.value(forKey: Key.noteStreak, as: NoteStreak.self) ?? NoteStreak()
+        countdowns = (prefs.value(forKey: Key.countdowns, as: [Countdown].self) ?? []).filter { $0.daysLeft >= 0 }
         showTopNote()
-        cat.onSignDone = { [weak self] in self?.completeNote() }
+        cat.onSignDone = { [weak self] in self?.completeNote() ?? false }
         cat.onAskSign = { [weak self] in self?.askForNote() }
         nudgesOn = prefs.value(forKey: Key.nudges, default: true)
         distractionWords = prefs.value(forKey: Key.distractions, as: [String].self) ?? DistractionWatcher.defaultWords
@@ -322,6 +328,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         ) { [weak self] in
             self?.askForNote()
         }
+        host.shortcuts.register(id: "capture-page", title: "Capture the whole Safari page", defaultShortcut: nil) { [weak self] in
+            self?.captureSafariPage()
+        }
+        host.shortcuts.register(id: "join-meeting", title: "Join your next video call", defaultShortcut: nil) { [weak self] in
+            self?.joinNextMeeting()
+        }
         host.shortcuts.register(id: "call-cat", title: "Call the cat over", defaultShortcut: nil) { [weak self] in
             self?.callOver()
         }
@@ -357,6 +369,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                 self?.refreshLateNight()
                 self?.refreshMorning()
                 self?.remindDueNotes()
+                self?.refreshCountdowns()
             }
         }
         screenWatch = NotificationCenter.default.addObserver(
@@ -463,8 +476,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// Done: the first note, or the one named, off the list for a star, and
     /// a day on the streak.
-    func completeNote(_ id: UUID? = nil) {
-        guard let index = id.map({ id in notes.firstIndex { $0.id == id } }) ?? (notes.isEmpty ? nil : 0) else { return }
+    @discardableResult
+    func completeNote(_ id: UUID? = nil) -> Bool {
+        guard let index = id.map({ id in notes.firstIndex { $0.id == id } }) ?? (notes.isEmpty ? nil : 0) else { return false }
         notes.remove(at: index)
         saveNotes()
         cat?.earn(.note)
@@ -472,6 +486,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             host?.preferences.setValue(noteStreak, forKey: Key.noteStreak)
             if noteStreak.days >= 2 { cat?.say(CatWords.noteStreak(noteStreak.days)) }
         }
+        return true
     }
 
     /// Off the list without counting as done.
@@ -492,8 +507,80 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         showTopNote()
     }
 
+    /// The first note, the nearest countdown under it; or the countdown alone.
     private func showTopNote() {
-        cat?.holdSign(notes.first?.text, more: max(0, notes.count - 1))
+        let next = countdowns.filter { $0.daysLeft >= 0 }.min { $0.day < $1.day }
+        cat?.signIsNote = !notes.isEmpty
+        if let note = notes.first {
+            cat?.holdSign(note.text, more: notes.count - 1, footer: next.map { "\($0.title) · \($0.whenText)" })
+        } else if let next {
+            cat?.holdSign(next.title, footer: next.daysLeft == 0 ? "Today!" : "In \(next.whenText)")
+        } else {
+            cat?.holdSign(nil)
+        }
+    }
+
+    // MARK: Countdowns
+
+    func addCountdown(_ raw: String, day: Date) {
+        let title = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(CatSign.maxLength))
+        guard !title.isEmpty, countdowns.count < Countdown.limit else { return }
+        countdowns.append(Countdown(title: title, day: Calendar.current.startOfDay(for: day)))
+        countdowns.sort { $0.day < $1.day }
+        saveCountdowns()
+    }
+
+    func removeCountdown(_ id: UUID) {
+        countdowns.removeAll { $0.id == id }
+        saveCountdowns()
+    }
+
+    private func saveCountdowns() {
+        host?.preferences.setValue(countdowns, forKey: Key.countdowns)
+        showTopNote()
+    }
+
+    /// A new day: past ones off, the day itself celebrated once, the sign's
+    /// count brought up to date.
+    private func refreshCountdowns() {
+        var changed = false
+        if countdowns.contains(where: { $0.daysLeft < 0 }) {
+            countdowns.removeAll { $0.daysLeft < 0 }
+            changed = true
+        }
+        if let cat, isOut, cat.quietReason == nil,
+           let index = countdowns.firstIndex(where: { $0.daysLeft == 0 && !$0.celebrated }) {
+            countdowns[index].celebrated = true
+            changed = true
+            cat.callOver()
+            cat.say(CatWords.countdownDay(countdowns[index].title), essential: true)
+        }
+        if changed { saveCountdowns() } else { showTopNote() }
+    }
+
+    // MARK: Meetings
+
+    /// A video call it just announced: a click on it joins, until the call
+    /// has been on for ten minutes.
+    private func offerJoin(_ meeting: Meeting) {
+        cat?.offerJoin(meeting.title, until: meeting.start.addingTimeInterval(10 * 60)) { [weak self] in
+            self?.join(meeting)
+        }
+    }
+
+    /// The call under way or about to start, from a shortcut or a link.
+    func joinNextMeeting() {
+        guard let meeting = MeetingLink.next() else {
+            cat?.say(CatWords.noMeeting)
+            return
+        }
+        join(meeting)
+    }
+
+    private func join(_ meeting: Meeting) {
+        cat?.clearJoinOffer()
+        NSWorkspace.shared.open(meeting.link)
+        cat?.say(CatWords.joining(meeting.title))
     }
 
     /// A note whose time is up: up onto the sign, and the pet comes to say
@@ -691,6 +778,25 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func takePhoto() {
         guard let cat, let data = PetPhoto.render(cat, days: daysTogether) else { return }
         PetPhoto.save(data, named: "\(cat.kind.title) by Pixpaw.png")
+    }
+
+    /// The whole page in Safari's front window, top to bottom, saved where
+    /// your screenshots go; the pet takes it to the shelf.
+    func captureSafariPage() {
+        guard !capturingPage else { return }
+        capturingPage = true
+        cat?.say(CatWords.capturingPage)
+        Task { @MainActor [weak self] in
+            do {
+                let file = try await PageCapture.capture()
+                guard let self else { return }
+                self.capturingPage = false
+                if let cat = self.cat, self.isOut { cat.carry([file]) } else { self.addToShelf([file]) }
+            } catch {
+                self?.capturingPage = false
+                self?.cat?.say(CatWords.pageProblem(error as? PageCaptureProblem ?? .failed))
+            }
+        }
     }
 
     func setBirthday(on: Bool? = nil, month: Int? = nil, day: Int? = nil) {
@@ -1268,7 +1374,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             music?.stop()
         }
         if out, tellsCalendar, calendarAllowed {
-            if calendar == nil { calendar = CalendarWatcher(onLine: say) }
+            if calendar == nil {
+                calendar = CalendarWatcher(onLine: say, onMeeting: { [weak self] meeting in self?.offerJoin(meeting) })
+            }
             calendar?.start()
         } else {
             calendar?.stop()
@@ -1886,6 +1994,13 @@ private struct CatWingMood: View {
 
 // MARK: - Settings pane
 
+extension PixpawDroplet: SettingsPagesProviding {
+    public func makeSettingsPage(id: String, context: SettingsPaneContext) -> AnyView? {
+        guard let cat, let page = SettingsPage(rawValue: id) else { return nil }
+        return AnyView(PixpawSettings(droplet: self, cat: cat, shown: page))
+    }
+}
+
 extension PixpawDroplet: SettingsPaneProviding {
     public func makeSettingsPane(context: SettingsPaneContext) -> AnyView {
         guard let cat else { return AnyView(EmptyView()) }
@@ -1905,6 +2020,8 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal"]),
             SettingsSearchEntry(title: "Where the cat walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
             SettingsSearchEntry(title: "Notes", keywords: ["sign", "note", "todo", "to-do", "task", "list", "reminder", "board", "placard", "streak"]),
+            SettingsSearchEntry(title: "Countdowns", keywords: ["countdown", "days", "until", "trip", "deadline", "launch", "date"]),
+            SettingsSearchEntry(title: "Join your next video call", keywords: ["meeting", "zoom", "meet", "teams", "webex", "join", "call"]),
             SettingsSearchEntry(title: "Pomodoro", keywords: ["pomodoro", "focus", "break", "timer", "rounds", "tomato"]),
             SettingsSearchEntry(title: "Nudge me back to work", keywords: ["distraction", "focus", "youtube", "procrastinate", "nudge", "social"]),
             SettingsSearchEntry(title: "Carry files to your shelf", keywords: ["shelf", "file", "drop", "carry", "fetch", "drag"]),
@@ -1919,6 +2036,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Volume and brightness", keywords: ["cat", "sound", "volume", "mute", "brightness", "screen"]),
             SettingsSearchEntry(title: "Headphones", keywords: ["cat", "airpods", "bluetooth", "headset", "connect"]),
             SettingsSearchEntry(title: "Screenshots", keywords: ["screenshot", "photo", "pose", "camera"]),
+            SettingsSearchEntry(title: "Capture a whole Safari page", keywords: ["screenshot", "full page", "safari", "capture", "scroll", "web"]),
             SettingsSearchEntry(title: "Your birthday", keywords: ["birthday", "party", "confetti", "cake"]),
             SettingsSearchEntry(title: "Good morning", keywords: ["morning", "greeting", "wake", "calendar", "stretch"]),
             SettingsSearchEntry(title: "Welcome back", keywords: ["away", "return", "back", "hello", "greeting", "idle"]),
@@ -1931,9 +2049,87 @@ extension PixpawDroplet: SettingsPaneProviding {
     }
 }
 
+/// The pages of Pixpaw's own under its page in Droppy's Settings.
+enum SettingsPage: String, CaseIterable, Identifiable {
+    case notes, focus, moving, ownPets, wardrobe, friend, tells, festivals
+
+    var id: String { rawValue }
+
+    var title: String {
+        switch self {
+        case .notes: "Notes"
+        case .focus: "Breaks and focus"
+        case .moving: "Moving about"
+        case .ownPets: "Your own pets"
+        case .wardrobe: "Wardrobe and home"
+        case .friend: "Friend"
+        case .tells: "What it tells you"
+        case .festivals: "Festivals and birthday"
+        }
+    }
+
+    var subtitle: String {
+        switch self {
+        case .notes: "Your to-do list on its sign"
+        case .focus: "Break reminders, focus sessions, Pomodoro"
+        case .moving: "Where it walks, typing along, carrying files"
+        case .ownPets: "Draw your own pet and give it sounds"
+        case .wardrobe: "Hats, collars and a home of its own"
+        case .friend: "A second pet of any kind"
+        case .tells: "Notifications, calendar, music, agents, quiet"
+        case .festivals: "Your birthday and festival days"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .notes: "signpost.right.fill"
+        case .focus: "timer"
+        case .moving: "figure.walk"
+        case .ownPets: "paintbrush.pointed.fill"
+        case .wardrobe: "tshirt.fill"
+        case .friend: "pawprint.fill"
+        case .tells: "bubble.left.fill"
+        case .festivals: "party.popper.fill"
+        }
+    }
+
+    var color: Color {
+        switch self {
+        case .notes: .orange
+        case .focus: .red
+        case .moving: .green
+        case .ownPets: .purple
+        case .wardrobe: .pink
+        case .friend: .teal
+        case .tells: .blue
+        case .festivals: .yellow
+        }
+    }
+}
+
+/// A page link's tile, the way System Settings draws one: a white symbol
+/// on a coloured rounded square.
+private struct SettingsPageTile: View {
+    let symbol: String
+    let color: Color
+
+    var body: some View {
+        RoundedRectangle(cornerRadius: 6.5, style: .continuous)
+            .fill(color.gradient)
+            .overlay(
+                Image(systemName: symbol)
+                    .font(.system(size: 14, weight: .semibold))
+                    .foregroundStyle(.white)
+            )
+    }
+}
+
 private struct PixpawSettings: View {
     @ObservedObject var droplet: PixpawDroplet
     @ObservedObject var cat: CatController
+    /// One of its own pages, or nil for the droplet's page.
+    var shown: SettingsPage?
     /// Access granted in System Settings shows up here without reopening.
     private let recheck = Timer.publish(every: 2, on: .main, in: .common).autoconnect()
     @State private var newReminder = ""
@@ -1941,6 +2137,8 @@ private struct PixpawSettings: View {
     @State private var templateKind: PetKind = .cat
     @State private var newSign = ""
     @State private var distractionText: String?
+    @State private var newCountdown = ""
+    @State private var newCountdownDay = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var renamingSlot: Int?
     @State private var newName = ""
 
@@ -2092,7 +2290,9 @@ private struct PixpawSettings: View {
     }
 
     var body: some View {
-        pane
+        Group {
+            if let shown { page(shown) } else { pane }
+        }
             .onAppear { droplet.refreshPermissionState() }
             .onReceive(recheck) { _ in droplet.refreshPermissionState() }
     }
@@ -2135,453 +2335,13 @@ private struct PixpawSettings: View {
                         subtitle: "A meow when the cat talks, a purr when you pet it, crunching while it eats. Silent while quiet.",
                         isOn: Binding(get: { droplet.soundsOn }, set: { droplet.setSounds($0) })
                     )
-                    DropletControlRow(title: "Notes", icon: "signpost.right",
-                                      infoTip: "Your to-do list. Your pet holds the first note up on a little sign and carries it about until you click the sign to say it's done (a star, up to five a day), then holds up the next. Put a time in a note (“in 10 min”, “at 5pm”) and it comes over to remind you. Hidden while it's quiet. Also with Control-Option-N, from its menu, or droppy://droplet/pixpaw/note?text=…") {
-                        HStack(spacing: 6) {
-                            if droplet.noteStreak.current >= 2 {
-                                Label("\(droplet.noteStreak.current) days", systemImage: "flame.fill")
-                                    .foregroundStyle(.secondary)
-                                    .help("Days in a row with a note done")
-                            }
-                            TextField("Note", text: $newSign, prompt: Text("Buy milk…"))
-                                .labelsHidden()
-                                .textFieldStyle(.roundedBorder)
-                                .frame(width: 170)
-                                .onSubmit(holdSign)
-                            Button("Add", action: holdSign)
-                                .disabled(newSign.trimmingCharacters(in: .whitespaces).isEmpty || droplet.notes.count >= PetNote.limit)
-                        }
-                    }
-                    ForEach(Array(droplet.notes.enumerated()), id: \.element.id) { index, note in
-                        noteRow(note, first: index == 0)
-                    }
                 }
             }
 
-            DropletSettingsSection {
-                VStack(alignment: .leading, spacing: 2) {
-                    settingsSectionHeader("Your own pets")
-                    Text("Draw a pet in any pixel editor (Aseprite, Piskel…) and bring it in as a PNG. One 20 × 20 sitting pose is enough: Pixpaw makes it hop to walk and sink down to sleep. Add more poses in cells beside it, in the template's order, whenever you like.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            } content: {
-                DropletSettingsCard {
-                    ForEach(droplet.ownPets) { pet in
-                        ownPetRow(pet)
-                    }
-                    if droplet.ownPets.count < OwnPets.limit {
-                        DropletControlRow(title: "Add a pet you drew", icon: "plus.circle",
-                                          infoTip: "A PNG you drew, or a .pixpaw file a friend shared. Up to \(OwnPets.limit); it comes out as soon as it's in, and picking another character swaps back.") {
-                            Button("Choose…") { droplet.importOwnPet() }
-                        }
-                    }
-                    DropletControlRow(title: "Start from a template", icon: "square.grid.3x3",
-                                      infoTip: "Saves a character's sheet: 18 cells of 20 × 20, sitting first. Draw over it, or keep only the first cell.") {
-                        HStack(spacing: 6) {
-                            Picker("Template", selection: $templateKind) {
-                                ForEach(PetKind.builtIn.sorted { $0.title < $1.title }) { kind in
-                                    Text(kind.title).tag(kind)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                            .fixedSize()
-                            Button("Save…") { droplet.saveSheet(of: templateKind) }
-                        }
-                    }
-                    if let problem = droplet.ownPetProblem {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
-                            .font(.callout)
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                    }
-                }
-            }
-
-            DropletSettingsSection {
-                settingsSectionHeader("Moving about")
-            } content: {
-                DropletSettingsCard {
-                    DropletGroupedPickerRow(
-                        title: "Where the cat walks",
-                        subtitle: "Bottom and on windows lets it jump onto the top edges of the windows you have open, and ride along when you move one. The bee flies anywhere; the parrot perches here and flies between perches."
-                    ) {
-                        Picker("Where the cat walks", selection: Binding(get: { cat.roaming }, set: { droplet.setRoaming($0) })) {
-                            ForEach(CatRoaming.allCases) { roaming in
-                                Text(roaming.title).tag(roaming)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-                    DropletToggleRow(
-                        title: "Follow the cursor",
-                        subtitle: "The cat runs after your pointer whenever it moves far away. Off, it just wanders.",
-                        isOn: Binding(get: { cat.chasesPointer }, set: { droplet.setChases($0) })
-                    )
-                    DropletToggleRow(
-                        title: "Carry files to your shelf",
-                        subtitle: "Hold a file you're dragging over your pet for a moment, then drop it: your pet runs it over to Droppy's shelf. A file dragged past it drops wherever you were taking it.",
-                        isOn: Binding(get: { droplet.carriesFiles }, set: { droplet.setCarriesFiles($0) })
-                    )
-                    DropletToggleRow(
-                        title: "Type along",
-                        subtitle: "While you type, your pet sits at its little laptop and taps along with your keys. Only how many keys go down is counted, never which ones, and it needs no permission.",
-                        isOn: Binding(get: { droplet.typesAlong }, set: { droplet.setTypesAlong($0) })
-                    )
-                    DropletToggleRow(
-                        title: "Pounce on dragged files",
-                        subtitle: "Drag a file anywhere and the cat stalks it, crouches and pounces. Dropping still works: the cat never gets in the way.",
-                        isOn: Binding(get: { cat.pouncesOnDrags }, set: { droplet.setPounces($0) })
-                    )
-                }
-            }
-
-            DropletSettingsSection {
-                VStack(alignment: .leading, spacing: 2) {
-                    settingsSectionHeader("Wardrobe")
-                    Text("Petting (+1, up to 10 a day), meals (+3, +5 when hungry, 3 a day), play (+5, 3 a day), catches (+2, 5 a day) and stretches (+2, 5 a day) earn up to 30 happiness points a day, which unlock things to wear, and at 500 a home of its own.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            } content: {
-                DropletSettingsCard {
-                    DropletControlRow(title: "Happiness") {
-                        DropletValuePill(text: "\(cat.points) ★")
-                    }
-                    DropletControlRow(title: "Earned today") {
-                        DropletValuePill(text: "\(cat.starDay.day == StarDay.today ? cat.starDay.stars : 0) / \(StarSource.dailyTotal)")
-                    }
-                    DropletGroupedPickerRow(title: "Hat") {
-                        Picker("Hat", selection: Binding(get: { cat.hat }, set: { droplet.wear($0, in: .hat) })) {
-                            Text("None").tag(CatAccessory?.none)
-                            ForEach(CatAccessory.unlocked(at: cat.points).filter { $0.slot == .hat }) { item in
-                                Text(item.title).tag(CatAccessory?.some(item))
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-                    if cat.kind.wearsCollars {
-                        DropletGroupedPickerRow(title: "Collar") {
-                            Picker("Collar", selection: Binding(get: { cat.collar }, set: { droplet.wear($0, in: .collar) })) {
-                                Text("None").tag(CatAccessory?.none)
-                                ForEach(CatAccessory.unlocked(at: cat.points).filter { $0.slot == .collar }) { item in
-                                    Text(item.title).tag(CatAccessory?.some(item))
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                        }
-                    }
-                    if let next = CatAccessory.next(after: cat.points) {
-                        DropletControlRow(title: "Next: \(next.title)") {
-                            DropletValuePill(text: "\(next.unlockAt - cat.points) ★ to go")
-                        }
-                    }
-                    if cat.hasHome {
-                        DropletToggleRow(
-                            title: "Home",
-                            subtitle: "A home of its own on the floor, after where the animal really lives (a box, a beehive, a tree, a pond…). It goes there for a nap when you choose Go home or click it; click again to call it out. Drag it to move it.",
-                            isOn: Binding(get: { cat.homeOn }, set: { droplet.setHome($0) })
-                        )
-                    } else {
-                        DropletControlRow(title: "Challenge: a home of its own", icon: "house",
-                                          infoTip: "At \(CatController.homeUnlockAt) ★ your pet gets a home after where it really lives (a beehive for the bee, a tree for the parrot, a pond for the hippo), where it goes for a nap.") {
-                            DropletValuePill(text: "\(CatController.homeUnlockAt - cat.points) ★ to go")
-                        }
-                    }
-                }
-            }
-
-            DropletSettingsSection {
-                settingsSectionHeader("Friend")
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "A second pet",
-                        subtitle: "A friend that roams with your pet, sits with it and plays tag. It never talks, and its happiness counts for your pet.",
-                        isOn: Binding(get: { droplet.hasFriend }, set: { droplet.setFriend($0) })
-                    )
-                    DropletGroupedPickerRow(title: "Friend", subtitle: "Any character, or one you drew: a dog for your cat, a rabbit for your shark.") {
-                        Picker("Friend", selection: Binding(get: { droplet.friendKind }, set: { droplet.setFriendKind($0) })) {
-                            Text("Same as your pet").tag(PetKind?.none)
-                            ForEach(PetKind.alphabetical) { kind in
-                                Text(kind.title).tag(PetKind?.some(kind))
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-                    if droplet.friendsKind.hasCoats {
-                        DropletGroupedPickerRow(title: "Friend's coat") {
-                            Picker("Friend's coat", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
-                                ForEach(CatCoat.allCases) { coat in
-                                    Text(coat.title).tag(coat)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                        }
-                    }
-                }
-            }
-
-            DropletSettingsSection {
-                VStack(alignment: .leading, spacing: 2) {
-                    settingsSectionHeader("Speech bubble")
-                    Text("The cat says it in a bubble over its head, or under the notch while it naps.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "Talks about itself",
-                        subtitle: "Hungry, full, sleepy, awake, and a word when it catches a file.",
-                        isOn: Binding(get: { cat.chatty }, set: { droplet.setChatty($0) })
-                    )
-                    DropletToggleRow(
-                        title: "Mac notifications",
-                        subtitle: "Reads out the banners other apps show. Droppy reads them with Accessibility; nothing is kept.",
-                        isOn: Binding(get: { droplet.tellsNotifications }, set: { droplet.setTells(notifications: $0) })
-                    )
-                    if droplet.tellsNotifications, !droplet.notificationsAllowed {
-                        DropletControlRow(title: "Accessibility access") {
-                            Button("Allow…") { droplet.requestPermission(.accessibility) }
-                        }
-                    }
-                    DropletToggleRow(
-                        title: "Calendar events",
-                        subtitle: "Two minutes before each event, it comes over to tell you.",
-                        isOn: Binding(get: { droplet.tellsCalendar }, set: { droplet.setTells(calendar: $0) })
-                    )
-                    if droplet.tellsCalendar, !droplet.calendarAllowed {
-                        DropletControlRow(title: "Calendar access") {
-                            Button("Allow…") { droplet.requestPermission(.calendars) }
-                        }
-                    }
-                    DropletToggleRow(
-                        title: "Battery",
-                        subtitle: "Low battery at 20% and 10%, plugging in, and a full charge. Below 20% it gets sleepy, yawning and strolling slowly, until you plug in.",
-                        isOn: Binding(get: { droplet.tellsBattery }, set: { droplet.setTells(battery: $0) })
-                    )
-                    DropletToggleRow(
-                        title: "Busy Mac",
-                        subtitle: "When the Mac works flat out for half a minute or runs hot, your pet hurries about with a bead of sweat, and says so now and then. Only the overall load is read, never which apps.",
-                        isOn: Binding(get: { droplet.tellsHeat }, set: { droplet.setTells(heat: $0) })
-                    )
-                    DropletToggleRow(
-                        title: "Volume and brightness",
-                        subtitle: "Says the new level when you turn the sound or the screen up or down, in one bubble that updates as you hold the key.",
-                        isOn: Binding(get: { droplet.tellsLevels }, set: { droplet.setTells(levels: $0) })
-                    )
-                    DropletToggleRow(
-                        title: "Finished downloads",
-                        subtitle: "When a file lands in Downloads. macOS may ask Droppy for access to the folder.",
-                        isOn: Binding(get: { droplet.tellsDownloads }, set: { droplet.setTells(downloads: $0) })
-                    )
-                }
-            }
-
-            DropletSettingsSection {
-                VStack(alignment: .leading, spacing: 2) {
-                    settingsSectionHeader("Quiet")
-                    Text("When the bubbles stay hidden, so nothing private shows on a shared screen.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "Quiet during calls and screen sharing",
-                        subtitle: "No bubbles while a microphone or camera is in use or a screen is shared, so private messages never show up in a meeting. Volume and brightness still show.",
-                        isOn: Binding(get: { droplet.quietsAutomatically }, set: { droplet.setQuietsAutomatically($0) })
-                    )
-                    if droplet.quietsAutomatically {
-                        DropletToggleRow(
-                            title: "Also quiet while mirroring",
-                            subtitle: "When the display is mirrored to a projector or a TV. Turn off if you mirror to a TV at home and want the cat to keep talking.",
-                            isOn: Binding(get: { droplet.quietWhenMirroring }, set: { droplet.setQuietWhenMirroring($0) })
-                        )
-                    }
-                }
-            }
-
-            DropletSettingsSection {
-                VStack(alignment: .leading, spacing: 2) {
-                    settingsSectionHeader("Around your Mac")
-                    Text("Things your pet notices and joins in with.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "Music",
-                        subtitle: "Dances to whatever is playing, from Spotify to a YouTube video in your browser, and names each new song in Apple Music or Spotify.",
-                        isOn: Binding(get: { droplet.tellsMusic }, set: { droplet.setTells(music: $0) })
-                    )
-                    DropletToggleRow(
-                        title: "Headphones",
-                        subtitle: "When AirPods or other headphones connect or disconnect. The cat wears a pair while yours are on.",
-                        isOn: Binding(get: { droplet.tellsHeadphones }, set: { droplet.setTells(headphones: $0) })
-                    )
-                    DropletToggleRow(
-                        title: "Screenshots",
-                        subtitle: "Strikes a pose when you take a screenshot. Found through Spotlight, so no permission is needed.",
-                        isOn: Binding(get: { droplet.tellsScreenshots }, set: { droplet.setTells(screenshots: $0) })
-                    )
-                    DropletToggleRow(
-                        title: "Good morning",
-                        subtitle: "The first time it sees you on a morning, it stretches and says good morning, with your first event of the day when Calendar events is on.",
-                        isOn: Binding(get: { droplet.morningOn }, set: { droplet.setMorning($0) })
-                    )
-                    DropletToggleRow(
-                        title: "Welcome back",
-                        subtitle: "Back at your Mac after ten minutes or more away, it runs over to say hello.",
-                        isOn: Binding(get: { droplet.welcomeBackOn }, set: { droplet.setWelcomeBack($0) })
-                    )
-                    DropletToggleRow(
-                        title: "Late nights",
-                        subtitle: "From midnight to 5 am it wears a nightcap, and the first time it sees you up it says it's late. Once a night.",
-                        isOn: Binding(get: { droplet.lateNightsOn }, set: { droplet.setLateNights($0) })
-                    )
-                }
-            }
-
-            DropletSettingsSection {
-                VStack(alignment: .leading, spacing: 2) {
-                    settingsSectionHeader("AI agents")
-                    Text("Claude Code, Codex, Cursor and others report through hooks that open droppy://droplet/pixpaw/agent?name=…&state=working|done|waiting|error.")
-                        .font(.body)
-                        .foregroundStyle(.secondary)
-                }
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "Agent updates",
-                        subtitle: "Says when an agent starts, finishes or needs you. While one works your pet codes along at its laptop; it celebrates when it's done and comes over when it needs you.",
-                        isOn: Binding(get: { droplet.tellsAgents }, set: { droplet.setTells(agents: $0) })
-                    )
-                    DropletToggleRow(
-                        title: "Keep the Mac awake while agents work",
-                        subtitle: "While Claude Code, Codex or another agent is working, the Mac doesn't go to sleep, so a long run can finish. The screen can still turn off. Closing a laptop's lid still puts it to sleep.",
-                        isOn: Binding(get: { droplet.awakeForAgents }, set: { droplet.setAwakeForAgents($0) })
-                    )
-                    .disabled(!droplet.tellsAgents)
-                }
-            }
-
-            DropletSettingsSection {
-                settingsSectionHeader("Health")
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "Break reminders",
-                        subtitle: "Your pet comes over to remind you. Stretch with me: it stretches along for 20 seconds; click it afterwards for a star. Times count while you're at the Mac, and five minutes away counts as a stretch and a rest for your eyes. Never during a call or a focus session.",
-                        isOn: Binding(get: { droplet.healthOn }, set: { droplet.setHealth(on: $0) })
-                    )
-                    ForEach(droplet.reminders) { reminder in
-                        reminderRow(reminder)
-                    }
-                    if droplet.reminders.filter(\.isYours).count < PixpawDroplet.maxOwnReminders {
-                        DropletControlRow(title: "Your own reminder", icon: "plus.circle") {
-                            HStack(spacing: 6) {
-                                TextField("Reminder", text: $newReminder, prompt: Text("Take a pill…"))
-                                    .labelsHidden()
-                                    .textFieldStyle(.roundedBorder)
-                                    .frame(width: 170)
-                                    .onSubmit(addReminder)
-                                minutesPicker(Binding(get: { newReminderMinutes }, set: { newReminderMinutes = $0 }))
-                                Button("Add", action: addReminder)
-                                    .disabled(newReminder.trimmingCharacters(in: .whitespaces).isEmpty)
-                            }
-                        }
-                        .disabled(!droplet.healthOn)
-                    }
-                    DropletGroupedPickerRow(
-                        title: "Focus session",
-                        subtitle: "Start one from the timer on the shelf or by holding your pet. It sits by you without a sound, keeps the time left over its head and beside the notch, and comes over when it's time for a break."
-                    ) {
-                        Picker("Focus session", selection: Binding(get: { droplet.focusMinutes }, set: { droplet.setFocusMinutes($0) })) {
-                            ForEach([15, 25, 45, 50], id: \.self) { minutes in
-                                Text("\(minutes) minutes").tag(minutes)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                    }
-                    DropletToggleRow(
-                        title: "Pomodoro",
-                        subtitle: "Four focus sessions in a row, with a 5-minute break after each and 15 minutes off after the fourth. Each break starts with a stretch together.",
-                        isOn: Binding(get: { droplet.pomodoroOn }, set: { droplet.setPomodoro($0) })
-                    )
-                    DropletToggleRow(
-                        title: "Nudge me back to work",
-                        subtitle: "During a focus session, after two minutes in an app or on a page with one of these words in its name, your pet comes over to ask. Only the app in front and its window title are read, while focusing, and nothing is kept. Pages need Accessibility for Droppy.",
-                        isOn: Binding(get: { droplet.nudgesOn }, set: { droplet.setNudges($0) })
-                    )
-                    if droplet.nudgesOn {
-                        DropletControlRow(title: "Distractions", icon: "eyes", infoTip: "Comma-separated: app names, and words in window titles such as a browser tab's.") {
-                            TextField("Distractions", text: Binding(
-                                get: { distractionText ?? droplet.distractionWords.joined(separator: ", ") },
-                                set: { distractionText = $0 }
-                            ))
-                            .labelsHidden()
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 260)
-                            .onSubmit { saveDistractions() }
-                            .onDisappear { saveDistractions() }
-                        }
-                    }
-                }
-            }
-
-            DropletSettingsSection {
-                settingsSectionHeader("Festivals")
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "Your birthday",
-                        subtitle: "On the day, confetti falls, your pet wears a party hat and wishes you a happy birthday.",
-                        isOn: Binding(get: { droplet.birthdayOn }, set: { droplet.setBirthday(on: $0) })
-                    )
-                    if droplet.birthdayOn {
-                        DropletGroupedPickerRow(title: "Month") {
-                            Picker("Month", selection: Binding(get: { droplet.birthdayMonth }, set: { droplet.setBirthday(month: $0) })) {
-                                ForEach(1...12, id: \.self) { month in
-                                    Text(Self.monthNames[month - 1]).tag(month)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                        }
-                        DropletGroupedPickerRow(title: "Day") {
-                            Picker("Day", selection: Binding(get: { droplet.birthdayDay }, set: { droplet.setBirthday(day: $0) })) {
-                                ForEach(1...PixpawDroplet.days(in: droplet.birthdayMonth), id: \.self) { day in
-                                    Text("\(day)").tag(day)
-                                }
-                            }
-                            .pickerStyle(.menu)
-                            .labelsHidden()
-                        }
-                    }
-                    DropletToggleRow(
-                        title: "Festival decorations",
-                        subtitle: "On a festival's own days the screen joins in, then clears when the day is over. Never during calls or screen sharing.",
-                        isOn: Binding(get: { droplet.festivalsOn }, set: { droplet.setFestivals($0) })
-                    )
-                    ForEach(Festival.calendar) { festival in
-                        DropletToggleRow(
-                            title: festival.title,
-                            subtitle: "\(festival.when): \(festival.decoration)\(festival.hat.map { ", and your pet wears a \($0.title.lowercased())" } ?? "").",
-                            isOn: Binding(get: { !droplet.festivalsHidden.contains(festival) },
-                                          set: { droplet.setFestival(festival, shown: $0) })
-                        )
-                        .disabled(!droplet.festivalsOn)
+            DropletSettingsCard {
+                ForEach(SettingsPage.allCases) { page in
+                    DropletSettingsPageLink(page.title, subtitle: subtitle(of: page), page: page.rawValue) {
+                        SettingsPageTile(symbol: page.symbol, color: page.color)
                     }
                 }
             }
@@ -2599,6 +2359,582 @@ private struct PixpawSettings: View {
             }
         }
     }
+
+    /// What a link to a page says under its title.
+    private func subtitle(of page: SettingsPage) -> String {
+        switch page {
+        case .notes:
+            let count = droplet.notes.count
+            let streak = droplet.noteStreak.current >= 2 ? " · \(droplet.noteStreak.current)-day streak" : ""
+            return (count == 0 ? "Your to-do list on its sign" : count == 1 ? "1 note" : "\(count) notes") + streak
+        case .wardrobe: return "\(cat.points) ★ · hats, collars and a home of its own"
+        default: return page.subtitle
+        }
+    }
+
+    /// One of the pages the main page links to.
+    private func page(_ page: SettingsPage) -> some View {
+        DropletSettingsPage {
+            switch page {
+            case .notes:
+                notesSection
+                countdownsSection
+            case .focus: healthSection
+            case .moving: movingSection
+            case .ownPets: ownPetsSection
+            case .wardrobe: wardrobeSection
+            case .friend: friendSection
+            case .tells:
+                speechSection
+                aroundSection
+                agentsSection
+                quietSection
+            case .festivals: festivalsSection
+            }
+        }
+    }
+
+    private var notesSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Your to-do list")
+                Text("Your pet holds the first note up on a little sign and carries it about until you click the sign to say it's done (a star, up to five a day), then holds up the next. Put a time in a note (“in 10 min”, “at 5pm”) and it comes over to remind you. The sign is hidden while it's quiet.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletControlRow(title: "New note", icon: "plus.circle",
+                                  infoTip: "Also with Control-Option-N from anywhere, from its menu, or droppy://droplet/pixpaw/note?text=… in Shortcuts.") {
+                    HStack(spacing: 6) {
+                        if droplet.noteStreak.current >= 2 {
+                            Label("\(droplet.noteStreak.current) days", systemImage: "flame.fill")
+                                .foregroundStyle(.secondary)
+                                .help("Days in a row with a note done")
+                        }
+                        TextField("Note", text: $newSign, prompt: Text("Buy milk…"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 170)
+                            .onSubmit(holdSign)
+                        Button("Add", action: holdSign)
+                            .disabled(newSign.trimmingCharacters(in: .whitespaces).isEmpty || droplet.notes.count >= PetNote.limit)
+                    }
+                }
+                ForEach(Array(droplet.notes.enumerated()), id: \.element.id) { index, note in
+                    noteRow(note, first: index == 0)
+                }
+            }
+        }
+    }
+
+    private var countdownsSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Countdowns")
+                Text("The nearest one shows under the note on its sign, or on the sign by itself: “Trip to Japan · 12 days”. On the day your pet comes over to celebrate.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                if droplet.countdowns.count < Countdown.limit {
+                    DropletControlRow(title: "New countdown", icon: "plus.circle",
+                                      infoTip: "Up to \(Countdown.limit). Also droppy://droplet/pixpaw/countdown?title=…&date=2026-12-24 in Shortcuts.") {
+                        HStack(spacing: 6) {
+                            TextField("Countdown", text: $newCountdown, prompt: Text("Trip to Japan…"))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 150)
+                                .onSubmit(addCountdown)
+                            DatePicker("Day", selection: $newCountdownDay,
+                                       in: Calendar.current.startOfDay(for: Date())..., displayedComponents: .date)
+                                .labelsHidden()
+                                .datePickerStyle(.field)
+                            Button("Add", action: addCountdown)
+                                .disabled(newCountdown.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                }
+                ForEach(droplet.countdowns) { countdown in
+                    DropletControlRow(title: countdown.title, icon: "calendar") {
+                        HStack(spacing: 8) {
+                            Text("\(countdown.day.formatted(date: .abbreviated, time: .omitted)) · \(countdown.whenText)")
+                                .foregroundStyle(.secondary)
+                            Button {
+                                droplet.removeCountdown(countdown.id)
+                            } label: {
+                                Image(systemName: "xmark.circle.fill")
+                            }
+                            .buttonStyle(.borderless)
+                            .foregroundStyle(.secondary)
+                            .help("Remove")
+                            .accessibilityLabel("Remove \(countdown.title)")
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    private func addCountdown() {
+        droplet.addCountdown(newCountdown, day: newCountdownDay)
+        newCountdown = ""
+    }
+
+    private var ownPetsSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Your own pets")
+                Text("Draw a pet in any pixel editor (Aseprite, Piskel…) and bring it in as a PNG. One 20 × 20 sitting pose is enough: Pixpaw makes it hop to walk and sink down to sleep. Add more poses in cells beside it, in the template's order, whenever you like.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                ForEach(droplet.ownPets) { pet in
+                    ownPetRow(pet)
+                }
+                if droplet.ownPets.count < OwnPets.limit {
+                    DropletControlRow(title: "Add a pet you drew", icon: "plus.circle",
+                                      infoTip: "A PNG you drew, or a .pixpaw file a friend shared. Up to \(OwnPets.limit); it comes out as soon as it's in, and picking another character swaps back.") {
+                        Button("Choose…") { droplet.importOwnPet() }
+                    }
+                }
+                DropletControlRow(title: "Start from a template", icon: "square.grid.3x3",
+                                  infoTip: "Saves a character's sheet: 18 cells of 20 × 20, sitting first. Draw over it, or keep only the first cell.") {
+                    HStack(spacing: 6) {
+                        Picker("Template", selection: $templateKind) {
+                            ForEach(PetKind.builtIn.sorted { $0.title < $1.title }) { kind in
+                                Text(kind.title).tag(kind)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .fixedSize()
+                        Button("Save…") { droplet.saveSheet(of: templateKind) }
+                    }
+                }
+                if let problem = droplet.ownPetProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+            }
+        }
+    }
+
+    private var movingSection: some View {
+        DropletSettingsSection {
+            settingsSectionHeader("Moving about")
+        } content: {
+            DropletSettingsCard {
+                DropletGroupedPickerRow(
+                    title: "Where the cat walks",
+                    subtitle: "Bottom and on windows lets it jump onto the top edges of the windows you have open, and ride along when you move one. The bee flies anywhere; the parrot perches here and flies between perches."
+                ) {
+                    Picker("Where the cat walks", selection: Binding(get: { cat.roaming }, set: { droplet.setRoaming($0) })) {
+                        ForEach(CatRoaming.allCases) { roaming in
+                            Text(roaming.title).tag(roaming)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                DropletToggleRow(
+                    title: "Follow the cursor",
+                    subtitle: "The cat runs after your pointer whenever it moves far away. Off, it just wanders.",
+                    isOn: Binding(get: { cat.chasesPointer }, set: { droplet.setChases($0) })
+                )
+                DropletToggleRow(
+                    title: "Carry files to your shelf",
+                    subtitle: "Hold a file you're dragging over your pet for a moment, then drop it: your pet runs it over to Droppy's shelf. A file dragged past it drops wherever you were taking it.",
+                    isOn: Binding(get: { droplet.carriesFiles }, set: { droplet.setCarriesFiles($0) })
+                )
+                DropletToggleRow(
+                    title: "Type along",
+                    subtitle: "While you type, your pet sits at its little laptop and taps along with your keys. Only how many keys go down is counted, never which ones, and it needs no permission.",
+                    isOn: Binding(get: { droplet.typesAlong }, set: { droplet.setTypesAlong($0) })
+                )
+                DropletToggleRow(
+                    title: "Pounce on dragged files",
+                    subtitle: "Drag a file anywhere and the cat stalks it, crouches and pounces. Dropping still works: the cat never gets in the way.",
+                    isOn: Binding(get: { cat.pouncesOnDrags }, set: { droplet.setPounces($0) })
+                )
+            }
+        }
+    }
+
+    private var wardrobeSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Wardrobe")
+                Text("Petting (+1, up to 10 a day), meals (+3, +5 when hungry, 3 a day), play (+5, 3 a day), catches (+2, 5 a day) and stretches (+2, 5 a day) earn up to 30 happiness points a day, which unlock things to wear, and at 500 a home of its own.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletControlRow(title: "Happiness") {
+                    DropletValuePill(text: "\(cat.points) ★")
+                }
+                DropletControlRow(title: "Earned today") {
+                    DropletValuePill(text: "\(cat.starDay.day == StarDay.today ? cat.starDay.stars : 0) / \(StarSource.dailyTotal)")
+                }
+                DropletGroupedPickerRow(title: "Hat") {
+                    Picker("Hat", selection: Binding(get: { cat.hat }, set: { droplet.wear($0, in: .hat) })) {
+                        Text("None").tag(CatAccessory?.none)
+                        ForEach(CatAccessory.unlocked(at: cat.points).filter { $0.slot == .hat }) { item in
+                            Text(item.title).tag(CatAccessory?.some(item))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                if cat.kind.wearsCollars {
+                    DropletGroupedPickerRow(title: "Collar") {
+                        Picker("Collar", selection: Binding(get: { cat.collar }, set: { droplet.wear($0, in: .collar) })) {
+                            Text("None").tag(CatAccessory?.none)
+                            ForEach(CatAccessory.unlocked(at: cat.points).filter { $0.slot == .collar }) { item in
+                                Text(item.title).tag(CatAccessory?.some(item))
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                }
+                if let next = CatAccessory.next(after: cat.points) {
+                    DropletControlRow(title: "Next: \(next.title)") {
+                        DropletValuePill(text: "\(next.unlockAt - cat.points) ★ to go")
+                    }
+                }
+                if cat.hasHome {
+                    DropletToggleRow(
+                        title: "Home",
+                        subtitle: "A home of its own on the floor, after where the animal really lives (a box, a beehive, a tree, a pond…). It goes there for a nap when you choose Go home or click it; click again to call it out. Drag it to move it.",
+                        isOn: Binding(get: { cat.homeOn }, set: { droplet.setHome($0) })
+                    )
+                } else {
+                    DropletControlRow(title: "Challenge: a home of its own", icon: "house",
+                                      infoTip: "At \(CatController.homeUnlockAt) ★ your pet gets a home after where it really lives (a beehive for the bee, a tree for the parrot, a pond for the hippo), where it goes for a nap.") {
+                        DropletValuePill(text: "\(CatController.homeUnlockAt - cat.points) ★ to go")
+                    }
+                }
+            }
+        }
+    }
+
+    private var friendSection: some View {
+        DropletSettingsSection {
+            settingsSectionHeader("Friend")
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "A second pet",
+                    subtitle: "A friend that roams with your pet, sits with it and plays tag. It never talks, and its happiness counts for your pet.",
+                    isOn: Binding(get: { droplet.hasFriend }, set: { droplet.setFriend($0) })
+                )
+                DropletGroupedPickerRow(title: "Friend", subtitle: "Any character, or one you drew: a dog for your cat, a rabbit for your shark.") {
+                    Picker("Friend", selection: Binding(get: { droplet.friendKind }, set: { droplet.setFriendKind($0) })) {
+                        Text("Same as your pet").tag(PetKind?.none)
+                        ForEach(PetKind.alphabetical) { kind in
+                            Text(kind.title).tag(PetKind?.some(kind))
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                if droplet.friendsKind.hasCoats {
+                    DropletGroupedPickerRow(title: "Friend's coat") {
+                        Picker("Friend's coat", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
+                            ForEach(CatCoat.allCases) { coat in
+                                Text(coat.title).tag(coat)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                }
+            }
+        }
+    }
+
+    private var speechSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Speech bubble")
+                Text("The cat says it in a bubble over its head, or under the notch while it naps.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Talks about itself",
+                    subtitle: "Hungry, full, sleepy, awake, and a word when it catches a file.",
+                    isOn: Binding(get: { cat.chatty }, set: { droplet.setChatty($0) })
+                )
+                DropletToggleRow(
+                    title: "Mac notifications",
+                    subtitle: "Reads out the banners other apps show. Droppy reads them with Accessibility; nothing is kept.",
+                    isOn: Binding(get: { droplet.tellsNotifications }, set: { droplet.setTells(notifications: $0) })
+                )
+                if droplet.tellsNotifications, !droplet.notificationsAllowed {
+                    DropletControlRow(title: "Accessibility access") {
+                        Button("Allow…") { droplet.requestPermission(.accessibility) }
+                    }
+                }
+                DropletToggleRow(
+                    title: "Calendar events",
+                    subtitle: "Two minutes before each event, it comes over to tell you. When the event has a Zoom, Meet, Teams or other video-call link, click your pet to join (or use the Join your next video call shortcut).",
+                    isOn: Binding(get: { droplet.tellsCalendar }, set: { droplet.setTells(calendar: $0) })
+                )
+                if droplet.tellsCalendar, !droplet.calendarAllowed {
+                    DropletControlRow(title: "Calendar access") {
+                        Button("Allow…") { droplet.requestPermission(.calendars) }
+                    }
+                }
+                DropletToggleRow(
+                    title: "Battery",
+                    subtitle: "Low battery at 20% and 10%, plugging in, and a full charge. Below 20% it gets sleepy, yawning and strolling slowly, until you plug in.",
+                    isOn: Binding(get: { droplet.tellsBattery }, set: { droplet.setTells(battery: $0) })
+                )
+                DropletToggleRow(
+                    title: "Busy Mac",
+                    subtitle: "When the Mac works flat out for half a minute or runs hot, your pet hurries about with a bead of sweat, and says so now and then. Only the overall load is read, never which apps.",
+                    isOn: Binding(get: { droplet.tellsHeat }, set: { droplet.setTells(heat: $0) })
+                )
+                DropletToggleRow(
+                    title: "Volume and brightness",
+                    subtitle: "Says the new level when you turn the sound or the screen up or down, in one bubble that updates as you hold the key.",
+                    isOn: Binding(get: { droplet.tellsLevels }, set: { droplet.setTells(levels: $0) })
+                )
+                DropletToggleRow(
+                    title: "Finished downloads",
+                    subtitle: "When a file lands in Downloads. macOS may ask Droppy for access to the folder.",
+                    isOn: Binding(get: { droplet.tellsDownloads }, set: { droplet.setTells(downloads: $0) })
+                )
+            }
+        }
+    }
+
+    private var quietSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Quiet")
+                Text("When the bubbles stay hidden, so nothing private shows on a shared screen.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Quiet during calls and screen sharing",
+                    subtitle: "No bubbles while a microphone or camera is in use or a screen is shared, so private messages never show up in a meeting. Volume and brightness still show.",
+                    isOn: Binding(get: { droplet.quietsAutomatically }, set: { droplet.setQuietsAutomatically($0) })
+                )
+                if droplet.quietsAutomatically {
+                    DropletToggleRow(
+                        title: "Also quiet while mirroring",
+                        subtitle: "When the display is mirrored to a projector or a TV. Turn off if you mirror to a TV at home and want the cat to keep talking.",
+                        isOn: Binding(get: { droplet.quietWhenMirroring }, set: { droplet.setQuietWhenMirroring($0) })
+                    )
+                }
+            }
+        }
+    }
+
+    private var aroundSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Around your Mac")
+                Text("Things your pet notices and joins in with.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Music",
+                    subtitle: "Dances to whatever is playing, from Spotify to a YouTube video in your browser, and names each new song in Apple Music or Spotify.",
+                    isOn: Binding(get: { droplet.tellsMusic }, set: { droplet.setTells(music: $0) })
+                )
+                DropletToggleRow(
+                    title: "Headphones",
+                    subtitle: "When AirPods or other headphones connect or disconnect. The cat wears a pair while yours are on.",
+                    isOn: Binding(get: { droplet.tellsHeadphones }, set: { droplet.setTells(headphones: $0) })
+                )
+                DropletToggleRow(
+                    title: "Screenshots",
+                    subtitle: "Strikes a pose when you take a screenshot. Found through Spotlight, so no permission is needed.",
+                    isOn: Binding(get: { droplet.tellsScreenshots }, set: { droplet.setTells(screenshots: $0) })
+                )
+                DropletControlRow(title: "Capture a whole Safari page",
+                                  infoTip: "Needs Safari's Settings → Developer → Allow JavaScript from Apple Events, and Screen Recording for Droppy. Also from a shortcut you set, or droppy://droplet/pixpaw/capture in Shortcuts.") {
+                    Button("Capture") { droplet.captureSafariPage() }
+                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                }
+                DropletToggleRow(
+                    title: "Good morning",
+                    subtitle: "The first time it sees you on a morning, it stretches and says good morning, with your first event of the day when Calendar events is on.",
+                    isOn: Binding(get: { droplet.morningOn }, set: { droplet.setMorning($0) })
+                )
+                DropletToggleRow(
+                    title: "Welcome back",
+                    subtitle: "Back at your Mac after ten minutes or more away, it runs over to say hello.",
+                    isOn: Binding(get: { droplet.welcomeBackOn }, set: { droplet.setWelcomeBack($0) })
+                )
+                DropletToggleRow(
+                    title: "Late nights",
+                    subtitle: "From midnight to 5 am it wears a nightcap, and the first time it sees you up it says it's late. Once a night.",
+                    isOn: Binding(get: { droplet.lateNightsOn }, set: { droplet.setLateNights($0) })
+                )
+            }
+        }
+    }
+
+    private var agentsSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("AI agents")
+                Text("Claude Code, Codex, Cursor and others report through hooks that open droppy://droplet/pixpaw/agent?name=…&state=working|done|waiting|error.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Agent updates",
+                    subtitle: "Says when an agent starts, finishes or needs you. While one works your pet codes along at its laptop; it celebrates when it's done and comes over when it needs you.",
+                    isOn: Binding(get: { droplet.tellsAgents }, set: { droplet.setTells(agents: $0) })
+                )
+                DropletToggleRow(
+                    title: "Keep the Mac awake while agents work",
+                    subtitle: "While Claude Code, Codex or another agent is working, the Mac doesn't go to sleep, so a long run can finish. The screen can still turn off. Closing a laptop's lid still puts it to sleep.",
+                    isOn: Binding(get: { droplet.awakeForAgents }, set: { droplet.setAwakeForAgents($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+            }
+        }
+    }
+
+    private var healthSection: some View {
+        DropletSettingsSection {
+            settingsSectionHeader("Health")
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Break reminders",
+                    subtitle: "Your pet comes over to remind you. Stretch with me: it stretches along for 20 seconds; click it afterwards for a star. Times count while you're at the Mac, and five minutes away counts as a stretch and a rest for your eyes. Never during a call or a focus session.",
+                    isOn: Binding(get: { droplet.healthOn }, set: { droplet.setHealth(on: $0) })
+                )
+                ForEach(droplet.reminders) { reminder in
+                    reminderRow(reminder)
+                }
+                if droplet.reminders.filter(\.isYours).count < PixpawDroplet.maxOwnReminders {
+                    DropletControlRow(title: "Your own reminder", icon: "plus.circle") {
+                        HStack(spacing: 6) {
+                            TextField("Reminder", text: $newReminder, prompt: Text("Take a pill…"))
+                                .labelsHidden()
+                                .textFieldStyle(.roundedBorder)
+                                .frame(width: 170)
+                                .onSubmit(addReminder)
+                            minutesPicker(Binding(get: { newReminderMinutes }, set: { newReminderMinutes = $0 }))
+                            Button("Add", action: addReminder)
+                                .disabled(newReminder.trimmingCharacters(in: .whitespaces).isEmpty)
+                        }
+                    }
+                    .disabled(!droplet.healthOn)
+                }
+                DropletGroupedPickerRow(
+                    title: "Focus session",
+                    subtitle: "Start one from the timer on the shelf or by holding your pet. It sits by you without a sound, keeps the time left over its head and beside the notch, and comes over when it's time for a break."
+                ) {
+                    Picker("Focus session", selection: Binding(get: { droplet.focusMinutes }, set: { droplet.setFocusMinutes($0) })) {
+                        ForEach([15, 25, 45, 50], id: \.self) { minutes in
+                            Text("\(minutes) minutes").tag(minutes)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                DropletToggleRow(
+                    title: "Pomodoro",
+                    subtitle: "Four focus sessions in a row, with a 5-minute break after each and 15 minutes off after the fourth. Each break starts with a stretch together.",
+                    isOn: Binding(get: { droplet.pomodoroOn }, set: { droplet.setPomodoro($0) })
+                )
+                DropletToggleRow(
+                    title: "Nudge me back to work",
+                    subtitle: "During a focus session, after two minutes in an app or on a page with one of these words in its name, your pet comes over to ask. Only the app in front and its window title are read, while focusing, and nothing is kept. Pages need Accessibility for Droppy.",
+                    isOn: Binding(get: { droplet.nudgesOn }, set: { droplet.setNudges($0) })
+                )
+                if droplet.nudgesOn {
+                    DropletControlRow(title: "Distractions", icon: "eyes", infoTip: "Comma-separated: app names, and words in window titles such as a browser tab's.") {
+                        TextField("Distractions", text: Binding(
+                            get: { distractionText ?? droplet.distractionWords.joined(separator: ", ") },
+                            set: { distractionText = $0 }
+                        ))
+                        .labelsHidden()
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 260)
+                        .onSubmit { saveDistractions() }
+                        .onDisappear { saveDistractions() }
+                    }
+                }
+            }
+        }
+    }
+
+    private var festivalsSection: some View {
+        DropletSettingsSection {
+            settingsSectionHeader("Festivals")
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Your birthday",
+                    subtitle: "On the day, confetti falls, your pet wears a party hat and wishes you a happy birthday.",
+                    isOn: Binding(get: { droplet.birthdayOn }, set: { droplet.setBirthday(on: $0) })
+                )
+                if droplet.birthdayOn {
+                    DropletGroupedPickerRow(title: "Month") {
+                        Picker("Month", selection: Binding(get: { droplet.birthdayMonth }, set: { droplet.setBirthday(month: $0) })) {
+                            ForEach(1...12, id: \.self) { month in
+                                Text(Self.monthNames[month - 1]).tag(month)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                    DropletGroupedPickerRow(title: "Day") {
+                        Picker("Day", selection: Binding(get: { droplet.birthdayDay }, set: { droplet.setBirthday(day: $0) })) {
+                            ForEach(1...PixpawDroplet.days(in: droplet.birthdayMonth), id: \.self) { day in
+                                Text("\(day)").tag(day)
+                            }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                }
+                DropletToggleRow(
+                    title: "Festival decorations",
+                    subtitle: "On a festival's own days the screen joins in, then clears when the day is over. Never during calls or screen sharing.",
+                    isOn: Binding(get: { droplet.festivalsOn }, set: { droplet.setFestivals($0) })
+                )
+                ForEach(Festival.calendar) { festival in
+                    DropletToggleRow(
+                        title: festival.title,
+                        subtitle: "\(festival.when): \(festival.decoration)\(festival.hat.map { ", and your pet wears a \($0.title.lowercased())" } ?? "").",
+                        isOn: Binding(get: { !droplet.festivalsHidden.contains(festival) },
+                                      set: { droplet.setFestival(festival, shown: $0) })
+                    )
+                    .disabled(!droplet.festivalsOn)
+                }
+            }
+        }
+    }
+
 }
 
 // MARK: - URLs
@@ -2642,6 +2978,17 @@ extension PixpawDroplet: DropletURLHandling {
             setQuietByHand(["1", "on", "true"].contains(request.query["on"]?.lowercased() ?? "1"))
         case "agent":
             agentEvent(name: request.query["name"] ?? "", state: request.query["state"] ?? "", text: request.query["text"], usage: request.query["usage"])
+        case "join":
+            joinNextMeeting()
+        case "capture":
+            captureSafariPage()
+        case "countdown":
+            // countdown?title=Trip%20to%20Japan&date=2026-12-24
+            let format = DateFormatter()
+            format.calendar = Calendar(identifier: .gregorian)
+            format.locale = Locale(identifier: "en_US_POSIX")
+            format.dateFormat = "yyyy-MM-dd"
+            if let title = request.query["title"], let day = request.query["date"].flatMap(format.date(from:)) { addCountdown(title, day: day) }
         case "sign", "note":
             // sign?text=Buy%20milk adds a note to the list; sign with no text
             // marks the one on the sign done.
