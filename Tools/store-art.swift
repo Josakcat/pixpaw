@@ -771,7 +771,8 @@ let watermelonColors: [Character: UInt32] = ["G": 0x2E8B3A, "g": 0x6CC46A, "o": 
 
 /// Claude's question on the card over the pet: header, question, the thing
 /// it's about, the answers as buttons and the way out; tail down at `tip`.
-func askCard(_ ctx: CGContext, header: String, title: String, detail: String?, buttons: [String], tip: CGPoint, scale s: CGFloat) {
+func askCard(_ ctx: CGContext, header: String, title: String, detail: String?, buttons: [String], tip: CGPoint, scale s: CGFloat,
+             link: String = "Answer in Claude instead") {
     let width = 250 * s, pad = 10 * s
     let headerFont = NSFont.systemFont(ofSize: 10.5 * s, weight: .semibold).rounded
     let titleFont = NSFont.systemFont(ofSize: 12.5 * s, weight: .semibold).rounded
@@ -810,7 +811,7 @@ func askCard(_ ctx: CGContext, header: String, title: String, detail: String?, b
         bx = capsule.maxX + 6 * s
     }
     y += 26 * s + 6 * s
-    ("Answer in Claude instead" as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: linkFont, .foregroundColor: rgb(0x737373)])
+    (link as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: linkFont, .foregroundColor: rgb(0x737373)])
 }
 
 // 15. Ask your pet: Claude's question comes over on a card.
@@ -897,6 +898,76 @@ canvas(Int(W), Int(H), "Screenshot-16.png") { ctx in
     }
     bubble(ctx, "Rematch?", symbol: "sparkles", tip: CGPoint(x: cloudOrigin.x + 27 * cloudPx, y: cloudOrigin.y + 2 * cloudPx), scale: 2)
     label("Play-fights", at: CGPoint(x: cloudOrigin.x + 27 * cloudPx, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
+/// The tag at a pet's side while an agent works: a dark capsule, a symbol
+/// and what it's doing, its left edge at `at` and its bottom on the floor.
+func toolTag(_ ctx: CGContext, _ text: String, symbol name: String, at origin: CGPoint, scale s: CGFloat) {
+    let font = NSFont.systemFont(ofSize: 10.5 * s, weight: .semibold).rounded
+    let size = (text as NSString).size(withAttributes: [.font: font])
+    let pill = CGRect(x: origin.x, y: origin.y - 20 * s, width: size.width + 34 * s, height: 20 * s)
+    rgb(0x1F1F1F, 0.9).setFill()
+    NSBezierPath(roundedRect: pill, xRadius: pill.height / 2, yRadius: pill.height / 2).fill()
+    symbol(name, in: CGRect(x: pill.minX + 7 * s, y: pill.minY + 3 * s, width: 14 * s, height: 14 * s))
+    (text as NSString).draw(at: CGPoint(x: pill.minX + 25 * s, y: pill.midY - size.height / 2), withAttributes: [.font: font, .foregroundColor: rgb(0xFFFFFF)])
+}
+
+// 17. Share it as a GIF: five seconds of the pet, on the shelf.
+canvas(Int(W), Int(H), "Screenshot-17.png") { ctx in
+    desktop(ctx, W, H, title: "Share it as a GIF", subtitle: "Five seconds of whatever your pet is up to, as a looping GIF on your shelf.")
+    let me = CGPoint(x: 110, y: floorY)
+    cat(ctx, "sit", coat: "gray", hat: "partyHat", feet: me, px: 9)
+    bubble(ctx, "Rolling! Five seconds of me…", symbol: "record.circle", tip: CGPoint(x: me.x + 14.5 * 9, y: me.y - 22 * 9))
+
+    // The film: five frames on the little stage the GIF draws.
+    let strip = CGRect(x: 470, y: 300, width: 1060, height: 230)
+    ctx.setFillColor(rgb(0x1A1A1E).cgColor)
+    ctx.addPath(CGPath(roundedRect: strip, cornerWidth: 14, cornerHeight: 14, transform: nil)); ctx.fillPath()
+    for i in 0..<22 {
+        ctx.setFillColor(rgb(0xF2F2F2, 0.85).cgColor)
+        for y in [strip.minY + 10, strip.maxY - 24] {
+            ctx.addPath(CGPath(roundedRect: CGRect(x: strip.minX + 18 + CGFloat(i) * 48, y: y, width: 22, height: 14), cornerWidth: 3, cornerHeight: 3, transform: nil))
+            ctx.fillPath()
+        }
+    }
+    for (i, frame) in ["walk1", "walk2", "happy", "walk2", "sit"].enumerated() {
+        let cell = CGRect(x: strip.minX + 20 + CGFloat(i) * 206, y: strip.minY + 38, width: 194, height: 154)
+        ctx.setFillColor(rgb(0xFFF1D6).cgColor); ctx.fill(cell)
+        ctx.setFillColor(rgb(0xE8C9A0).cgColor); ctx.fill(CGRect(x: cell.minX, y: cell.maxY - 26, width: cell.width, height: 26))
+        ctx.setFillColor(rgb(0xD2AE80).cgColor); ctx.fill(CGRect(x: cell.minX, y: cell.maxY - 26, width: cell.width, height: 4))
+        cat(ctx, frame, coat: "gray", hat: "partyHat", feet: CGPoint(x: cell.minX + 37 + CGFloat(i % 2) * 8, y: cell.maxY - 26), px: 6)
+    }
+    label("Cat by Pixpaw.gif · 5 seconds, looping", at: CGPoint(x: strip.midX, y: strip.maxY + 22), size: 26, weight: .semibold,
+          color: rgb(0xFFE08A), centered: true)
+    shelf(ctx, CGRect(x: 760, y: 700, width: 480, height: 160), files: [.gif])
+    label("No permission needed: it's drawn from your pet's own art.", at: CGPoint(x: 1000, y: 920), size: 22, weight: .medium,
+          color: rgb(0xFFFFFF, 0.8), centered: true)
+}
+
+// 18. What it's working on: Claude Code and Antigravity, a tag at the pet's
+// side, and answers from the keyboard.
+canvas(Int(W), Int(H), "Screenshot-18.png") { ctx in
+    desktop(ctx, W, H, title: "What it's working on", subtitle: "Claude Code and Antigravity, at a glance, and answers from the keyboard.")
+    // Antigravity, editing.
+    let first = CGPoint(x: 90, y: floorY)
+    pet(ctx, "cat", "sit", feet: first, px: 9, laptop: true)
+    toolTag(ctx, "Editing App.tsx", symbol: "pencil", at: CGPoint(x: first.x + 20 * 9, y: floorY), scale: 2)
+    bubble(ctx, "Antigravity is working", symbol: "sparkles", tip: CGPoint(x: first.x + 14.5 * 9, y: first.y - 22 * 9))
+    label("Antigravity", at: CGPoint(x: first.x + 160, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // Claude Code, done, with the plan left.
+    let second = CGPoint(x: 640, y: floorY)
+    pet(ctx, "dog", "sit", feet: second, px: 9, laptop: true)
+    toolTag(ctx, "Running npm test", symbol: "terminal", at: CGPoint(x: second.x + 20 * 9, y: floorY), scale: 2)
+    bubble(ctx, "Claude is done! 5h 93% · week 96% left", symbol: "checkmark.circle.fill", tip: CGPoint(x: second.x + 14.5 * 9, y: second.y - 22 * 9))
+    label("Claude Code", at: CGPoint(x: second.x + 160, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // A question, answered with Option-1.
+    let third = CGPoint(x: 1240, y: floorY)
+    pet(ctx, "hamster", "sit", feet: third, px: 9)
+    askCard(ctx, header: "Claude · shop", title: "Edit this file?", detail: "App.tsx", buttons: ["Allow  ⌥1", "Deny  ⌥2"],
+            tip: CGPoint(x: third.x + 14.5 * 9, y: third.y - 17.5 * 9), scale: 1.6, link: "Answer in Claude instead  ⌥0")
+    label("Option-1 to answer", at: CGPoint(x: third.x + 130, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
 }
 
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.

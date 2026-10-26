@@ -194,6 +194,8 @@ final class CatController: ObservableObject {
     var onPhoto: (() -> Void)?
     /// Capture the whole page in Safari.
     var onCapturePage: (() -> Void)?
+    /// Record a GIF of it.
+    var onRecordGIF: (() -> Void)?
     /// Start or stop a focus session; the droplet keeps the clock.
     var onFocus: (() -> Void)?
     /// Files dropped on it, to take to the shelf when it gets there.
@@ -267,6 +269,8 @@ final class CatController: ObservableObject {
     private let sign = CatSign()
     /// A coding agent's question, with its answers, over its head.
     private let askCard = AskCard()
+    /// What a coding agent is doing right now, on a tag at its side.
+    private let toolTag = ToolTag()
     /// The sign was clicked: what it said is done.
     /// The sign clicked: whether a note came off it.
     var onSignDone: (() -> Bool)?
@@ -809,6 +813,7 @@ final class CatController: ObservableObject {
         catView = nil
         sign.place(paw: nil)
         askCard.place(head: nil)
+        toolTag.place(beside: nil, toRight: true)
         endFetch()
         panel?.orderOut(nil)
         panel?.close()
@@ -1182,6 +1187,7 @@ final class CatController: ObservableObject {
         glide(from: before)
         placeSign(at: shown)
         placeAsk(at: shown)
+        placeTool(at: shown)
         placeBall(at: shown)
         bubble.update(anchor: bubbleAnchor())
     }
@@ -1218,6 +1224,7 @@ final class CatController: ObservableObject {
         ))
         placeSign(at: shown)
         placeAsk(at: shown)
+        placeTool(at: shown)
         placeBall(at: shown)
         if bubble.isShowing { bubble.update(anchor: bubbleAnchor()) }
         if let toy {
@@ -1405,6 +1412,24 @@ final class CatController: ObservableObject {
     }
 
     var askShown: AgentAsk? { askCard.ask }
+
+    /// Shows what an agent is doing on a tag at its side, or takes it down
+    /// with nil.
+    func showTool(_ tool: AgentTool?) {
+        guard !isFriend else { return }
+        toolTag.show(tool)
+        placeTool(at: shown)
+    }
+
+    /// Behind it, at its feet; put away while it's quiet (a file's name may
+    /// be private on a shared screen), climbs or naps.
+    private func placeTool(at point: CGPoint) {
+        guard toolTag.tool != nil else { return }
+        let size = CatSprites.catSize
+        let up = panel != nil && quietReason == nil && mood != .climbing && !asleepAtHome
+        let back = CGPoint(x: facesRight ? point.x + size.width * 0.1 : point.x + size.width * 0.9, y: point.y + 2)
+        toolTag.place(beside: up ? back : nil, toRight: !facesRight)
+    }
 
     /// Over its head, above the sign; put away while it climbs.
     private func placeAsk(at point: CGPoint) {
@@ -2425,6 +2450,17 @@ final class CatController: ObservableObject {
     private var drawn: (frame: CatFrame, coat: CatCoat, right: Bool, bob: CGFloat, look: String)?
     /// Height of what is drawn, hat included, for the bubble to clear.
     private var spriteHeight: CGFloat = CatSprites.catSize.height
+    private var shownSprite: CGImage?
+    private var shownEffect: CGImage?
+
+    /// What it looks like this moment, for a GIF: the art as drawn, which way
+    /// it faces, its bounce, and any heart, Zzz or note with its place in
+    /// the window.
+    var look: (sprite: CGImage, right: Bool, bob: CGFloat, effect: (image: CGImage, frame: CGRect)?)? {
+        guard let shownSprite else { return nil }
+        let effect = shownEffect.flatMap { image in effectLayer.map { (image: image, frame: $0.frame) } }
+        return (shownSprite, facesRight || mood == .held, bob, effect)
+    }
 
     private func redraw() {
         guard let catLayer, let effectLayer else { return }
@@ -2439,6 +2475,7 @@ final class CatController: ObservableObject {
                                                  swing: legSwing, laptop: atLaptop)
         spriteHeight = sprite.map { CGFloat($0.height) * CatSprites.scale } ?? spriteHeight
         catLayer.contents = sprite
+        shownSprite = sprite
         if let sprite {
             let w = CGFloat(sprite.width) * CatSprites.scale
             let h = CGFloat(sprite.height) * CatSprites.scale
@@ -2474,10 +2511,12 @@ final class CatController: ObservableObject {
         }
         guard let effect, let image = CatSprites.shared.image(effect) else {
             effectLayer.opacity = 0
+            shownEffect = nil
             return
         }
         effectLayer.opacity = 1
         effectLayer.contents = image
+        shownEffect = image
         let w = CGFloat(image.width) * scale * 0.67
         let h = CGFloat(image.height) * scale * 0.67
         // The head is on the right of the art; mirror the effect with the cat.
@@ -2974,6 +3013,7 @@ final class CatView: NSView {
         menu.addItem(item("Feed", "fork.knife", #selector(feed)))
         menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
         menu.addItem(item("Take a photo", "camera.fill", #selector(photo)))
+        menu.addItem(item("Record a GIF", "record.circle", #selector(recordGIF)))
         if PageCapture.browserIsOpen {
             menu.addItem(item("Capture the whole page", "camera.viewfinder", #selector(capturePage)))
         }
@@ -3046,6 +3086,7 @@ final class CatView: NSView {
     @objc private func stretch() { MainActor.assumeIsolated { controller?.stretchWithMe() } }
     @objc private func askSign() { MainActor.assumeIsolated { controller?.onAskSign?() } }
     @objc private func dropSign() { MainActor.assumeIsolated { controller?.signDone() } }
+    @objc private func recordGIF() { MainActor.assumeIsolated { controller?.onRecordGIF?() } }
     @objc private func capturePage() { MainActor.assumeIsolated { controller?.onCapturePage?() } }
     @objc private func joinMeeting() { MainActor.assumeIsolated { controller?.joinMeeting() } }
     @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }

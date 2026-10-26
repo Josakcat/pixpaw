@@ -8,9 +8,12 @@
 //  (Tools/agent-hooks/pixpaw-ask.py) leaves the question in a file, opens
 //  `ask?id=…`, and waits for the answer file the click writes. Nothing is
 //  answered unless you click; ignored, the agent asks you as usual.
+//  While the card is up, Option-1 to Option-4 pick an answer and Option-0
+//  hands the question back, so your hands stay on the keyboard.
 //
 
 import AppKit
+import Carbon.HIToolbox
 import SwiftUI
 
 /// What the hook wrote: who asks, what, and the answers to offer.
@@ -67,6 +70,7 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
 final class AskCard {
     private var panel: CatPanel?
     private var hosting: AskHostingView?
+    private let keys = AskKeys()
     private(set) var ask: AgentAsk?
 
     /// The top of the card on screen, while it is up.
@@ -75,7 +79,13 @@ final class AskCard {
     func show(_ ask: AgentAsk?, answer: @escaping (String) -> Void) {
         self.ask = ask
         guard let ask else { return close() }
-        let view = AskCardView(ask: ask, answer: answer)
+        let options = ask.options
+        let held = keys.hold(min(options.count, AskKeys.answers)) { [weak self] index in
+            // Only for the card that is still up.
+            guard self?.ask?.id == ask.id else { return }
+            answer(index == 0 ? AgentAsk.skip : options[index - 1])
+        }
+        let view = AskCardView(ask: ask, keys: held, answer: answer)
         if let hosting {
             hosting.rootView = view
         } else {
@@ -104,6 +114,7 @@ final class AskCard {
 
     func close() {
         ask = nil
+        keys.release()
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
@@ -119,6 +130,9 @@ final class AskHostingView: NSHostingView<AskCardView> {
 /// The speech bubble's look, with the answers as buttons under the question.
 struct AskCardView: View {
     let ask: AgentAsk
+    /// The numbers Option answers it with: 1 to 4 for the answers, 0 to
+    /// hand it back.
+    var keys: Set<Int> = []
     let answer: (String) -> Void
 
     var body: some View {
@@ -141,11 +155,19 @@ struct AskCardView: View {
             }
             HStack(spacing: 6) {
                 ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
-                    Button(option) { answer(option) }
-                        .buttonStyle(AskButtonStyle(prominent: index == 0, warns: option.localizedCaseInsensitiveContains("deny")))
+                    Button { answer(option) } label: {
+                        HStack(spacing: 4) {
+                            Text(option)
+                            if keys.contains(index + 1) {
+                                Text("⌥\(index + 1)").opacity(0.6)
+                            }
+                        }
+                    }
+                    .buttonStyle(AskButtonStyle(prominent: index == 0, warns: option.localizedCaseInsensitiveContains("deny")))
+                    .accessibilityLabel(option)
                 }
             }
-            Button("Answer in \(ask.agent) instead") { answer(AgentAsk.skip) }
+            Button(keys.contains(0) ? "Answer in \(ask.agent) instead  ⌥0" : "Answer in \(ask.agent) instead") { answer(AgentAsk.skip) }
                 .buttonStyle(.plain)
                 .font(.system(size: 10, weight: .medium, design: .rounded))
                 .foregroundStyle(Color(white: 0.45))
@@ -201,5 +223,65 @@ struct AskBubbleShape: Shape {
         path.addArc(tangent1End: CGPoint(x: rect.minX, y: rect.minY), tangent2End: CGPoint(x: rect.maxX, y: rect.minY), radius: r)
         path.closeSubpath()
         return path
+    }
+}
+
+/// Option-1 to Option-4 for the card's answers and Option-0 to hand it
+/// back, from any app. Held only while a card is up and let go the moment
+/// it goes, so the keys are yours the rest of the time. A key some other
+/// app already holds is left alone.
+@MainActor
+final class AskKeys {
+    static let answers = 4
+    private static let signature: OSType = 0x5058_4B59 // "PXKY"
+    private static let codes = [kVK_ANSI_0, kVK_ANSI_1, kVK_ANSI_2, kVK_ANSI_3, kVK_ANSI_4]
+
+    private var refs: [EventHotKeyRef] = []
+    private var handler: EventHandlerRef?
+    private var pressed: ((Int) -> Void)?
+
+    /// Holds Option-0 and Option-1 up to Option-`count`; `pressed` gets the
+    /// number. The numbers it could hold.
+    func hold(_ count: Int, pressed: @escaping (Int) -> Void) -> Set<Int> {
+        release()
+        self.pressed = pressed
+        var spec = EventTypeSpec(eventClass: OSType(kEventClassKeyboard), eventKind: UInt32(kEventHotKeyPressed))
+        let me = Unmanaged.passUnretained(self).toOpaque()
+        let installed = InstallEventHandler(GetApplicationEventTarget(), { _, event, data in
+            guard let event, let data else { return OSStatus(eventNotHandledErr) }
+            var key = EventHotKeyID()
+            let read = GetEventParameter(event, EventParamName(kEventParamDirectObject), EventParamType(typeEventHotKeyID),
+                                         nil, MemoryLayout<EventHotKeyID>.size, nil, &key)
+            guard read == noErr, key.signature == AskKeys.signature else { return OSStatus(eventNotHandledErr) }
+            let number = Int(key.id)
+            MainActor.assumeIsolated {
+                // Answering closes the card, which takes this handler away:
+                // not from inside it, so on the next turn.
+                let pressed = Unmanaged<AskKeys>.fromOpaque(data).takeUnretainedValue().pressed
+                DispatchQueue.main.async { pressed?(number) }
+            }
+            return noErr
+        }, 1, &spec, me, &handler)
+        guard installed == noErr else { return [] }
+        var held: Set<Int> = []
+        for number in 0...min(count, Self.answers) {
+            var ref: EventHotKeyRef?
+            let status = RegisterEventHotKey(UInt32(Self.codes[number]), UInt32(optionKey),
+                                             EventHotKeyID(signature: Self.signature, id: UInt32(number)),
+                                             GetApplicationEventTarget(), 0, &ref)
+            if status == noErr, let ref {
+                refs.append(ref)
+                held.insert(number)
+            }
+        }
+        return held
+    }
+
+    func release() {
+        refs.forEach { UnregisterEventHotKey($0) }
+        refs = []
+        if let handler { RemoveEventHandler(handler) }
+        handler = nil
+        pressed = nil
     }
 }

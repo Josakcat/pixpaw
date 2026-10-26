@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.9.0] - 2026-10-26
+
+Google Antigravity joins Claude Code, a tag that says what your agent is working on, answers from the keyboard, GIFs of your pet to share, and scheduled runs that bring their results.
+
+### Added
+
+- Antigravity. Google's Antigravity (the app, the IDE and the `agy` CLI) now reaches your pet like Claude Code does: it says when Antigravity starts, finishes (with how much of your plan is left, "5h 93% · week 96% left") or fails, keeps the Mac awake while it works if you want, shows what it's working on on the tag at its side ("Editing App.tsx", "Running npm test"), and brings your Automations' results when they run on schedule, kept on its sign. Install the Pixpaw plugin once with `agy plugin install /path/to/Tools/agent-hooks/antigravity` (see the README). Answering Antigravity from the pet's card isn't there yet.
+- Record a GIF of your pet. Choose "Record a GIF" from its menu and it films five seconds of whatever it's doing (walking, napping, dancing, coding along) as a looping GIF with big crisp pixels, saved where your screenshots go; your pet brings it to the shelf, ready to drop into a chat. Drawn from its own art, so it needs no permission. Also Settings → What it tells you, a Record a GIF of your pet shortcut, and `droppy://droplet/pixpaw/gif`.
+- Answer with the keyboard. While Claude's question is up on your pet's card, Option-1 to Option-4 pick an answer and Option-0 hands it back to Claude, from any app. The keys are only held while a card is up; the rest of the time they're yours.
+- See what Claude is working on. While Claude Code works, a little tag at your pet's side says what it's doing right now: "Editing CatController.swift", "Running swift build", "Reading README.md", "Searching the web". Only a file's name and a command's first words, never a path or the rest of a command, and it's hidden while your pet is quiet. Needs a `PreToolUse` → `pixpaw-agent.sh Claude tool` hook (see the README). Settings → What it tells you → What it's working on.
+- Scheduled runs. When a Claude Code scheduled task (in the Claude app) or a `/loop` runs on this Mac, your pet says so, and when it's done it comes over with the result ("Morning review is done: 3 PRs need you") and keeps it on its sign as a note until you click it done. A run that fails says so too. Settings → What it tells you → Scheduled runs, and Keep results on its sign. Works through the Claude agent hooks (add `StopFailure` for failures, see the README); scheduled tasks in the cloud don't run on this Mac, so it can't see those.
+
 ## [1.8.0] - 2026-10-26
 
 Answer Claude from your pet, a toy of its own for every animal, fetch, play-fights, and whole-page capture in Chrome and friends.

@@ -1,0 +1,7 @@
+{
+  "pixpaw": {
+    "PreInvocation": [{"type": "command", "command": "python3 ./antigravity.py working", "timeout": 5}],
+    "PreToolUse": [{"matcher": "*", "hooks": [{"type": "command", "command": "python3 ./antigravity.py tool", "timeout": 5}]}],
+    "Stop": [{"type": "command", "command": "python3 ./antigravity.py done", "timeout": 5}]
+  }
+}

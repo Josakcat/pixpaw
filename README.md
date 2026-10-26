@@ -23,7 +23,7 @@ your desktop and talks to you. A Droplet for
 - Strikes a pose when you take a screenshot.
 - Stroke it with the pointer to pet it; shake it about and it lands dizzy; throw it and it bounces off the screen's edges.
 - Climbs the sides of the screen now and then, and types along at its laptop while you type.
-- Treats, a little gift for you once a day, and a photo of your pet to keep or share.
+- Treats, a little gift for you once a day, and a photo or a five-second GIF of your pet to keep or share.
 - Festival hats, and Loy Krathong and Chinese New Year among the festivals.
 - The shelf widget counts your days together, pets, meals and games.
 - Six coats, and an optional friend of any kind that sits with it and plays tag.
@@ -81,7 +81,8 @@ your desktop and talks to you. A Droplet for
 | ![Full of beans](Assets/Screenshot-10.png) | ![Right beside you](Assets/Screenshot-11.png) |
 | ![Getting things done](Assets/Screenshot-12.png) | ![Click to join](Assets/Screenshot-13.png) |
 | ![The whole page](Assets/Screenshot-14.png) | ![Ask your pet](Assets/Screenshot-15.png) |
-| ![Playtime, their way](Assets/Screenshot-16.png) | |
+| ![Playtime, their way](Assets/Screenshot-16.png) | ![Share it as a GIF](Assets/Screenshot-17.png) |
+| ![What it's working on](Assets/Screenshot-18.png) | |
 
 Everything runs on your Mac. Notification text is shown and forgotten;
 nothing is stored or sent anywhere.
@@ -123,11 +124,41 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
   `… waiting`. For the usage left, set `Tools/agent-hooks/claude-statusline.sh`
   as the `statusLine` command: Claude Code only hands its rate limits to a
   status line, which saves them for the Stop hook to read.
+- **Antigravity** (the app, the IDE and the `agy` CLI): install the Pixpaw
+  plugin once, `agy plugin install /path/to/Tools/agent-hooks/antigravity`,
+  and restart Antigravity. It says when a turn starts, finishes (with the plan
+  usage left for the models in use, from `agy -p /usage`) or fails, puts
+  what it's working on on the tag at your pet's side, and brings your
+  Automations' results (the scheduled tasks in `~/.gemini/config/sidecars`).
+  Its hooks print nothing, so Antigravity decides about every tool exactly as
+  it would without them. Answering Antigravity from the pet's card isn't
+  there yet: a hook can't yet let a command through for you.
 - **Codex**: `notify = ["/path/to/Tools/agent-hooks/codex-notify.sh"]` in
   `~/.codex/config.toml`. It passes the event on to `PIXPAW_CODEX_NEXT`, or to
   Codex Computer Use's notifier when that is installed, so an existing
   `notify` keeps working.
 - **Cursor**: `beforeSubmitPrompt` → working, `stop` → done.
+
+**What it's working on.** Add a `PreToolUse` hook → `pixpaw-agent.sh Claude tool`
+and a tag at your pet's side says what Claude is doing right now ("Editing
+CatController.swift", "Running swift build"). The hook passes on the tool's name
+and its file, command or address; Pixpaw shows only the file's name and the
+command's first words.
+
+```json
+"PreToolUse": [{"matcher": "Edit|MultiEdit|Write|NotebookEdit|Read|Bash|Grep|Glob|WebFetch|WebSearch|Task|Agent",
+  "hooks": [{"type": "command", "timeout": 5,
+  "command": "PIXPAW_SCHEME=droppy /path/to/Tools/agent-hooks/pixpaw-agent.sh Claude tool"}]}]
+```
+
+**Scheduled runs.** The same hooks tell a scheduled run from your own:
+`scheduled.py` matches the prompt against your Claude app scheduled tasks
+(`~/.claude/scheduled-tasks/*/SKILL.md`) and the session's `/loop` crons, and
+adds the task's name and, when it's done, the first line of its result. Your
+pet says when one starts and comes over with the result when it finishes,
+keeping it on its sign. For failures, add `StopFailure` →
+`pixpaw-agent.sh Claude error`. Scheduled tasks in the cloud never run on your
+Mac, so they can't reach it.
 
 **Answer from your pet.** With `Tools/agent-hooks/pixpaw-ask.py` as a Claude Code
 hook, a permission prompt (run this command? edit this file?) or a question with
@@ -135,7 +166,8 @@ a few answers comes to your pet: it reads it out and holds up the choices on a
 card, and the one you click goes back to Claude. When the pet isn't out, you're
 away from the Mac (no input for a minute, or the screen locked: handy with
 Remote Control, which then asks you on your phone at once), or you don't
-answer within PIXPAW_ASK_WAIT seconds (110), Claude asks you as usual.
+answer within PIXPAW_ASK_WAIT seconds (110), Claude asks you as usual. While
+the card is up, Option-1 to Option-4 pick an answer and Option-0 hands it back.
 
 ```json
 "PermissionRequest": [{"hooks": [{"type": "command", "timeout": 120,
@@ -150,7 +182,7 @@ answer within PIXPAW_ASK_WAIT seconds (110), Claude asks you as usual.
 `come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|stop`, `wear?hat=…&collar=…`,
 `quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
 `note?text=…`, `join` (your next video call), `countdown?title=…&date=2026-12-24`,
-`capture` (the whole page in your browser), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
+`capture` (the whole page in your browser), `gif` (five seconds of your pet as a GIF), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
 
 ## Art

@@ -54,11 +54,27 @@ enum CatWords {
         CatLine(text: "Joining \(title)…", symbol: "video.fill", seconds: 3)
     }
     static let noMeeting = CatLine(text: "No call to join right now.", symbol: "video.slash", seconds: 3)
+    /// A scheduled run of an agent: starting, done with its result, failed,
+    /// or stuck waiting for you.
+    static func scheduledStarted(_ task: String) -> CatLine {
+        CatLine(text: "Running \(task)…", symbol: "calendar.badge.clock", seconds: 3)
+    }
+    static func scheduledDone(_ task: String, _ result: String?) -> CatLine {
+        CatLine(text: result.map { "\(task) is done: \($0)" } ?? "\(task) is done!", symbol: "calendar.badge.checkmark", seconds: 8)
+    }
+    static func scheduledFailed(_ task: String, _ error: String?) -> CatLine {
+        CatLine(text: error.map { "\(task) didn't finish: \($0)" } ?? "\(task) didn't finish.", symbol: "exclamationmark.triangle.fill", seconds: 8)
+    }
+    static func scheduledWaiting(_ task: String) -> CatLine {
+        CatLine(text: "\(task) needs you to carry on.", symbol: "hand.raised.fill", seconds: 6)
+    }
     /// An agent's question, answered with a click.
     static func askAnswered(_ agent: String, _ choice: String) -> CatLine {
         CatLine(text: "Told \(agent): \(choice)", symbol: "checkmark.circle.fill", seconds: 2)
     }
     /// Capturing the whole page in the browser, and what can stop it.
+    static let recordingGIF = CatLine(text: "Rolling! Five seconds of me…", symbol: "record.circle", seconds: 3)
+    static let gifDone = CatLine(text: "Our GIF! It's on the shelf.", symbol: "film", seconds: 4)
     static let capturingPage = CatLine(text: "Hold still! Scrolling all the way down…", symbol: "camera.viewfinder", seconds: 3)
     static func pageProblem(_ problem: PageCaptureProblem) -> CatLine {
         switch problem {

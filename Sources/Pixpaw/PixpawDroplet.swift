@@ -77,7 +77,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let tellsAgents = "tellsAgents"
         static let awakeForAgents = "awakeForAgents"
         static let answersAsks = "agentAsks"
+        static let tellsScheduled = "tellsScheduled"
+        static let scheduledOnSign = "scheduledOnSign"
         static let readsAsksAloud = "agentAsksAloud"
+        static let showsAgentTools = "agentTools"
         static let tellsLevels = "tellsLevels"
         static let tellsHeadphones = "tellsHeadphones"
         static let autoQuiet = "quietDuringCalls"
@@ -137,10 +140,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var tellsAgents = true
     /// Keep the Mac from sleeping while a coding agent works.
     @Published private(set) var awakeForAgents = false
+    /// Scheduled runs (Desktop scheduled tasks, /loop): said when they
+    /// start, brought over with the result when they finish.
+    @Published private(set) var tellsScheduled = true
+    /// And the result kept on its sign as a note until you click it done.
+    @Published private(set) var scheduledOnSign = true
     /// An agent's questions come to the pet, with buttons to answer.
     @Published private(set) var answersAsks = true
     /// And it reads them out.
     @Published private(set) var readsAsksAloud = true
+    /// What a coding agent is doing ("Editing CatController.swift"), on a
+    /// tag at the pet's side.
+    @Published private(set) var showsAgentTools = true
+    /// When the tool's tag comes down, unless the agent says more.
+    private var toolAt = Date.distantPast
     private var askTimer: Timer?
     private var askQueue: [AgentAsk] = []
     private var askShownAt = Date.distantPast
@@ -212,6 +225,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var downloads: DownloadsWatcher?
     private var screenshots: ScreenshotWatcher?
     private var capturingPage = false
+    private var gif: PetGIF?
     private var calendar: CalendarWatcher?
     private var notifications: NotificationWatcher?
 
@@ -249,6 +263,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.onPersist = { [weak self] in self?.persist() }
         cat.onPhoto = { [weak self] in self?.takePhoto() }
         cat.onCapturePage = { [weak self] in self?.capturePage() }
+        cat.onRecordGIF = { [weak self] in self?.recordGIF() }
         cat.onFocus = { [weak self] in self?.toggleFocus() }
         // Counted from the first time the droplet ran, which its folder
         // remembers for anyone who had it before the tally existed.
@@ -289,7 +304,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         tellsAgents = prefs.value(forKey: Key.tellsAgents, default: true)
         awakeForAgents = prefs.value(forKey: Key.awakeForAgents, default: false)
         answersAsks = prefs.value(forKey: Key.answersAsks, default: true)
+        tellsScheduled = prefs.value(forKey: Key.tellsScheduled, default: true)
+        scheduledOnSign = prefs.value(forKey: Key.scheduledOnSign, default: true)
         readsAsksAloud = prefs.value(forKey: Key.readsAsksAloud, default: true)
+        showsAgentTools = prefs.value(forKey: Key.showsAgentTools, default: true)
         tellsLevels = prefs.value(forKey: Key.tellsLevels, default: true)
         tellsHeadphones = prefs.value(forKey: Key.tellsHeadphones, default: true)
         quietsAutomatically = prefs.value(forKey: Key.autoQuiet, default: true)
@@ -344,6 +362,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             )
         ) { [weak self] in
             self?.askForNote()
+        }
+        host.shortcuts.register(id: "record-gif", title: "Record a GIF of your pet", defaultShortcut: nil) { [weak self] in
+            self?.recordGIF()
         }
         host.shortcuts.register(id: "capture-page", title: "Capture the whole page in your browser", defaultShortcut: nil) { [weak self] in
             self?.capturePage()
@@ -400,6 +421,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     public func deactivate() {
+        gif?.cancel()
+        gif = nil
         festivalCheck?.invalidate()
         focusTimer?.invalidate()
         focusTimer = nil
@@ -488,10 +511,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// Adds a note to the end of the list; a time in it ("in 10 min",
     /// "at 5pm") is when the pet comes to remind you.
-    func addNote(_ raw: String) {
-        let text = String(raw.trimmingCharacters(in: .whitespacesAndNewlines).prefix(CatSign.maxLength))
+    /// `timed`: read a time in it ("at 5") as when to remind you.
+    func addNote(_ raw: String, timed: Bool = true) {
+        var text = raw.trimmingCharacters(in: .whitespacesAndNewlines)
+        if text.count > CatSign.maxLength { text = String(text.prefix(CatSign.maxLength - 1)) + "…" }
         guard !text.isEmpty, notes.count < PetNote.limit else { return }
-        notes.append(PetNote(text: text, due: NoteTime.due(in: text)))
+        notes.append(PetNote(text: text, due: timed ? NoteTime.due(in: text) : nil))
         saveNotes()
     }
 
@@ -799,6 +824,24 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func takePhoto() {
         guard let cat, let data = PetPhoto.render(cat, days: daysTogether) else { return }
         PetPhoto.save(data, named: "\(cat.kind.title) by Pixpaw.png")
+    }
+
+    /// Five seconds of the pet as a looping GIF, saved where your screenshots
+    /// go; the pet takes it to the shelf, ready to drop into a chat.
+    func recordGIF() {
+        guard gif == nil, let cat, isOut else { return }
+        cat.say(CatWords.recordingGIF)
+        gif = PetGIF(cat) { [weak self] file in
+            guard let self else { return }
+            self.gif = nil
+            guard let file else { return }
+            if let cat = self.cat, self.isOut {
+                cat.carry([file])
+                cat.say(CatWords.gifDone)
+            } else {
+                self.addToShelf([file])
+            }
+        }
     }
 
     /// The whole page in the front browser window, top to bottom, saved where
@@ -1447,7 +1490,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// One report from a coding agent's hook: `working`, `done`, `waiting`
     /// (it needs you) or `error`, with an optional line of text.
-    func agentEvent(name rawName: String, state rawState: String, text: String?, usage: String? = nil) {
+    /// `task`: a scheduled run's name (a Desktop scheduled task or a /loop),
+    /// and `result` the first line of what it came back with.
+    func agentEvent(name rawName: String, state rawState: String, text: String?, usage: String? = nil, task: String? = nil, result: String? = nil) {
         guard tellsAgents else { return }
         let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
         guard !name.isEmpty, let state = AgentStatus.State(rawValue: rawState.lowercased()) else { return }
@@ -1455,9 +1500,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         agents[name] = AgentStatus(name: name, state: state, at: Date())
         publishActivity()
         refreshKeepAwake()
+        if state != .working { cat?.showTool(nil) }
         guard previous != state else { return }
 
         let detail = text.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(90)) }.flatMap { $0.isEmpty ? nil : $0 }
+        if let task = task.map({ String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)) }), !task.isEmpty, tellsScheduled {
+            return scheduledRun(task, state: state, result: result.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(140)) })
+        }
         switch state {
         case .working:
             cat?.say(CatLine(text: CatWords.agentWorking(name), symbol: "sparkles"))
@@ -1474,6 +1523,63 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             cat?.callOver()
         case .error:
             cat?.say(CatLine(text: CatWords.agentFailed(name), symbol: "exclamationmark.triangle.fill"))
+        }
+    }
+
+    /// An agent about to use a tool (`agent?state=tool&tool=Edit&target=…`):
+    /// the tag at the pet's side says what and to which file, until the
+    /// agent goes quiet for a few seconds or finishes.
+    func agentTool(name rawName: String, tool: String, target: String?) {
+        guard tellsAgents, showsAgentTools else { return }
+        let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        guard !name.isEmpty, let shown = AgentTool(agent: name, tool: String(tool.prefix(64)), target: target.map { String($0.prefix(300)) }) else { return }
+        if agents[name]?.state != .working {
+            agents[name] = AgentStatus(name: name, state: .working, at: Date())
+            publishActivity()
+            refreshKeepAwake()
+        }
+        agents[name]?.at = Date()
+        toolAt = Date().addingTimeInterval(shown.lasts)
+        cat?.showTool(shown)
+    }
+
+    func setShowsAgentTools(_ on: Bool) {
+        showsAgentTools = on
+        host?.preferences.setValue(on, forKey: Key.showsAgentTools)
+        if !on { cat?.showTool(nil) }
+    }
+
+    // MARK: Scheduled runs
+
+    func setTellsScheduled(_ on: Bool) {
+        tellsScheduled = on
+        host?.preferences.setValue(on, forKey: Key.tellsScheduled)
+    }
+
+    func setScheduledOnSign(_ on: Bool) {
+        scheduledOnSign = on
+        host?.preferences.setValue(on, forKey: Key.scheduledOnSign)
+    }
+
+    /// A scheduled run starting, finishing or failing: it says when one
+    /// starts, and comes over with the result when it's done.
+    private func scheduledRun(_ task: String, state: AgentStatus.State, result: String?) {
+        let said = result.flatMap { $0.isEmpty ? nil : $0 }
+        switch state {
+        case .working:
+            cat?.say(CatWords.scheduledStarted(task))
+        case .done:
+            cat?.callOver()
+            cat?.say(CatWords.scheduledDone(task, said), essential: true)
+            cat?.celebrate()
+            if scheduledOnSign { addNote("\(task): \(said ?? "done")", timed: false) }
+        case .error:
+            cat?.callOver()
+            cat?.say(CatWords.scheduledFailed(task, said), essential: true)
+            if scheduledOnSign { addNote("\(task) failed", timed: false) }
+        case .waiting:
+            cat?.callOver()
+            cat?.say(CatWords.scheduledWaiting(task))
         }
     }
 
@@ -1558,6 +1664,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             aliveAt = .distantPast
             skipAllAsks()
         }
+        // A tool's tag comes down once the agent has gone quiet a while.
+        if Date() >= toolAt { cat?.showTool(nil) }
         // Up a while and you've walked away: back to Claude with it.
         if let shown = cat?.askShown, shown.isOpen, !Self.atTheMac, Date().timeIntervalSince(askShownAt) >= 20 {
             skipAllAsks()
@@ -2151,12 +2259,15 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Volume and brightness", keywords: ["cat", "sound", "volume", "mute", "brightness", "screen"]),
             SettingsSearchEntry(title: "Headphones", keywords: ["cat", "airpods", "bluetooth", "headset", "connect"]),
             SettingsSearchEntry(title: "Screenshots", keywords: ["screenshot", "photo", "pose", "camera"]),
+            SettingsSearchEntry(title: "Record a GIF of your pet", keywords: ["gif", "animation", "share", "discord", "record", "video"]),
             SettingsSearchEntry(title: "Capture a whole web page", keywords: ["screenshot", "full page", "safari", "chrome", "arc", "capture", "scroll", "web"]),
             SettingsSearchEntry(title: "Your birthday", keywords: ["birthday", "party", "confetti", "cake"]),
             SettingsSearchEntry(title: "Good morning", keywords: ["morning", "greeting", "wake", "calendar", "stretch"]),
             SettingsSearchEntry(title: "Welcome back", keywords: ["away", "return", "back", "hello", "greeting", "idle"]),
             SettingsSearchEntry(title: "Late nights", keywords: ["night", "late", "bedtime", "sleep", "nightcap", "midnight"]),
             SettingsSearchEntry(title: "Music", keywords: ["cat", "music", "song", "spotify", "youtube", "video", "dance", "now playing"]),
+            SettingsSearchEntry(title: "Scheduled runs", keywords: ["schedule", "scheduled task", "loop", "cron", "routine", "result", "claude"]),
+            SettingsSearchEntry(title: "What it's working on", keywords: ["claude", "agent", "file", "editing", "tool", "command"]),
             SettingsSearchEntry(title: "Answer from your pet", keywords: ["claude", "permission", "allow", "deny", "question", "agent", "approve"]),
             SettingsSearchEntry(title: "Read questions aloud", keywords: ["voice", "speak", "speech", "aloud", "agent"]),
             SettingsSearchEntry(title: "Agent updates", keywords: ["cat", "claude", "codex", "cursor", "agent"]),
@@ -2888,6 +2999,12 @@ private struct PixpawSettings: View {
                     subtitle: "Strikes a pose when you take a screenshot. Found through Spotlight, so no permission is needed.",
                     isOn: Binding(get: { droplet.tellsScreenshots }, set: { droplet.setTells(screenshots: $0) })
                 )
+                DropletControlRow(title: "Record a GIF of your pet",
+                                  infoTip: "Five seconds of whatever it's doing, as a looping GIF where your screenshots go; it brings it to the shelf, ready to drop into a chat. Also from its menu, a shortcut you set, or droppy://droplet/pixpaw/gif in Shortcuts.") {
+                    Button("Record") { droplet.recordGIF() }
+                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .disabled(!droplet.isOut)
+                }
                 DropletControlRow(title: "Capture a whole web page",
                                   infoTip: "Safari, Chrome, Arc, Edge, Brave or Vivaldi, whichever is in front. Needs the browser to allow JavaScript from Apple Events (Safari: Settings → Developer; Chrome and the others: View → Developer), and Screen Recording for Droppy. Also from a shortcut you set, or droppy://droplet/pixpaw/capture in Shortcuts.") {
                     Button("Capture") { droplet.capturePage() }
@@ -2916,7 +3033,7 @@ private struct PixpawSettings: View {
         DropletSettingsSection {
             VStack(alignment: .leading, spacing: 2) {
                 settingsSectionHeader("AI agents")
-                Text("Claude Code, Codex, Cursor and others report through hooks that open droppy://droplet/pixpaw/agent?name=…&state=working|done|waiting|error.")
+                Text("Claude Code, Antigravity, Codex, Cursor and others report through hooks that open droppy://droplet/pixpaw/agent?name=…&state=working|done|waiting|error.")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -2929,13 +3046,31 @@ private struct PixpawSettings: View {
                 )
                 DropletToggleRow(
                     title: "Keep the Mac awake while agents work",
-                    subtitle: "While Claude Code, Codex or another agent is working, the Mac doesn't go to sleep, so a long run can finish. The screen can still turn off. Closing a laptop's lid still puts it to sleep.",
+                    subtitle: "While Claude Code, Antigravity, Codex or another agent is working, the Mac doesn't go to sleep, so a long run can finish. The screen can still turn off. Closing a laptop's lid still puts it to sleep.",
                     isOn: Binding(get: { droplet.awakeForAgents }, set: { droplet.setAwakeForAgents($0) })
                 )
                 .disabled(!droplet.tellsAgents)
                 DropletToggleRow(
+                    title: "Scheduled runs",
+                    subtitle: "When a Claude Code scheduled task (or a /loop) or an Antigravity Automation runs, your pet says so, and when it's done it comes over with the result. Works with the Claude agent hooks and the Pixpaw plugin for Antigravity; scheduled tasks in the cloud don't run on this Mac, so it can't see those.",
+                    isOn: Binding(get: { droplet.tellsScheduled }, set: { droplet.setTellsScheduled($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
+                    title: "Keep results on its sign",
+                    subtitle: "Each finished run's result goes on its sign as a note (“Morning review: 3 PRs need you”) until you click it done.",
+                    isOn: Binding(get: { droplet.scheduledOnSign }, set: { droplet.setScheduledOnSign($0) })
+                )
+                .disabled(!droplet.tellsAgents || !droplet.tellsScheduled)
+                DropletToggleRow(
+                    title: "What it's working on",
+                    subtitle: "While Claude Code or Antigravity works, a tag at your pet's side says what it's doing: “Editing CatController.swift”, “Running swift build”. Only a file's name and a command's first words, and hidden while your pet is quiet. Needs the tool hook for Claude, or the Pixpaw plugin for Antigravity (see the README).",
+                    isOn: Binding(get: { droplet.showsAgentTools }, set: { droplet.setShowsAgentTools($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
                     title: "Answer from your pet",
-                    subtitle: "When Claude Code asks to run something or asks you a question, your pet comes over with the choices on a card: click one to answer. Ignore it and Claude asks you as usual. Away from the Mac (no keyboard or mouse for a minute, or the screen locked), questions go straight back to Claude, so Remote Control can ask you on your phone. Needs the pixpaw-ask hook (see the README).",
+                    subtitle: "When Claude Code (not yet Antigravity) asks to run something or asks you a question, your pet comes over with the choices on a card: click one to answer. Ignore it and Claude asks you as usual. Away from the Mac (no keyboard or mouse for a minute, or the screen locked), questions go straight back to Claude, so Remote Control can ask you on your phone. Needs the pixpaw-ask hook (see the README).",
                     isOn: Binding(get: { droplet.answersAsks }, set: { droplet.setAnswersAsks($0) })
                 )
                 .disabled(!droplet.tellsAgents)
@@ -3071,7 +3206,8 @@ private struct PixpawSettings: View {
 /// `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…` in the
 /// Playground), for Shortcuts and scripts: show, hide, come, nap, feed,
 /// play?toy=yarn|teaser|stop, wear?hat=…&collar=…, quiet?on=1|0, say?text=…,
-/// agent?name=…&state=working|done|waiting|error&text=…&usage=…, and
+/// agent?name=…&state=working|done|waiting|error&text=…&usage=…,
+/// agent?name=…&state=tool&tool=Edit&target=…, gif, and
 /// roam?mode=anywhere|floor|windows.
 extension PixpawDroplet: DropletURLHandling {
     public func handle(_ request: DropletURLRequest) {
@@ -3082,6 +3218,7 @@ extension PixpawDroplet: DropletURLHandling {
         case "nap": napNow()
         case "feed": feed()
         case "photo": takePhoto()
+        case "gif": recordGIF()
         case "focus":
             // focus?minutes=25, or focus?stop
             if request.query["stop"] != nil { stopFocus() } else { startFocus(minutes: request.query["minutes"].flatMap(Int.init).map { min(180, max(1, $0)) }) }
@@ -3106,8 +3243,11 @@ extension PixpawDroplet: DropletURLHandling {
             if let collar = request.query["collar"] { wear(CatAccessory(rawValue: collar), in: .collar) }
         case "quiet":
             setQuietByHand(["1", "on", "true"].contains(request.query["on"]?.lowercased() ?? "1"))
+        case "agent" where request.query["state"]?.lowercased() == "tool":
+            agentTool(name: request.query["name"] ?? "", tool: request.query["tool"] ?? "", target: request.query["target"])
         case "agent":
-            agentEvent(name: request.query["name"] ?? "", state: request.query["state"] ?? "", text: request.query["text"], usage: request.query["usage"])
+            agentEvent(name: request.query["name"] ?? "", state: request.query["state"] ?? "", text: request.query["text"], usage: request.query["usage"],
+                       task: request.query["task"], result: request.query["result"])
         case "join":
             joinNextMeeting()
         case "capture":
