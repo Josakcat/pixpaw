@@ -2,11 +2,11 @@
 //  PageCapture.swift
 //  Pixpaw
 //
-//  A picture of the whole page open in Safari, top to bottom: the pet
+//  A picture of the whole page open in your browser, top to bottom: the pet
 //  scrolls it a screen at a time, takes the window each time, joins the
 //  pieces into one tall PNG and puts the page back where it was. It sees
-//  exactly what you see, signed in and all, so it needs Safari's
-//  Settings → Developer → Allow JavaScript from Apple Events, and Screen Recording.
+//  exactly what you see, signed in and all, so it needs the browser to
+//  allow JavaScript from Apple Events, and Screen Recording.
 //
 
 import AppKit
@@ -15,19 +15,63 @@ import ApplicationServices
 import UniformTypeIdentifiers
 
 enum PageCaptureProblem: Error {
-    /// Safari isn't open, or has no page up.
+    /// No browser is open, or it has no page up.
     case noPage
-    /// Droppy may not control Safari (Privacy & Security → Automation).
-    case notAllowed
-    /// Settings → Developer → Allow JavaScript from Apple Events is off.
-    case noJavaScript
+    /// Droppy may not control the browser (Privacy & Security → Automation).
+    case notAllowed(Browser)
+    /// The browser's Allow JavaScript from Apple Events is off.
+    case noJavaScript(Browser)
     case noScreenRecording
     case failed
 }
 
+/// A browser it can scroll: Safari, or one built on Chromium.
+struct Browser: Equatable {
+    let bundleID: String
+    let name: String
+    /// Where its Allow JavaScript from Apple Events switch is.
+    let setting: String
+
+    static let all = [
+        Browser(bundleID: "com.apple.Safari", name: "Safari", setting: "Settings → Developer → Allow JavaScript from Apple Events"),
+        Browser(bundleID: "com.google.Chrome", name: "Chrome", setting: "View → Developer → Allow JavaScript from Apple Events"),
+        Browser(bundleID: "company.thebrowser.Browser", name: "Arc", setting: "Allow JavaScript from Apple Events"),
+        Browser(bundleID: "com.microsoft.edgemac", name: "Edge", setting: "View → Developer → Allow JavaScript from Apple Events"),
+        Browser(bundleID: "com.brave.Browser", name: "Brave", setting: "View → Developer → Allow JavaScript from Apple Events"),
+        Browser(bundleID: "com.vivaldi.Vivaldi", name: "Vivaldi", setting: "View → Developer → Allow JavaScript from Apple Events"),
+    ]
+
+    var isSafari: Bool { bundleID == "com.apple.Safari" }
+
+    /// AppleScript that runs `javaScript` (already quoted) in the front tab.
+    func script(_ javaScript: String) -> String {
+        switch bundleID {
+        case "com.apple.Safari":
+            "tell application id \"\(bundleID)\" to do JavaScript \"\(javaScript)\" in current tab of front window"
+        case "company.thebrowser.Browser":
+            "tell application id \"\(bundleID)\" to tell front window to tell active tab to execute javascript \"\(javaScript)\""
+        default:
+            "tell application id \"\(bundleID)\" to execute active tab of front window javascript \"\(javaScript)\""
+        }
+    }
+
+    /// The browser whose window is frontmost on screen, of those running.
+    @MainActor static var front: (Browser, NSRunningApplication)? {
+        let running = all.compactMap { browser in
+            NSRunningApplication.runningApplications(withBundleIdentifier: browser.bundleID).first.map { (browser, $0) }
+        }
+        guard !running.isEmpty else { return nil }
+        if let app = NSWorkspace.shared.frontmostApplication, let found = running.first(where: { $0.1 == app }) { return found }
+        let list = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        for info in list where info[kCGWindowLayer as String] as? Int == 0 {
+            if let found = running.first(where: { $0.1.processIdentifier == info[kCGWindowOwnerPID as String] as? pid_t }) { return found }
+        }
+        return running.first
+    }
+}
+
 @MainActor
 enum PageCapture {
-    static let safari = "com.apple.Safari"
     /// The tallest picture it makes, in points; a page that goes on
     /// further (or for ever) is cut there.
     static let tallest: CGFloat = 24_000
@@ -36,21 +80,20 @@ enum PageCapture {
     /// Time for a page to draw, and load what it loads as you scroll.
     private static let settle: Duration = .milliseconds(350)
 
-    static var safariIsOpen: Bool {
-        !NSRunningApplication.runningApplications(withBundleIdentifier: safari).isEmpty
-    }
+    static var browserIsOpen: Bool { Browser.front != nil }
 
-    /// Captures the page in Safari's front window and saves it where your
-    /// screenshots go. Returns the file.
+    /// Captures the page in the front browser window and saves it where
+    /// your screenshots go. Returns the file.
     static func capture() async throws -> URL {
-        guard let app = NSRunningApplication.runningApplications(withBundleIdentifier: safari).first else { throw PageCaptureProblem.noPage }
-        guard await mayControlSafari() else { throw PageCaptureProblem.notAllowed }
+        guard let (browser, app) = Browser.front else { throw PageCaptureProblem.noPage }
+        self.browser = browser
+        guard await mayControl(browser) else { throw PageCaptureProblem.notAllowed(browser) }
         guard CGPreflightScreenCaptureAccess() else {
             CGRequestScreenCaptureAccess()
             throw PageCaptureProblem.noScreenRecording
         }
         // In front, so it draws as it scrolls.
-        try script("tell application id \"\(safari)\" to activate")
+        try script("tell application id \"\(browser.bundleID)\" to activate")
         try await Task.sleep(for: settle)
 
         let start = try measure()
@@ -103,13 +146,17 @@ enum PageCapture {
         return try save(image, title: start.title)
     }
 
-    // MARK: Safari
+    // MARK: The browser
 
-    /// Asks once for Droppy to control Safari, off the main thread, since
-    /// the question waits for you.
-    private static func mayControlSafari() async -> Bool {
-        await Task.detached {
-            let target = NSAppleEventDescriptor(bundleIdentifier: "com.apple.Safari")
+    /// The one being captured.
+    private static var browser = Browser.all[0]
+
+    /// Asks once for Droppy to control the browser, off the main thread,
+    /// since the question waits for you.
+    private static func mayControl(_ browser: Browser) async -> Bool {
+        let id = browser.bundleID
+        return await Task.detached {
+            let target = NSAppleEventDescriptor(bundleIdentifier: id)
             guard let desc = target.aeDesc else { return false }
             return AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, true) == noErr
         }.value
@@ -121,8 +168,8 @@ enum PageCapture {
         guard let result = NSAppleScript(source: source)?.executeAndReturnError(&error) else {
             let number = error?[NSAppleScript.errorNumber] as? Int
             let message = error?[NSAppleScript.errorMessage] as? String ?? ""
-            if number == -1743 { throw PageCaptureProblem.notAllowed }
-            if message.localizedCaseInsensitiveContains("JavaScript") { throw PageCaptureProblem.noJavaScript }
+            if number == -1743 { throw PageCaptureProblem.notAllowed(browser) }
+            if message.localizedCaseInsensitiveContains("JavaScript") { throw PageCaptureProblem.noJavaScript(browser) }
             if number == -1719 || number == -1728 || number == -600 { throw PageCaptureProblem.noPage }
             throw PageCaptureProblem.failed
         }
@@ -133,7 +180,7 @@ enum PageCapture {
     @discardableResult
     private static func run(_ javaScript: String) throws -> String {
         let quoted = javaScript.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        return try script("tell application id \"\(safari)\" to do JavaScript \"\(quoted)\" in current tab of front window")
+        return try script(browser.script(quoted))
     }
 
     private struct Place: Decodable {
@@ -267,7 +314,7 @@ enum PageCapture {
         var name = title.components(separatedBy: CharacterSet(charactersIn: "/:\\\n\r\t")).joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
         if name.count > 60 { name = String(name.prefix(60)).trimmingCharacters(in: .whitespaces) + "…" }
-        if name.isEmpty { name = "Safari page" }
+        if name.isEmpty { name = "\(browser.name) page" }
         let url = folder.appendingPathComponent("\(name) \(format.string(from: Date())).png")
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { throw PageCaptureProblem.failed }
         CGImageDestinationAddImage(destination, image, nil)

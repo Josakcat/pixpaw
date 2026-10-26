@@ -652,6 +652,253 @@ canvas(Int(W), Int(H), "Screenshot-14.png") { ctx in
     label("To your shelf", at: CGPoint(x: carrier.x + 10 * big, y: carrier.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
 }
 
+// MARK: For 15 and 16
+
+func dustCloud(seed: Int) -> [[UInt32]] {
+    var random = SeededRandom(seed: UInt64(seed + 1) * 2_654_435_761)
+    let w = 54, h = 36
+    var cloud = [[Bool]](repeating: [Bool](repeating: false, count: w), count: h)
+    // Puffs along the cloud, the middle ones biggest.
+    let puffs: [(x: Double, y: Double, r: Double)] = [(8, 10, 6.5), (15, 15, 8.5), (23, 17, 9.5), (31, 15, 8.5), (38, 10, 6.5), (23, 9, 8), (14, 7, 5.5), (32, 7, 5.5)]
+    for puff in puffs {
+        let cx = puff.x + 4 + random.next(in: -1.6...1.6), cy = puff.y + 6 + random.next(in: -1.2...1.2), r = puff.r + random.next(in: -0.8...0.8)
+        for y in 0..<h { for x in 0..<w where cloud[y][x] == false {
+            let dx = Double(x) + 0.5 - cx, dy = Double(y) + 0.5 - cy
+            if dx * dx + dy * dy <= r * r { cloud[y][x] = true }
+        } }
+    }
+    let light: UInt32 = 0xF3EEE6, shade: UInt32 = 0xD8CEC1, line: UInt32 = 0x3A3330
+    var pixels = [UInt32](repeating: 0, count: w * h)
+    for y in 0..<h { for x in 0..<w where cloud[y][x] {
+        let edge = [(0, 1), (0, -1), (1, 0), (-1, 0)].contains { dx, dy in
+            let nx = x + dx, ny = y + dy
+            return nx < 0 || ny < 0 || nx >= w || ny >= h || !cloud[ny][nx]
+        }
+        // Rows count from the top; the lower third is in shadow.
+        pixels[y * w + x] = edge ? line : (y >= h * 2 / 3 ? shade : light)
+    } }
+    // A few swirls inside.
+    for _ in 0..<3 {
+        let x = Int(random.next(in: 14...38)), y = Int(random.next(in: 15...26))
+        for i in 0..<3 where cloud[y][x + i] { pixels[y * w + x + i] = shade }
+    }
+    func set(_ x: Int, _ y: Int, _ color: UInt32, overCloud: Bool = true) {
+        guard x >= 0, y >= 0, x < w, y < h, overCloud || !cloud[y][x] else { return }
+        pixels[y * w + x] = color
+    }
+    // Legs flailing out of the top and the sides, one in each coat.
+    for (i, coat) in [UInt32(0xF0A040), 0xA4A4B0].enumerated() {
+        if random.next(in: 0...1) < 0.55 {
+            let x = Int(random.next(in: 16...36))
+            guard let top = (0..<h).first(where: { cloud[$0][x] }) else { continue }
+            for d in 1...3 {
+                set(x - 1, top - d, line); set(x, top - d, coat); set(x + 1, top - d, coat); set(x + 2, top - d, line)
+            }
+            set(x, top - 4, line); set(x + 1, top - 4, line)
+        } else {
+            let y = Int(random.next(in: 14...25))
+            let right = i == 1
+            guard let edge = right ? (0..<w).reversed().first(where: { cloud[y][$0] }) : (0..<w).first(where: { cloud[y][$0] }) else { continue }
+            let step = right ? 1 : -1
+            for d in 1...3 {
+                let x = edge + d * step
+                set(x, y - 1, line); set(x, y, coat); set(x, y + 1, coat); set(x, y + 2, line)
+            }
+            let tip = edge + 4 * step
+            set(tip, y, line); set(tip, y + 1, line)
+        }
+    }
+    // Stars flying off, up and out.
+    let star: [(Int, Int)] = [(0, -1), (-1, 0), (0, 0), (1, 0), (0, 1)]
+    for i in 0..<3 {
+        let side = i % 2 == 0 ? -1.0 : 1.0
+        let x = Int(27 + side * random.next(in: 18...24)), y = Int(random.next(in: 2...12))
+        for (dx, dy) in star { set(x + dx, y + dy, i == 2 ? 0xFFFFFF : 0xFFD23F, overCloud: false) }
+    }
+    // A paw poking out of the top now and then.
+    if seed % 3 == 1 {
+        let x = Int(random.next(in: 18...34))
+        if let top = (0..<h).first(where: { cloud[$0][x] }) {
+            for (dx, dy) in [(0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (0, 3), (2, 3)] {
+                set(x + dx, top - dy, dy == 3 ? line : 0xFFFFFF)
+            }
+        }
+    }
+    return (0..<h).map { y in Array(pixels[(y * w)..<(y * w + w)]) }
+}
+
+/// The same jostle every time, so the frames are made once.
+struct SeededRandom {
+    private var state: UInt64
+    init(seed: UInt64) { state = seed | 1 }
+    mutating func next(in range: ClosedRange<Double>) -> Double {
+        state ^= state << 13; state ^= state >> 7; state ^= state << 17
+        return range.lowerBound + Double(state % 10_000) / 10_000 * (range.upperBound - range.lowerBound)
+    }
+}
+
+let frisbeeRows = [
+        "..oooooo..",
+            ".oRRRRRRo.",
+            "oRRWWWWRRo",
+            ".oooooooo."
+]
+let frisbeeColors: [Character: UInt32] = ["R": 0xE8453C, "W": 0xF7A49E, "o": 0x2A2420]
+
+let carrotRows = [
+        "..gg.g",
+            "...gg.",
+            "..oOo.",
+            ".oOOo.",
+            ".oOOo.",
+            ".oOo..",
+            "oOOo..",
+            "oOo...",
+            "oo...."
+]
+let carrotColors: [Character: UInt32] = ["g": 0x4CAF50, "O": 0xF28C28, "o": 0x2A2420]
+
+let watermelonRows = [
+        "..oooooo..",
+            ".oGgGgGgo.",
+            "oGgGgGgGgo",
+            "oGgGgGgGgo",
+            "oGgGgGgGgo",
+            ".oGgGgGgo.",
+            "..oooooo.."
+]
+let watermelonColors: [Character: UInt32] = ["G": 0x2E8B3A, "g": 0x6CC46A, "o": 0x2A2420]
+
+/// Claude's question on the card over the pet: header, question, the thing
+/// it's about, the answers as buttons and the way out; tail down at `tip`.
+func askCard(_ ctx: CGContext, header: String, title: String, detail: String?, buttons: [String], tip: CGPoint, scale s: CGFloat) {
+    let width = 250 * s, pad = 10 * s
+    let headerFont = NSFont.systemFont(ofSize: 10.5 * s, weight: .semibold).rounded
+    let titleFont = NSFont.systemFont(ofSize: 12.5 * s, weight: .semibold).rounded
+    let codeFont = NSFont.monospacedSystemFont(ofSize: 11 * s, weight: .regular)
+    let buttonFont = NSFont.systemFont(ofSize: 11.5 * s, weight: .semibold).rounded
+    let linkFont = NSFont.systemFont(ofSize: 10 * s, weight: .medium).rounded
+    var height = 8 * s + 15 * s + 6 * s + 17 * s + 6 * s + 26 * s + 6 * s + 14 * s + 14 * s
+    if detail != nil { height += 22 * s + 6 * s }
+    let body = CGRect(x: tip.x - width / 2, y: tip.y - 6 * s - height + 6 * s, width: width, height: height - 6 * s)
+    let path = NSBezierPath(roundedRect: body, xRadius: 10 * s, yRadius: 10 * s)
+    path.move(to: CGPoint(x: tip.x - 6 * s, y: body.maxY - 1)); path.line(to: tip); path.line(to: CGPoint(x: tip.x + 6 * s, y: body.maxY - 1))
+    rgb(0xFFFFFF).setFill(); path.fill()
+    rgb(0x1F1F1F).setStroke(); path.lineWidth = 2 * s; path.stroke()
+    var y = body.minY + 8 * s
+    let x = body.minX + pad
+    symbol("hand.raised.fill", in: CGRect(x: x, y: y + 1 * s, width: 12 * s, height: 12 * s), color: rgb(0x595959))
+    (header as NSString).draw(at: CGPoint(x: x + 16 * s, y: y), withAttributes: [.font: headerFont, .foregroundColor: rgb(0x595959)])
+    y += 15 * s + 6 * s
+    (title as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: titleFont, .foregroundColor: rgb(0x1A1A1A)])
+    y += 17 * s + 6 * s
+    if let detail {
+        let box = CGRect(x: x, y: y, width: width - 2 * pad, height: 22 * s)
+        rgb(0xEDEDED).setFill(); NSBezierPath(roundedRect: box, xRadius: 5 * s, yRadius: 5 * s).fill()
+        (detail as NSString).draw(at: CGPoint(x: x + 6 * s, y: y + 4 * s), withAttributes: [.font: codeFont, .foregroundColor: rgb(0x1A1A1A)])
+        y += 22 * s + 6 * s
+    }
+    var bx = x
+    for (i, title) in buttons.enumerated() {
+        let warns = title.lowercased().contains("deny")
+        let size = (title as NSString).size(withAttributes: [.font: buttonFont])
+        let capsule = CGRect(x: bx, y: y, width: size.width + 18 * s, height: 24 * s)
+        (i == 0 ? rgb(0x4545F5) : rgb(0xE6E6E6)).setFill()
+        NSBezierPath(roundedRect: capsule, xRadius: 12 * s, yRadius: 12 * s).fill()
+        (title as NSString).draw(at: CGPoint(x: bx + 9 * s, y: y + 12 * s - size.height / 2),
+                                 withAttributes: [.font: buttonFont, .foregroundColor: i == 0 ? rgb(0xFFFFFF) : warns ? rgb(0xBF261F) : rgb(0x1A1A1A)])
+        bx = capsule.maxX + 6 * s
+    }
+    y += 26 * s + 6 * s
+    ("Answer in Claude instead" as NSString).draw(at: CGPoint(x: x, y: y), withAttributes: [.font: linkFont, .foregroundColor: rgb(0x737373)])
+}
+
+// 15. Ask your pet: Claude's question comes over on a card.
+canvas(Int(W), Int(H), "Screenshot-15.png") { ctx in
+    desktop(ctx, W, H, title: "Ask your pet", subtitle: "When Claude Code needs a yes or an answer, your pet brings it over and reads it out.")
+    // Claude Code, waiting on you.
+    let term = CGRect(x: 70, y: 250, width: 640, height: 400)
+    ctx.saveGState()
+    ctx.setShadow(offset: CGSize(width: 0, height: 12), blur: 30, color: rgb(0x000000, 0.35).cgColor)
+    ctx.setFillColor(rgb(0x1C1C21).cgColor)
+    ctx.addPath(CGPath(roundedRect: term, cornerWidth: 16, cornerHeight: 16, transform: nil)); ctx.fillPath()
+    ctx.restoreGState()
+    for (i, color) in [0xFF5F57, 0xFEBC2E, 0x28C840].enumerated() {
+        ctx.setFillColor(rgb(UInt32(color)).cgColor)
+        ctx.fillEllipse(in: CGRect(x: term.minX + 20 + CGFloat(i) * 24, y: term.minY + 19, width: 14, height: 14))
+    }
+    let mono = { (size: CGFloat) in NSFont.monospacedSystemFont(ofSize: size, weight: .regular) }
+    let lines: [(String, UInt32)] = [("> add a dark mode to the shop", 0xFFFFFF), ("", 0), ("⏺ Updated 4 files", 0xB9B9C6), ("⏺ Claude wants to run:", 0xD6A35C),
+                                     ("    npm test", 0xFFFFFF), ("", 0), ("  Do you want to proceed?", 0xB9B9C6), ("  ❯ 1. Yes", 0x8E8EF0), ("    2. No", 0xB9B9C6)]
+    for (i, line) in lines.enumerated() where !line.0.isEmpty {
+        (line.0 as NSString).draw(at: CGPoint(x: term.minX + 30, y: term.minY + 66 + CGFloat(i) * 34), withAttributes: [.font: mono(21), .foregroundColor: rgb(line.1)])
+    }
+    // The pet with the card over its head.
+    let me = CGPoint(x: 1060, y: floorY)
+    cat(ctx, "sit", feet: me, px: 9)
+    askCard(ctx, header: "Claude · shop", title: "Run this command?", detail: "npm test", buttons: ["Allow", "Always allow", "Deny"],
+            tip: CGPoint(x: me.x + 14.5 * 9, y: me.y - 17.5 * 9), scale: 2.1)
+    symbol("speaker.wave.2.fill", in: CGRect(x: me.x + 200, y: me.y - 120, width: 40, height: 40), color: rgb(0xFFE08A))
+    label("Click to answer", at: CGPoint(x: me.x + 90, y: me.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+    label("Away from the Mac? Claude asks you on your phone instead.", at: CGPoint(x: term.midX, y: term.maxY + 24), size: 22, weight: .medium,
+          color: rgb(0xFFFFFF, 0.8), centered: true)
+}
+
+// 16. Playtime, their way: a toy for every animal, and play-fights.
+canvas(Int(W), Int(H), "Screenshot-16.png") { ctx in
+    desktop(ctx, W, H, title: "Playtime, their way", subtitle: "A toy of its own for every animal, fetch for the dogs, and the odd play-fight.")
+    let big: CGFloat = 10
+
+    // A frisbee, thrown for the dog.
+    let dog = CGPoint(x: 70, y: floorY)
+    let arc = CGMutablePath()
+    arc.move(to: CGPoint(x: dog.x + 160, y: floorY - 120))
+    arc.addQuadCurve(to: CGPoint(x: dog.x + 330, y: floorY - 330), control: CGPoint(x: dog.x + 200, y: floorY - 330))
+    ctx.addPath(arc)
+    ctx.setStrokeColor(rgb(0xFFFFFF, 0.55).cgColor); ctx.setLineWidth(6); ctx.setLineCap(.round); ctx.setLineDash(phase: 0, lengths: [2, 22])
+    ctx.strokePath(); ctx.setLineDash(phase: 0, lengths: [])
+    sprite(ctx, frisbeeRows, palette: frisbeeColors, at: CGPoint(x: dog.x + 300, y: floorY - 370), px: big)
+    pet(ctx, "dog", "run1", feet: dog, px: big)
+    label("Frisbee", at: CGPoint(x: dog.x + 10 * big, y: dog.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // A carrot dangling from the pointer for the rabbit.
+    let rabbit = CGPoint(x: 520, y: floorY)
+    let pointer = CGPoint(x: rabbit.x + 250, y: floorY - 380)
+    // The carrot on a string from the pointer.
+    ctx.setStrokeColor(rgb(0xFFFFFF, 0.8).cgColor); ctx.setLineWidth(3)
+    ctx.move(to: CGPoint(x: pointer.x + 2, y: pointer.y + 4)); ctx.addLine(to: CGPoint(x: pointer.x + 2, y: pointer.y + 110)); ctx.strokePath()
+    sprite(ctx, carrotRows, palette: carrotColors, at: CGPoint(x: pointer.x - 22, y: pointer.y + 100), px: big)
+    let cursor = CGMutablePath()
+    for (i, point) in [(0, 0), (0, 34), (8, 26), (14, 40), (20, 37), (14, 24), (25, 24)].enumerated() {
+        let p = CGPoint(x: pointer.x + CGFloat(point.0) * 1.6, y: pointer.y + CGFloat(point.1) * 1.6)
+        if i == 0 { cursor.move(to: p) } else { cursor.addLine(to: p) }
+    }
+    cursor.closeSubpath()
+    ctx.addPath(cursor); ctx.setFillColor(rgb(0x000000).cgColor); ctx.fillPath()
+    ctx.addPath(cursor); ctx.setStrokeColor(rgb(0xFFFFFF).cgColor); ctx.setLineWidth(3); ctx.setLineJoin(.round); ctx.strokePath()
+    pet(ctx, "rabbit", "crouch1", feet: rabbit, px: big)
+    label("Carrot", at: CGPoint(x: rabbit.x + 10 * big, y: rabbit.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // A watermelon to roll about for the hippo.
+    let hippo = CGPoint(x: 900, y: floorY)
+    pet(ctx, "hippo", "sit", feet: hippo, px: big)
+    sprite(ctx, watermelonRows, palette: watermelonColors, at: CGPoint(x: hippo.x + 200, y: floorY - CGFloat(watermelonRows.count) * big), px: big)
+    label("Watermelon", at: CGPoint(x: hippo.x + 150, y: hippo.y + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    // Two friends in a cloud of dust.
+    let cloudPx: CGFloat = 7
+    let cloud = dustCloud(seed: 4)
+    let cloudOrigin = CGPoint(x: 1200, y: floorY - CGFloat(cloud.count) * cloudPx + 3 * cloudPx)
+    for (y, row) in cloud.enumerated() {
+        for (x, color) in row.enumerated() where color != 0 {
+            ctx.setFillColor(rgb(color).cgColor)
+            ctx.fill(CGRect(x: cloudOrigin.x + CGFloat(x) * cloudPx, y: cloudOrigin.y + CGFloat(y) * cloudPx, width: cloudPx, height: cloudPx))
+        }
+    }
+    bubble(ctx, "Rematch?", symbol: "sparkles", tip: CGPoint(x: cloudOrigin.x + 27 * cloudPx, y: cloudOrigin.y + 2 * cloudPx), scale: 2)
+    label("Play-fights", at: CGPoint(x: cloudOrigin.x + 27 * cloudPx, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in
     ctx.setFillColor(rgb(0x4446F4).cgColor)

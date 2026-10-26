@@ -54,13 +54,17 @@ enum CatWords {
         CatLine(text: "Joining \(title)…", symbol: "video.fill", seconds: 3)
     }
     static let noMeeting = CatLine(text: "No call to join right now.", symbol: "video.slash", seconds: 3)
-    /// Capturing the whole page in Safari, and what can stop it.
-    static let capturingPage = CatLine(text: "Hold still, Safari! Scrolling all the way down…", symbol: "camera.viewfinder", seconds: 3)
+    /// An agent's question, answered with a click.
+    static func askAnswered(_ agent: String, _ choice: String) -> CatLine {
+        CatLine(text: "Told \(agent): \(choice)", symbol: "checkmark.circle.fill", seconds: 2)
+    }
+    /// Capturing the whole page in the browser, and what can stop it.
+    static let capturingPage = CatLine(text: "Hold still! Scrolling all the way down…", symbol: "camera.viewfinder", seconds: 3)
     static func pageProblem(_ problem: PageCaptureProblem) -> CatLine {
         switch problem {
-        case .noPage: CatLine(text: "Open a page in Safari first.", symbol: "safari", seconds: 4)
-        case .notAllowed: CatLine(text: "Let Droppy control Safari in Privacy & Security → Automation.", symbol: "lock.fill", seconds: 6)
-        case .noJavaScript: CatLine(text: "In Safari, turn on Settings → Developer → Allow JavaScript from Apple Events, then ask again.", symbol: "safari", seconds: 7)
+        case .noPage: CatLine(text: "Open a page in Safari, Chrome or Arc first.", symbol: "safari", seconds: 4)
+        case .notAllowed(let browser): CatLine(text: "Let Droppy control \(browser.name) in Privacy & Security → Automation.", symbol: "lock.fill", seconds: 6)
+        case .noJavaScript(let browser): CatLine(text: "In \(browser.name), turn on \(browser.setting), then ask again.", symbol: "safari", seconds: 7)
         case .noScreenRecording: CatLine(text: "Droppy needs Screen Recording in Privacy & Security for that.", symbol: "lock.fill", seconds: 6)
         case .failed: CatLine(text: "That page wouldn't hold still. Try again?", symbol: "exclamationmark.triangle.fill", seconds: 4)
         }
@@ -86,6 +90,13 @@ enum CatWords {
     }
     static let shelved = CatLine(text: "On your shelf!", symbol: "checkmark.circle.fill", seconds: 2)
     static let noShelf = CatLine(text: "I couldn't reach your shelf.", symbol: "exclamationmark.triangle.fill", seconds: 3)
+    /// Back with the ball, and a cat asked to fetch.
+    static let fetched = ["Again! Again!", "Throw it again!", "Got it!", "Best game ever!"]
+    static let catFetch = ["Fetch? I'm a cat.", "You get it.", "I'll pass."]
+    /// Asked (by a link) to play a game it doesn't play.
+    static let notMyGame = ["Not my kind of game.", "I'll sit this one out.", "Hmm, no thanks."]
+    /// Out of a play-fight with its friend.
+    static let scuffled = ["Rematch?", "I totally won.", "Best of three?", "Just playing!"]
     /// The sign clicked done.
     static let signDone = ["Done! Nice work.", "One less thing!", "Ta-da!", "Crossed off!"]
     /// Up the side of the screen.
@@ -455,7 +466,7 @@ final class ReturnWatcher {
         onReturn()
     }
 
-    private static var screenIsLocked: Bool {
+    static var screenIsLocked: Bool {
         guard let session = CGSessionCopyCurrentDictionary() as? [String: Any] else { return false }
         return (session["CGSSessionScreenIsLocked"] as? Bool) ?? false
     }

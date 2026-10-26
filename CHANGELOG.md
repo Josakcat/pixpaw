@@ -1,5 +1,17 @@
 # Changelog
 
+## [1.8.0] - 2026-10-26
+
+Answer Claude from your pet, a toy of its own for every animal, fetch, play-fights, and whole-page capture in Chrome and friends.
+
+### Added
+
+- Answer Claude from your pet. When Claude Code asks to run a command, edit a file or open a page, or asks you a question with a few answers, your pet comes over, reads it out and holds up the choices on a card: Allow, Always allow, Deny, or the answers to the question. Click one and Claude carries on; ignore it, or click "Answer in Claude instead", and Claude asks you as usual. When you're away from the Mac (no keyboard or mouse for a minute, or the screen locked) it hands questions straight back, so Remote Control can ask you on your phone without waiting. Needs the new `pixpaw-ask.py` hook (see the README). Settings → What it tells you → Answer from your pet, and Read questions aloud.
+- Play-fights. Now and then your pet runs at its friend and the two roll about in a cartoon cloud of dust, legs and stars flying, then pop out as if nothing happened. Just playing; nobody gets hurt.
+- Fetch. Choose Play → Fetch and your pet runs after a tennis ball, brings it back and drops it at your feet: click the ball to throw it again.
+- Each animal has its own games, and a toy of its own. The Play menu shows only what it plays, its own toy first: a toy mouse for the cat, a frisbee for the dog, a big bone for the dinosaur, a sunflower seed for the hamster, a carrot for the rabbit, a wiggly worm for the chicken, a bell for the parrot, a flower for the bee, fresh leaves for the giraffe, a watermelon for the hippo and a little fish for the shark. A cat won't fetch; a dog will. Asked by a link to play something else, it politely says no.
+- Capture a whole page in Chrome, Arc, Edge, Brave and Vivaldi too, whichever browser is in front. Chrome and the others need View → Developer → Allow JavaScript from Apple Events.
+
 ## [1.7.0] - 2026-10-26
 
 Join your calls with a click, count down to the days ahead, capture a whole Safari page, and a tidier Settings page.

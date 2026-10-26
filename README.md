@@ -29,7 +29,8 @@ your desktop and talks to you. A Droplet for
 - Six coats, and an optional friend of any kind that sits with it and plays tag.
 - Hold a dragged file over it and drop it: it carries the file to Droppy's shelf.
 - Your to-do list on a little sign: add notes with Control-Option-N, it holds up the first until you click it done (a star), then the next. A note with a time ("in 10 min", "at 5pm") brings it over to remind you, and a countdown ("Trip to Japan · 12 days") rides along under it.
-- Captures a whole Safari page for you: it scrolls the page top to bottom, joins the screens into one tall PNG and carries it to Droppy's shelf. Needs Safari's Settings → Developer → Allow JavaScript from Apple Events, and Screen Recording for Droppy.
+- Captures a whole web page for you, in Safari, Chrome, Arc, Edge, Brave or Vivaldi: it scrolls the page top to bottom, joins the screens into one tall PNG and carries it to Droppy's shelf. Needs the browser to allow JavaScript from Apple Events (Safari: Settings → Developer; the others: View → Developer), and Screen Recording for Droppy.
+- Plays fetch: it runs after a tennis ball and brings it back, and now and then play-fights its friend in a cartoon cloud of dust. Each animal has its own games in the Play menu and a toy of its own: a toy mouse, a frisbee, a carrot, a watermelon… (a cat won't fetch; a dog will).
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
   between perches), a shark (swims through the air), a dinosaur, a dog, a
   hamster, a chicken, a giraffe, a hippo or a rabbit, each with its own sounds. Switch from the portrait on the shelf or in Settings.
@@ -79,7 +80,8 @@ your desktop and talks to you. A Droplet for
 | ![Healthy breaks](Assets/Screenshot-8.png) | ![Draw your own](Assets/Screenshot-9.png) |
 | ![Full of beans](Assets/Screenshot-10.png) | ![Right beside you](Assets/Screenshot-11.png) |
 | ![Getting things done](Assets/Screenshot-12.png) | ![Click to join](Assets/Screenshot-13.png) |
-| ![The whole page](Assets/Screenshot-14.png) | |
+| ![The whole page](Assets/Screenshot-14.png) | ![Ask your pet](Assets/Screenshot-15.png) |
+| ![Playtime, their way](Assets/Screenshot-16.png) | |
 
 Everything runs on your Mac. Notification text is shown and forgotten;
 nothing is stored or sent anywhere.
@@ -127,13 +129,28 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
   `notify` keeps working.
 - **Cursor**: `beforeSubmitPrompt` → working, `stop` → done.
 
+**Answer from your pet.** With `Tools/agent-hooks/pixpaw-ask.py` as a Claude Code
+hook, a permission prompt (run this command? edit this file?) or a question with
+a few answers comes to your pet: it reads it out and holds up the choices on a
+card, and the one you click goes back to Claude. When the pet isn't out, you're
+away from the Mac (no input for a minute, or the screen locked: handy with
+Remote Control, which then asks you on your phone at once), or you don't
+answer within PIXPAW_ASK_WAIT seconds (110), Claude asks you as usual.
+
+```json
+"PermissionRequest": [{"hooks": [{"type": "command", "timeout": 120,
+  "command": "PIXPAW_SCHEME=droppy python3 /path/to/Tools/agent-hooks/pixpaw-ask.py"}]}],
+"PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "timeout": 120,
+  "command": "PIXPAW_SCHEME=droppy python3 /path/to/Tools/agent-hooks/pixpaw-ask.py"}]}]
+```
+
 ## Links for scripts and Shortcuts
 
 `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…`): `show`, `hide`,
-`come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|stop`, `wear?hat=…&collar=…`,
+`come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|stop`, `wear?hat=…&collar=…`,
 `quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
 `note?text=…`, `join` (your next video call), `countdown?title=…&date=2026-12-24`,
-`capture` (the whole Safari page), `roam?mode=anywhere|floor|windows`,
+`capture` (the whole page in your browser), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
 
 ## Art

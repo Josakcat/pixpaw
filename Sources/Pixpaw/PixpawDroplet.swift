@@ -4,6 +4,7 @@
 //
 
 import AppKit
+import AVFoundation
 import Combine
 import DroppyKit
 import IOKit.pwr_mgt
@@ -75,6 +76,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let tellsMusic = "tellsMusic"
         static let tellsAgents = "tellsAgents"
         static let awakeForAgents = "awakeForAgents"
+        static let answersAsks = "agentAsks"
+        static let readsAsksAloud = "agentAsksAloud"
         static let tellsLevels = "tellsLevels"
         static let tellsHeadphones = "tellsHeadphones"
         static let autoQuiet = "quietDuringCalls"
@@ -134,6 +137,15 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var tellsAgents = true
     /// Keep the Mac from sleeping while a coding agent works.
     @Published private(set) var awakeForAgents = false
+    /// An agent's questions come to the pet, with buttons to answer.
+    @Published private(set) var answersAsks = true
+    /// And it reads them out.
+    @Published private(set) var readsAsksAloud = true
+    private var askTimer: Timer?
+    private var askQueue: [AgentAsk] = []
+    private var askShownAt = Date.distantPast
+    private var aliveAt = Date.distantPast
+    private let voice = AVSpeechSynthesizer()
     private var awakeAssertion: IOPMAssertionID?
     @Published private(set) var tellsLevels = true
     @Published private(set) var tellsHeadphones = true
@@ -236,7 +248,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.homeOn = prefs.value(forKey: Key.homeOn, default: true)
         cat.onPersist = { [weak self] in self?.persist() }
         cat.onPhoto = { [weak self] in self?.takePhoto() }
-        cat.onCapturePage = { [weak self] in self?.captureSafariPage() }
+        cat.onCapturePage = { [weak self] in self?.capturePage() }
         cat.onFocus = { [weak self] in self?.toggleFocus() }
         // Counted from the first time the droplet ran, which its folder
         // remembers for anyone who had it before the tally existed.
@@ -276,6 +288,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         tellsMusic = prefs.value(forKey: Key.tellsMusic, default: true)
         tellsAgents = prefs.value(forKey: Key.tellsAgents, default: true)
         awakeForAgents = prefs.value(forKey: Key.awakeForAgents, default: false)
+        answersAsks = prefs.value(forKey: Key.answersAsks, default: true)
+        readsAsksAloud = prefs.value(forKey: Key.readsAsksAloud, default: true)
         tellsLevels = prefs.value(forKey: Key.tellsLevels, default: true)
         tellsHeadphones = prefs.value(forKey: Key.tellsHeadphones, default: true)
         quietsAutomatically = prefs.value(forKey: Key.autoQuiet, default: true)
@@ -292,6 +306,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         // hours (agents only say so when a run starts), is assumed gone.
         agentSweep = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.sweepAgents() }
+        }
+        askTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.tickAsks() }
         }
         refreshPermissionState()
         applyQuiet()
@@ -328,8 +345,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         ) { [weak self] in
             self?.askForNote()
         }
-        host.shortcuts.register(id: "capture-page", title: "Capture the whole Safari page", defaultShortcut: nil) { [weak self] in
-            self?.captureSafariPage()
+        host.shortcuts.register(id: "capture-page", title: "Capture the whole page in your browser", defaultShortcut: nil) { [weak self] in
+            self?.capturePage()
         }
         host.shortcuts.register(id: "join-meeting", title: "Join your next video call", defaultShortcut: nil) { [weak self] in
             self?.joinNextMeeting()
@@ -404,6 +421,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         stopAlerts()
         agentSweep?.invalidate()
         agentSweep = nil
+        askTimer?.invalidate()
+        askTimer = nil
+        skipAllAsks()
+        voice.stopSpeaking(at: .immediate)
         agents = [:]
         refreshKeepAwake()
         moodWatch?.cancel()
@@ -780,9 +801,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         PetPhoto.save(data, named: "\(cat.kind.title) by Pixpaw.png")
     }
 
-    /// The whole page in Safari's front window, top to bottom, saved where
+    /// The whole page in the front browser window, top to bottom, saved where
     /// your screenshots go; the pet takes it to the shelf.
-    func captureSafariPage() {
+    func capturePage() {
         guard !capturingPage else { return }
         capturingPage = true
         cat?.say(CatWords.capturingPage)
@@ -1446,11 +1467,105 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             cat?.say(CatLine(text: left.map { "\(CatWords.agentDone(name)) \($0)" } ?? CatWords.agentDone(name), symbol: "checkmark.circle.fill"))
             cat?.celebrate()
         case .waiting:
+            // Already over its head with the buttons to answer.
+            if cat?.askShown?.agent == name { break }
             cat?.say(CatLine(text: detail.map { "\(CatWords.agentWaiting(name)): \($0)" } ?? CatWords.agentWaiting(name), symbol: "hand.raised.fill"))
             // Comes over to get your attention.
             cat?.callOver()
         case .error:
             cat?.say(CatLine(text: CatWords.agentFailed(name), symbol: "exclamationmark.triangle.fill"))
+        }
+    }
+
+    // MARK: Agents asking
+
+    func setAnswersAsks(_ on: Bool) {
+        answersAsks = on
+        host?.preferences.setValue(on, forKey: Key.answersAsks)
+        if !on { skipAllAsks() }
+        tickAsks()
+    }
+
+    func setReadsAsksAloud(_ on: Bool) {
+        readsAsksAloud = on
+        host?.preferences.setValue(on, forKey: Key.readsAsksAloud)
+        if !on { voice.stopSpeaking(at: .immediate) }
+    }
+
+    /// A question an agent's hook left (`ask?id=…`): the pet comes over,
+    /// says it and holds up the answers. One at a time; the rest wait.
+    private func handleAsk(id: String) {
+        guard let ask = AgentAsk.load(id: id) else { return }
+        guard tellsAgents, answersAsks, let cat, isOut, Self.atTheMac else { return ask.answer(AgentAsk.skip) }
+        guard cat.askShown?.id != ask.id, !askQueue.contains(where: { $0.id == ask.id }) else { return }
+        askQueue.append(ask)
+        if cat.askShown == nil { showNextAsk() }
+    }
+
+    private func showNextAsk() {
+        guard let cat else { return }
+        askQueue.removeAll { !$0.isOpen }
+        guard !askQueue.isEmpty else { return cat.showAsk(nil) { _ in } }
+        let ask = askQueue.removeFirst()
+        cat.callOver()
+        cat.showAsk(ask) { [weak self] choice in self?.answer(ask, with: choice) }
+        askShownAt = Date()
+        CatSounds.shared.play(.meow, voice: cat.kind)
+        if readsAsksAloud {
+            let speech = AVSpeechUtterance(string: ask.spoken ?? "\(ask.agent) needs you. \(ask.title)")
+            speech.voice = AVSpeechSynthesisVoice(language: "en-US")
+            voice.stopSpeaking(at: .immediate)
+            voice.speak(speech)
+        }
+    }
+
+    private func answer(_ ask: AgentAsk, with choice: String) {
+        ask.answer(choice)
+        voice.stopSpeaking(at: .immediate)
+        cat?.showAsk(nil) { _ in }
+        if choice != AgentAsk.skip { cat?.say(CatWords.askAnswered(ask.agent, choice)) }
+        showNextAsk()
+    }
+
+    /// Hands every open question back to its agent.
+    private func skipAllAsks() {
+        if let shown = cat?.askShown { shown.answer(AgentAsk.skip) }
+        askQueue.forEach { $0.answer(AgentAsk.skip) }
+        askQueue = []
+        cat?.showAsk(nil) { _ in }
+    }
+
+    /// You're at the Mac: the screen isn't locked and you've touched the
+    /// keyboard or mouse in the last minute. Away (say, driving Claude from
+    /// your phone with Remote Control), questions go straight back to Claude,
+    /// which asks you wherever you are.
+    private static var atTheMac: Bool {
+        !ReturnWatcher.screenIsLocked && CatController.secondsSinceInput() < 60
+    }
+
+    /// Each second: tells the hooks someone is here to answer (or that
+    /// nobody is), and takes down a question its agent stopped asking.
+    private func tickAsks() {
+        let here = tellsAgents && answersAsks && isOut && cat != nil && Self.atTheMac
+        if here {
+            if Date().timeIntervalSince(aliveAt) >= 15 {
+                try? FileManager.default.createDirectory(at: AgentAsk.folder, withIntermediateDirectories: true)
+                try? "\(Date().timeIntervalSince1970)".write(to: AgentAsk.alive, atomically: true, encoding: .utf8)
+                aliveAt = Date()
+            }
+        } else if aliveAt != .distantPast {
+            try? FileManager.default.removeItem(at: AgentAsk.alive)
+            aliveAt = .distantPast
+            skipAllAsks()
+        }
+        // Up a while and you've walked away: back to Claude with it.
+        if let shown = cat?.askShown, shown.isOpen, !Self.atTheMac, Date().timeIntervalSince(askShownAt) >= 20 {
+            skipAllAsks()
+        }
+        if let shown = cat?.askShown, !shown.isOpen {
+            voice.stopSpeaking(at: .immediate)
+            cat?.showAsk(nil) { _ in }
+            showNextAsk()
         }
     }
 
@@ -2036,12 +2151,14 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Volume and brightness", keywords: ["cat", "sound", "volume", "mute", "brightness", "screen"]),
             SettingsSearchEntry(title: "Headphones", keywords: ["cat", "airpods", "bluetooth", "headset", "connect"]),
             SettingsSearchEntry(title: "Screenshots", keywords: ["screenshot", "photo", "pose", "camera"]),
-            SettingsSearchEntry(title: "Capture a whole Safari page", keywords: ["screenshot", "full page", "safari", "capture", "scroll", "web"]),
+            SettingsSearchEntry(title: "Capture a whole web page", keywords: ["screenshot", "full page", "safari", "chrome", "arc", "capture", "scroll", "web"]),
             SettingsSearchEntry(title: "Your birthday", keywords: ["birthday", "party", "confetti", "cake"]),
             SettingsSearchEntry(title: "Good morning", keywords: ["morning", "greeting", "wake", "calendar", "stretch"]),
             SettingsSearchEntry(title: "Welcome back", keywords: ["away", "return", "back", "hello", "greeting", "idle"]),
             SettingsSearchEntry(title: "Late nights", keywords: ["night", "late", "bedtime", "sleep", "nightcap", "midnight"]),
             SettingsSearchEntry(title: "Music", keywords: ["cat", "music", "song", "spotify", "youtube", "video", "dance", "now playing"]),
+            SettingsSearchEntry(title: "Answer from your pet", keywords: ["claude", "permission", "allow", "deny", "question", "agent", "approve"]),
+            SettingsSearchEntry(title: "Read questions aloud", keywords: ["voice", "speak", "speech", "aloud", "agent"]),
             SettingsSearchEntry(title: "Agent updates", keywords: ["cat", "claude", "codex", "cursor", "agent"]),
             SettingsSearchEntry(title: "Keep the Mac awake while agents work", keywords: ["sleep", "awake", "caffeinate", "agent", "claude", "codex"]),
             SettingsSearchEntry(title: "Show beside the notch", keywords: ["cat", "live activity", "status", "notch"]),
@@ -2771,9 +2888,9 @@ private struct PixpawSettings: View {
                     subtitle: "Strikes a pose when you take a screenshot. Found through Spotlight, so no permission is needed.",
                     isOn: Binding(get: { droplet.tellsScreenshots }, set: { droplet.setTells(screenshots: $0) })
                 )
-                DropletControlRow(title: "Capture a whole Safari page",
-                                  infoTip: "Needs Safari's Settings → Developer → Allow JavaScript from Apple Events, and Screen Recording for Droppy. Also from a shortcut you set, or droppy://droplet/pixpaw/capture in Shortcuts.") {
-                    Button("Capture") { droplet.captureSafariPage() }
+                DropletControlRow(title: "Capture a whole web page",
+                                  infoTip: "Safari, Chrome, Arc, Edge, Brave or Vivaldi, whichever is in front. Needs the browser to allow JavaScript from Apple Events (Safari: Settings → Developer; Chrome and the others: View → Developer), and Screen Recording for Droppy. Also from a shortcut you set, or droppy://droplet/pixpaw/capture in Shortcuts.") {
+                    Button("Capture") { droplet.capturePage() }
                         .buttonStyle(DroppyQuietButtonStyle(size: .small))
                 }
                 DropletToggleRow(
@@ -2816,6 +2933,18 @@ private struct PixpawSettings: View {
                     isOn: Binding(get: { droplet.awakeForAgents }, set: { droplet.setAwakeForAgents($0) })
                 )
                 .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
+                    title: "Answer from your pet",
+                    subtitle: "When Claude Code asks to run something or asks you a question, your pet comes over with the choices on a card: click one to answer. Ignore it and Claude asks you as usual. Away from the Mac (no keyboard or mouse for a minute, or the screen locked), questions go straight back to Claude, so Remote Control can ask you on your phone. Needs the pixpaw-ask hook (see the README).",
+                    isOn: Binding(get: { droplet.answersAsks }, set: { droplet.setAnswersAsks($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
+                    title: "Read questions aloud",
+                    subtitle: "Says the question out loud as it comes over, so you hear it from across the room.",
+                    isOn: Binding(get: { droplet.readsAsksAloud }, set: { droplet.setReadsAsksAloud($0) })
+                )
+                .disabled(!droplet.tellsAgents || !droplet.answersAsks)
             }
         }
     }
@@ -2964,11 +3093,12 @@ extension PixpawDroplet: DropletURLHandling {
             cat?.giveTreat()
         case "play":
             if !isOut { setOut(true) }
+            // play?toy=yarn|teaser|laser|ball|mouse|frisbee|…|stop
             switch request.query["toy"]?.lowercased() {
-            case "teaser": cat?.play(.teaser)
-            case "laser": cat?.play(.laser)
             case "stop": cat?.stopPlaying()
-            default: cat?.play(.yarn)
+            case "ball": cat?.play(PetGame.fetch)
+            case let name?: cat?.play(PetGame.allCases.first { $0.rawValue.lowercased() == name } ?? .yarn)
+            case nil: cat?.play(PetGame.yarn)
             }
         case "wear":
             // wear?hat=crown&collar= ; an empty value takes it off.
@@ -2981,7 +3111,9 @@ extension PixpawDroplet: DropletURLHandling {
         case "join":
             joinNextMeeting()
         case "capture":
-            captureSafariPage()
+            capturePage()
+        case "ask":
+            handleAsk(id: request.query["id"] ?? "")
         case "countdown":
             // countdown?title=Trip%20to%20Japan&date=2026-12-24
             let format = DateFormatter()

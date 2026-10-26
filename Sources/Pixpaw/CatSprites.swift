@@ -80,6 +80,25 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
     /// it goes somewhere.
     @MainActor var fliesWhenMoving: Bool { actsLike == .parrot }
 
+    /// The games it plays, in its Play menu: a cat bats yarn and chases the
+    /// teaser and the laser but won't fetch; a dog fetches, and so on.
+    @MainActor var games: [PetGame] {
+        switch actsLike {
+        case .cat: [.mouse, .yarn, .teaser, .laser]
+        case .dog: [.frisbee, .fetch, .yarn, .laser]
+        case .dino: [.bigBone, .fetch, .yarn]
+        case .hamster: [.seed, .yarn, .teaser]
+        case .rabbit: [.carrot, .teaser, .yarn]
+        case .chicken: [.worm, .laser, .teaser]
+        case .parrot: [.bell, .fetch, .teaser]
+        case .bee: [.flower, .laser, .teaser]
+        case .giraffe: [.leaves, .teaser, .yarn]
+        case .hippo: [.watermelon, .yarn, .fetch]
+        case .shark: [.fish, .fetch, .laser]
+        case .own1, .own2, .own3, .own4, .own5: [.yarn, .teaser, .laser]
+        }
+    }
+
     /// Only the cat comes in coats; the others have their own colours.
     var hasCoats: Bool { self == .cat }
 
@@ -89,6 +108,65 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
     /// Where a frame's art is: the cat's under its name, the others' as
     /// "<kind>.<frame>".
     func artKey(_ frame: CatFrame) -> String { self == .cat ? frame.rawValue : "\(rawValue).\(frame.rawValue)" }
+}
+
+/// Something to play with, from the Play menu. Each is played one of four
+/// ways: rolled about and batted like the yarn, dangled from the pointer
+/// like the teaser, chased like the laser dot, or thrown for fetch.
+enum PetGame: String, CaseIterable {
+    case yarn, teaser, laser, fetch
+    case mouse, frisbee, bigBone, seed, carrot, worm, bell, flower, leaves, watermelon, fish
+
+    enum Way { case roll, dangle, chase, fetch }
+
+    var way: Way {
+        switch self {
+        case .yarn, .mouse, .watermelon: .roll
+        case .teaser, .seed, .carrot, .worm, .bell, .flower, .leaves: .dangle
+        case .laser, .fish: .chase
+        case .fetch, .frisbee, .bigBone: .fetch
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .yarn: "Yarn ball"
+        case .teaser: "Feather teaser"
+        case .laser: "Laser pointer"
+        case .fetch: "Fetch"
+        case .mouse: "Toy mouse"
+        case .frisbee: "Frisbee"
+        case .bigBone: "Big bone"
+        case .seed: "Sunflower seed"
+        case .carrot: "Carrot"
+        case .worm: "Wiggly worm"
+        case .bell: "Bell"
+        case .flower: "Flower"
+        case .leaves: "Fresh leaves"
+        case .watermelon: "Watermelon"
+        case .fish: "Little fish"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .yarn: "circle.hexagongrid.fill"
+        case .teaser: "wand.and.stars"
+        case .laser: "smallcircle.filled.circle"
+        case .fetch: "tennisball.fill"
+        case .mouse: "pawprint.fill"
+        case .frisbee: "opticaldisc.fill"
+        case .bigBone: "lizard.fill"
+        case .seed: "allergens"
+        case .carrot: "carrot.fill"
+        case .worm: "scribble"
+        case .bell: "bell.fill"
+        case .flower: "camera.macro"
+        case .leaves: "leaf.fill"
+        case .watermelon: "circle.bottomhalf.filled"
+        case .fish: "fish.fill"
+        }
+    }
 }
 
 enum CatFrame: String, CaseIterable {

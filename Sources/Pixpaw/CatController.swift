@@ -235,7 +235,10 @@ final class CatController: ObservableObject {
     /// Stars earned today, per source and in all, against the daily limits.
     @Published private(set) var starDay: StarDay
     private var lastPetStar = Date.distantPast
-    private enum BuddyPlan { case visit, tag }
+    private enum BuddyPlan { case visit, tag, scuffle }
+    /// Rolling about with its friend in a cloud of dust.
+    private var cloud: DustCloud?
+    private(set) var scuffling = false
     private var buddyPlan: BuddyPlan?
     /// Where the cat is, for the other cat to find it.
     var feet: CGPoint? { panel == nil ? nil : position }
@@ -262,6 +265,8 @@ final class CatController: ObservableObject {
     private let bubble = CatBubble()
     /// A note it holds up on a sign until you click it done.
     private let sign = CatSign()
+    /// A coding agent's question, with its answers, over its head.
+    private let askCard = AskCard()
     /// The sign was clicked: what it said is done.
     /// The sign clicked: whether a note came off it.
     var onSignDone: (() -> Bool)?
@@ -362,6 +367,9 @@ final class CatController: ObservableObject {
         /// Set when the cat actually starts playing, not while it is still
         /// on its way (out of the notch, down from a window).
         var endsAt: Date?
+        /// Its own picture and the same turned round, for an animal's own
+        /// toy; nil for the yarn, teaser and laser.
+        var frames: [CGImage]? = nil
     }
     private var toy: Toy?
     private var swatTicks = 0
@@ -800,6 +808,8 @@ final class CatController: ObservableObject {
         catView?.stopDisplayLink()
         catView = nil
         sign.place(paw: nil)
+        askCard.place(head: nil)
+        endFetch()
         panel?.orderOut(nil)
         panel?.close()
         panel = nil
@@ -1092,6 +1102,7 @@ final class CatController: ObservableObject {
         updateClickThrough(mouse)
         if tick % 3 == 0 { followPerch() }
         stepToy(mouse)
+        if ball != nil, tick % 30 == 0, Date().timeIntervalSince(fetchStarted) > 30 { endFetch() }
         let target = prey(mouse)
 
         switch mood {
@@ -1107,7 +1118,7 @@ final class CatController: ObservableObject {
             if tick % 6 == 0, route?.jump == nil { planChase(to: mouse) }
             if advance(speed: Self.runSpeed) { enter(.sitting) }
         case .walking:
-            if hasPrey { buddyPlan = nil; startHunt(target) } else if toy?.kind == .yarn { buddyPlan = nil; enter(.playing) } else if bowlHasFood { buddyPlan = nil; headToBowl() } else if wantsToChase(mouse) { buddyPlan = nil; startChase(to: mouse) } else if advance(speed: buddyPlan == .tag || busyMac || delivering != nil ? Self.runSpeed : Self.walkSpeed * (lowBattery ? 0.55 : 1)) { arrived() }
+            if hasPrey { buddyPlan = nil; startHunt(target) } else if toy?.kind == .yarn { buddyPlan = nil; enter(.playing) } else if bowlHasFood { buddyPlan = nil; headToBowl() } else if wantsToChase(mouse) { buddyPlan = nil; startChase(to: mouse) } else if advance(speed: buddyPlan == .tag || buddyPlan == .scuffle || fetchRuns || busyMac || delivering != nil ? Self.runSpeed : Self.walkSpeed * (lowBattery ? 0.55 : 1)) { arrived() }
         case .sitting, .grooming:
             if dizzyTicks > 0 {
                 // Sits it out, looking this way and that.
@@ -1170,6 +1181,8 @@ final class CatController: ObservableObject {
         animate()
         glide(from: before)
         placeSign(at: shown)
+        placeAsk(at: shown)
+        placeBall(at: shown)
         bubble.update(anchor: bubbleAnchor())
     }
 
@@ -1204,6 +1217,8 @@ final class CatController: ObservableObject {
             y: glideFrom.y + (position.y - glideFrom.y) * t
         ))
         placeSign(at: shown)
+        placeAsk(at: shown)
+        placeBall(at: shown)
         if bubble.isShowing { bubble.update(anchor: bubbleAnchor()) }
         if let toy {
             toy.panel.setFrameOrigin(toy.kind != .yarn ? Self.spot(of: toy.kind, at: NSEvent.mouseLocation, size: toy.size) : CGPoint(
@@ -1236,6 +1251,170 @@ final class CatController: ObservableObject {
         sign.place(paw: up ? CGPoint(x: point.x + size.width * (facesRight ? 0.8 : 0.2), y: point.y + 8) : nil)
     }
 
+    /// Into a cloud of dust with its friend, if the friend is up for it,
+    /// and out again a couple of seconds later.
+    private func startScuffle(with other: CatController) {
+        guard cloud == nil, let theirs = other.feet, abs(theirs.y - position.y) < 12, other.joinScuffle() else {
+            return enter(.sitting)
+        }
+        let size = CatSprites.catSize
+        let middle = CGPoint(x: (position.x + theirs.x) / 2 + size.width / 2, y: min(position.y, theirs.y))
+        let cloud = DustCloud(bottomCenter: middle)
+        self.cloud = cloud
+        hideForScuffle()
+        cloud.start()
+        CatSounds.shared.play(.meow, voice: kind)
+        DispatchQueue.main.asyncAfter(deadline: .now() + DustCloud.duration) { [weak self, weak other] in
+            MainActor.assumeIsolated {
+                self?.cloud?.stop()
+                self?.cloud = nil
+                other?.endScuffle()
+                self?.endScuffle()
+                if let line = CatWords.scuffled.randomElement() { self?.remark(line) }
+            }
+        }
+    }
+
+    /// The friend joins in when it's sitting about, not busy with anything.
+    func joinScuffle() -> Bool {
+        guard panel != nil, !scuffling, mood == .sitting || mood == .grooming, buddyPlan == nil, !asleepAtHome, !isStretching else { return false }
+        hideForScuffle()
+        return true
+    }
+
+    private func hideForScuffle() {
+        scuffling = true
+        enter(.sitting)
+        stateLength = Int(Self.fps * (DustCloud.duration + 1))
+        panel?.alphaValue = 0
+    }
+
+    /// Out of the dust, facing each other, pleased with itself.
+    func endScuffle() {
+        guard scuffling else { return }
+        scuffling = false
+        panel?.alphaValue = 1
+        if let other = buddy?.feet { facesRight = other.x > position.x }
+        if mood == .sitting { enter(.happy) }
+    }
+
+    // MARK: Fetch
+
+    /// A game of fetch: the ball in the air, the run after it, the trip
+    /// back with it in its mouth, and waiting for you to throw it again.
+    private enum FetchStage { case flying, chasing, carrying, waiting }
+    private var ball: FetchBall?
+    private var fetchStage: FetchStage?
+    private var fetchFrom = CGPoint.zero
+    private var fetchStarted = Date.distantPast
+    /// What it's playing fetch with: the ball, a frisbee, a bone.
+    private var fetchToy = PetGame.fetch
+    private var fetchRuns: Bool { fetchStage == .chasing || fetchStage == .carrying }
+    var fetching: Bool { ball != nil }
+
+    /// Throws a ball along the floor. Most pets run after it and bring it
+    /// back; a cat watches it go.
+    private func playFetch(_ game: PetGame) {
+        resumeIfStalled()
+        guard !isFriend, panel != nil, !asleepAtHome, mood != .held, mood != .climbing else { return }
+        if declines(game) { return }
+        fetchToy = game
+        endPlay(quietly: true)
+        endFetch()
+        if mood == .sleeping { enter(.sitting) }
+        let ball = FetchBall(image: ToyArt.frames(game)?.first) { [weak self] in
+            guard let self else { return }
+            self.playFetch(self.fetchToy)
+        }
+        let size = CatSprites.catSize, ballSize = ball.size
+        let floor = floorSurface(near: position)
+        if !kind.flies, abs(position.y - floor.y) > 1 { position.y = floor.y }
+        let right = floor.maxX - (position.x + size.width), left = position.x - floor.minX
+        let direction: CGFloat = right >= left ? 1 : -1
+        let distance = min(max(right, left) - ballSize.width - 10, CGFloat.random(in: 260...520))
+        guard distance > 80 else { return ball.remove() }
+        facesRight = direction > 0
+        let landX = position.x + size.width / 2 + direction * distance - ballSize.width / 2
+        self.ball = ball
+        fetchFrom = position
+        fetchStarted = Date()
+        fetchStage = .flying
+        enter(.sitting)
+        stateLength = Int(Self.fps * 4)
+        ball.fly(from: mouth(at: position), to: CGPoint(x: landX, y: floor.y)) { [weak self] in self?.ballLanded() }
+    }
+
+    private func ballLanded() {
+        guard let ball, fetchStage == .flying else { return }
+        fetchStage = .chasing
+        let size = CatSprites.catSize, ballSize = ball.size
+        let towards = ball.position.x > position.x
+        // Stops with its mouth over the ball.
+        let x = ball.position.x + ballSize.width / 2 - (towards ? size.width * 0.82 : size.width * 0.18)
+        let floor = floorSurface(near: ball.position)
+        planRoute(to: CGPoint(x: x, y: kind.flies ? position.y : floor.y), on: kind.flies ? nil : floor)
+        enter(.walking)
+        CatSounds.shared.play(.meow, voice: kind)
+    }
+
+    private func fetchArrived() {
+        guard let ball else { return enter(.sitting) }
+        if fetchStage == .chasing {
+            // Got it: back to where it was thrown from.
+            fetchStage = .carrying
+            let floor = floorSurface(near: fetchFrom)
+            planRoute(to: CGPoint(x: fetchFrom.x, y: kind.flies ? fetchFrom.y : floor.y), on: kind.flies ? nil : floor)
+            enter(.walking)
+            return
+        }
+        // Drops it at your feet and waits for the next throw.
+        fetchStage = .waiting
+        let floor = floorSurface(near: position)
+        let size = CatSprites.catSize
+        ball.place(CGPoint(x: position.x + (facesRight ? size.width * 0.9 : -ball.size.width * 0.9), y: floor.y))
+        ball.waits = true
+        fetchStarted = Date()
+        enter(.happy)
+        earn(.play)
+        remark(CatWords.fetched.randomElement() ?? "")
+    }
+
+    /// Where the ball goes when it's in its mouth.
+    private func mouth(at point: CGPoint) -> CGPoint {
+        let size = CatSprites.catSize, ballSize = ball?.size ?? .zero
+        return CGPoint(x: point.x + (facesRight ? size.width * 0.82 : size.width * 0.18) - ballSize.width / 2, y: point.y + size.height * 0.22)
+    }
+
+    private func placeBall(at point: CGPoint) {
+        guard fetchStage == .carrying, let ball else { return }
+        ball.place(mouth(at: point))
+    }
+
+    private func endFetch() {
+        ball?.remove()
+        ball = nil
+        fetchStage = nil
+    }
+
+    /// Holds up an agent's question with its answers over its head, or takes
+    /// it down with nil.
+    func showAsk(_ ask: AgentAsk?, answer: @escaping (String) -> Void) {
+        guard !isFriend else { return }
+        askCard.show(ask, answer: answer)
+        placeAsk(at: shown)
+    }
+
+    var askShown: AgentAsk? { askCard.ask }
+
+    /// Over its head, above the sign; put away while it climbs.
+    private func placeAsk(at point: CGPoint) {
+        guard askCard.ask != nil else { return }
+        let size = CatSprites.catSize
+        let up = panel != nil && mood != .climbing && !asleepAtHome
+        let top = max(spriteHeight, (sign.top ?? 0) - point.y)
+        askCard.place(head: up ? CGPoint(x: point.x + (facesRight ? size.width * 0.72 : size.width * 0.28), y: point.y + top) : nil)
+    }
+
     /// The sign clicked: done, and pleased about it.
     func signDone() {
         // A sign with only a countdown on it has nothing to cross off.
@@ -1250,7 +1429,7 @@ final class CatController: ObservableObject {
         let size = CatSprites.catSize
         let headX = facesRight ? size.width * 0.72 : size.width * 0.28
         // Over the sign, when it holds one up.
-        let top = max(spriteHeight, (sign.top ?? 0) - shown.y)
+        let top = max(spriteHeight, (sign.top ?? 0) - shown.y, (askCard.top ?? 0) - shown.y)
         let lift: CGFloat = (effectLayer?.opacity ?? 0) > 0 ? Self.effectHeight : 0
         return CatBubble.Anchor(point: CGPoint(x: shown.x + headX, y: shown.y + top + lift), pointsUp: false)
     }
@@ -1268,6 +1447,9 @@ final class CatController: ObservableObject {
         if delivering != nil {
             return enter(.happy)
         }
+        if fetchStage == .chasing || fetchStage == .carrying {
+            return fetchArrived()
+        }
         let plan = buddyPlan
         buddyPlan = nil
         if plan != nil, let other = buddy?.feet {
@@ -1276,6 +1458,8 @@ final class CatController: ObservableObject {
         if plan == .tag {
             enter(.happy)
             buddy?.celebrate()
+        } else if plan == .scuffle, let other = buddy {
+            startScuffle(with: other)
         } else {
             enter(.sitting)
         }
@@ -1305,12 +1489,15 @@ final class CatController: ObservableObject {
         // With a buddy around: a third of the time go and sit with it, now
         // and then run at it for a game of tag.
         if let other = buddy?.feet, Int.random(in: 0..<10) < (isFriend ? 4 : 2) {
-            let tag = Int.random(in: 0..<3) == 0
+            let roll = Int.random(in: 0..<6)
+            let tag = roll < 2
+            // Now and then the pet, never the friend, starts a play-fight.
+            let scuffle = !isFriend && roll == 2
             let side: CGFloat = other.x > position.x ? -1 : 1
             let spot = CGPoint(x: other.x + side * (CatSprites.catSize.width * 0.8), y: other.y)
             planRoute(to: moves == .anywhere ? spot : CGPoint(x: spot.x, y: floorSurface(near: spot).y),
                       on: moves == .anywhere ? nil : floorSurface(near: spot))
-            buddyPlan = tag ? .tag : .visit
+            buddyPlan = scuffle ? .scuffle : tag ? .tag : .visit
             enter(.walking)
             return
         }
@@ -1539,9 +1726,30 @@ final class CatController: ObservableObject {
 
     private static let playSeconds: TimeInterval = 5
 
-    /// Puts a toy out. The yarn ball drops onto the floor in front of the cat;
-    /// the teaser and the laser dot go with the pointer until playtime is over.
-    func play(_ kind: ToyKind) {
+    /// A game from the Play menu or a link; one this pet doesn't play gets
+    /// a polite no.
+    func play(_ game: PetGame) {
+        if declines(game) { return }
+        switch game.way {
+        case .roll: play(ToyKind.yarn, look: game)
+        case .dangle: play(ToyKind.teaser, look: game)
+        case .chase: play(ToyKind.laser, look: game)
+        case .fetch: playFetch(game)
+        }
+    }
+
+    /// Says no to a game it doesn't play; true when it did.
+    private func declines(_ game: PetGame) -> Bool {
+        guard !self.kind.actsLike.games.contains(game) else { return false }
+        let lines = game == .fetch && self.kind.actsLike == .cat ? CatWords.catFetch : CatWords.notMyGame
+        remark(lines.randomElement() ?? "")
+        return true
+    }
+
+    /// Puts a toy out. The yarn ball (or a toy that rolls like it) drops onto
+    /// the floor in front of the pet; the teaser and the laser dot (and toys
+    /// played like them) go with the pointer until playtime is over.
+    private func play(_ kind: ToyKind, look game: PetGame) {
         resumeIfStalled()
         guard panel != nil else { return }
         endPlay(quietly: true)
@@ -1553,7 +1761,8 @@ final class CatController: ObservableObject {
         case .teaser: .teaser
         case .laser: .laser
         }
-        guard let image = CatSprites.shared.image(rows) else { return }
+        let frames = ToyArt.frames(game)
+        guard let image = frames?.first ?? CatSprites.shared.image(rows) else { return }
         let size = CGSize(width: CGFloat(image.width) * CatSprites.scale, height: CGFloat(image.height) * CatSprites.scale)
         let toyPanel = CatPanel(contentRect: CGRect(origin: .zero, size: size))
         toyPanel.ignoresMouseEvents = true
@@ -1576,7 +1785,7 @@ final class CatController: ObservableObject {
         case .teaser, .laser:
             start = Self.spot(of: kind, at: NSEvent.mouseLocation, size: size)
         }
-        if kind == .laser {
+        if kind == .laser, frames == nil {
             // The dot glimmers.
             let glimmer = CABasicAnimation(keyPath: "opacity")
             glimmer.fromValue = 1
@@ -1588,14 +1797,17 @@ final class CatController: ObservableObject {
         }
         toyPanel.setFrameOrigin(start)
         toyPanel.orderFrontRegardless()
-        toy = Toy(kind: kind, panel: toyPanel, layer: layer, size: size, position: start, from: start)
+        toy = Toy(kind: kind, panel: toyPanel, layer: layer, size: size, position: start, from: start, frames: frames)
         catView?.displayLinkPaused = false
         if mood.isIdle || mood == .happy || mood == .sleeping || mood == .chasing {
             enter(.sitting)
         }
     }
 
-    func stopPlaying() { endPlay(quietly: false) }
+    func stopPlaying() {
+        endFetch()
+        endPlay(quietly: false)
+    }
 
     /// Where a toy that goes with the pointer sits: the teaser hangs just
     /// below it, the laser dot shines by its tip, clear of the arrow.
@@ -1659,7 +1871,7 @@ final class CatController: ObservableObject {
             // Turn a quarter each time the ball rolls its own width.
             toy.rolled += abs(toy.position.x - toy.from.x)
             let turn = Int(toy.rolled / (toy.size.width / 2)) % 2
-            toy.layer.contents = CatSprites.shared.image(turn == 0 ? .yarn1 : .yarn2)
+            toy.layer.contents = toy.frames.map { $0[turn % $0.count] } ?? CatSprites.shared.image(turn == 0 ? .yarn1 : .yarn2)
         case .teaser, .laser:
             // Keeps up with the pointer; between steps the display link
             // moves it with the pointer.
@@ -2160,7 +2372,7 @@ final class CatController: ObservableObject {
         case .walking, .goingToBowl:
             // A four-beat walk, 1-2-3-2, at six steps a second.
             next = route?.jump != nil ? .run1
-                : buddyPlan == .tag || busyMac || delivering != nil ? ((tick / 2) % 2 == 0 ? .run1 : .run2)
+                : buddyPlan == .tag || buddyPlan == .scuffle || fetchRuns || busyMac || delivering != nil ? ((tick / 2) % 2 == 0 ? .run1 : .run2)
                 : [CatFrame.walk1, .walk2, .walk3, .walk2][(tick / 2) % 4]
         case .chasing: next = route?.jump != nil ? .run1 : ((tick / 2) % 2 == 0 ? .run1 : .run2)
         case .jumping: next = .run1
@@ -2762,8 +2974,8 @@ final class CatView: NSView {
         menu.addItem(item("Feed", "fork.knife", #selector(feed)))
         menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
         menu.addItem(item("Take a photo", "camera.fill", #selector(photo)))
-        if PageCapture.safariIsOpen {
-            menu.addItem(item("Capture the Safari page", "camera.viewfinder", #selector(capturePage)))
+        if PageCapture.browserIsOpen {
+            menu.addItem(item("Capture the whole page", "camera.viewfinder", #selector(capturePage)))
         }
         menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
         if let meeting = MainActor.assumeIsolated({ controller.joinTitle }) {
@@ -2784,10 +2996,13 @@ final class CatView: NSView {
         let play = NSMenuItem(title: "Play", action: nil, keyEquivalent: "")
         play.image = NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: nil)
         let toys = NSMenu()
-        toys.addItem(item("Yarn ball", "circle.hexagongrid.fill", #selector(playYarn)))
-        toys.addItem(item("Cat teaser", "wand.and.stars", #selector(playTeaser)))
-        toys.addItem(item("Laser pointer", "smallcircle.filled.circle", #selector(playLaser)))
-        if MainActor.assumeIsolated({ controller.toyKind }) != nil {
+        // Only the games this one plays, its own toy first.
+        for game in MainActor.assumeIsolated({ controller.kind.actsLike.games }) {
+            let entry = item(game.title, game.symbol, #selector(playGame(_:)))
+            entry.representedObject = game.rawValue
+            toys.addItem(entry)
+        }
+        if MainActor.assumeIsolated({ controller.toyKind != nil || controller.fetching }) {
             toys.addItem(.separator())
             toys.addItem(item("Stop playing", "stop.circle", #selector(stopPlaying)))
         }
@@ -2836,9 +3051,10 @@ final class CatView: NSView {
     @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
     @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
     @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }
-    @objc private func playYarn() { MainActor.assumeIsolated { controller?.play(.yarn) } }
-    @objc private func playTeaser() { MainActor.assumeIsolated { controller?.play(.teaser) } }
-    @objc private func playLaser() { MainActor.assumeIsolated { controller?.play(.laser) } }
+    @objc private func playGame(_ sender: NSMenuItem) {
+        guard let game = (sender.representedObject as? String).flatMap(PetGame.init(rawValue:)) else { return }
+        MainActor.assumeIsolated { controller?.play(game) }
+    }
     @objc private func stopPlaying() { MainActor.assumeIsolated { controller?.stopPlaying() } }
     @objc private func wearItem(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }
