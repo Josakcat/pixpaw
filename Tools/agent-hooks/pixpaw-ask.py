@@ -32,6 +32,8 @@ FOLDER = os.path.expanduser("~/Library/Application Support/Pixpaw/asks")
 SCHEME = os.environ.get("PIXPAW_SCHEME", "droppy-playground")
 WAIT = float(os.environ.get("PIXPAW_ASK_WAIT", "110"))
 AGENT = "Claude"
+# Before an answer you typed on the card, not a button's.
+TYPED = "text:"
 
 
 def short(text, limit):
@@ -77,7 +79,10 @@ def permission(event):
     options = ["Allow"] + (["Always allow"] if always else []) + ["Deny"]
 
     def reply(choice):
-        if choice == "Allow":
+        if choice.startswith(TYPED):
+            # No, and what to do instead, in your words.
+            decision = {"behavior": "deny", "message": "Not that. From Pixpaw, the user says: " + choice[len(TYPED):][:500]}
+        elif choice == "Allow":
             decision = {"behavior": "allow"}
         elif choice == "Always allow":
             decision = {"behavior": "allow", "updatedPermissions": [always]}
@@ -88,7 +93,8 @@ def permission(event):
         return {"hookSpecificOutput": {"hookEventName": "PermissionRequest", "decision": decision}}
 
     spoken = f"{AGENT} needs you. {title}"
-    return {"title": title, "detail": short(detail, 240) if detail else None, "options": options, "spoken": spoken}, reply
+    return {"title": title, "detail": short(detail, 240) if detail else None, "options": options, "spoken": spoken,
+            "typed": "instead"}, reply
 
 
 def question(event):
@@ -105,7 +111,10 @@ def question(event):
         return None
 
     def reply(choice):
-        if choice not in labels:
+        # Your own answer, typed on the card, like Claude's "Other".
+        if choice.startswith(TYPED):
+            choice = choice[len(TYPED):][:500]
+        elif choice not in labels:
             return None
         return {"hookSpecificOutput": {
             "hookEventName": "PreToolUse",
@@ -114,7 +123,7 @@ def question(event):
         }}
 
     text = short(asked.get("question"), 120)
-    return {"title": text, "detail": None, "options": labels, "spoken": f"{AGENT} asks: {text}"}, reply
+    return {"title": text, "detail": None, "options": labels, "spoken": f"{AGENT} asks: {text}", "typed": "answer"}, reply
 
 
 def main():

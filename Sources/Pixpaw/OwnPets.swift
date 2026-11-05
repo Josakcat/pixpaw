@@ -388,7 +388,7 @@ enum OwnPets {
     static func template(_ kind: PetKind, coat: CatCoat) -> Data? {
         let cells = cellOrder.map { frame -> [[UInt32?]] in
             guard let rows = CatArt.frames[kind.artKey(frame)],
-                  let palette = kind.isOwn ? colours[kind] : CatArt.coats[kind.hasCoats ? coat.rawValue : kind.rawValue] else { return [] }
+                  let palette = kind.isOwn ? colours[kind] : kind.hasCoats ? coat.palette : CatArt.coats[kind.rawValue] else { return [] }
             let grid = rows.map { row in row.map { palette[$0] } }
             let width = grid.first?.count ?? cell
             // Bottom of the cell, from its left edge.

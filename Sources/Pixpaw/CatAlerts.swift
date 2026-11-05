@@ -70,8 +70,40 @@ enum CatWords {
     }
     /// An agent's question, answered with a click.
     static func askAnswered(_ agent: String, _ choice: String) -> CatLine {
-        CatLine(text: "Told \(agent): \(choice)", symbol: "checkmark.circle.fill", seconds: 2)
+        guard choice.hasPrefix(AgentAsk.typedPrefix) else {
+            return CatLine(text: "Told \(agent): \(choice)", symbol: "checkmark.circle.fill", seconds: 2)
+        }
+        let typed = choice.dropFirst(AgentAsk.typedPrefix.count)
+        return CatLine(text: "Told \(agent): “\(typed.count > 60 ? typed.prefix(59) + "…" : typed)”", symbol: "text.bubble.fill", seconds: 3)
     }
+    static func ciWaiting(_ repo: String, _ workflows: [String]) -> CatLine {
+        let which = workflows.isEmpty ? "the checks" : workflows.prefix(2).joined(separator: " and ")
+        return CatLine(text: "Pushed! Waiting for \(which) on \(repo)…", symbol: "hourglass", seconds: 3)
+    }
+    static func ciPassed(_ repo: String) -> CatLine {
+        CatLine(text: "\(repo)'s CI passed! All green.", symbol: "checkmark.seal.fill", seconds: 4)
+    }
+    static func ciFailed(_ repo: String, _ workflow: String) -> CatLine {
+        CatLine(text: "\(repo)'s \(workflow) failed. See why from my menu.", symbol: "xmark.octagon.fill", seconds: 6)
+    }
+    static func ciCancelled(_ repo: String) -> CatLine {
+        CatLine(text: "\(repo)'s CI was cancelled.", symbol: "slash.circle", seconds: 3)
+    }
+    static let listening = CatLine(text: "I'm listening…", symbol: "ear", key: "listen", seconds: 7)
+    static let heardNothing = CatLine(text: "I didn't hear anything.", symbol: "ear", key: "listen", seconds: 3)
+    static let didntUnderstand = CatLine(text: "Hmm? Try “come here”, “focus for 25 minutes” or “note buy milk”.", symbol: "questionmark.bubble", key: "listen", seconds: 5)
+    static func notesStarted(hearsOthers: Bool, wanted: MeetingSource) -> CatLine {
+        if wanted == .both, !hearsOthers {
+            return CatLine(text: "Taking notes, from your microphone only: let Droppy record the screen to hear the others too. Let everyone know!", symbol: "waveform.badge.mic", seconds: 7)
+        }
+        return CatLine(text: "Taking notes! Let everyone know I'm listening.", symbol: "waveform.badge.mic", seconds: 4)
+    }
+    static func summingUp(_ by: String) -> CatLine {
+        CatLine(text: by.isEmpty ? "Writing it up…" : "Writing it up with \(by)…", symbol: "text.append", seconds: 4)
+    }
+    static let notesReady = CatLine(text: "Meeting notes are on the shelf!", symbol: "doc.text.fill", seconds: 5)
+    static let notesWithoutSummary = CatLine(text: "The summary didn't come, but the transcript is on the shelf.", symbol: "doc.text", seconds: 6)
+    static let notAllowed = CatLine(text: "Not allowed. It's still waiting for you.", symbol: "touchid", seconds: 3)
     /// Capturing the whole page in the browser, and what can stop it.
     static let recordingGIF = CatLine(text: "Rolling! Five seconds of me…", symbol: "record.circle", seconds: 3)
     static let gifDone = CatLine(text: "Our GIF! It's on the shelf.", symbol: "film", seconds: 4)
@@ -188,20 +220,60 @@ enum CatWords {
 
     static func nowPlaying(_ song: String, _ artist: String) -> String {
         // The bubble already shows a music note.
-        artist.isEmpty ? song : "\(song) — \(artist)"
+        artist.isEmpty ? song : "\(song) · \(artist)"
     }
 
     static func volume(_ percent: Int) -> String { "Volume \(percent)%" }
     static let muted = "Muted"
-    static func brightness(_ percent: Int) -> String { "Brightness \(percent)%" }
 
     static func connected(_ name: String) -> String { "\(name) connected" }
     static func disconnected(_ name: String) -> String { "\(name) disconnected" }
 
     static func agentWorking(_ name: String) -> String { "\(name) is on it…" }
     static func agentDone(_ name: String) -> String { "\(name) is done!" }
+    /// A dev server an agent started is up.
+    static func serverUp(_ port: Int) -> String { "Your app is up at localhost:\(port). Open it from my menu." }
     static func agentWaiting(_ name: String) -> String { "\(name) needs you" }
     static func agentFailed(_ name: String) -> String { "\(name) hit a snag" }
+    /// The command an agent was waiting on, after a while: "npm test passed · 4 min".
+    static func commandPassed(_ label: String, _ took: String) -> CatLine {
+        CatLine(text: "\(label) finished · \(took)", symbol: "checkmark.circle.fill")
+    }
+    static func commandFailed(_ label: String, _ took: String) -> CatLine {
+        CatLine(text: "\(label) failed · \(took)", symbol: "cloud.rain.fill")
+    }
+    static func lofiOn(_ source: LofiSource) -> CatLine {
+        CatLine(text: source == .appleMusic ? "Lofi's open in Music. Press play!" : "Lofi time. Let's study.", symbol: "headphones")
+    }
+    static let lofiNoLink = CatLine(text: "Add your lofi link in Settings first.", symbol: "link")
+    /// A bug from a failed command, caught when it passed.
+    static func bugCaught(_ label: String) -> CatLine {
+        CatLine(text: "Got the bug! \(label) passes now.", symbol: "ladybug.fill")
+    }
+    /// An agent's plan running low: 10% left, then 3%.
+    static func usageLow(_ agent: String, window: String, left: Int) -> CatLine {
+        let limit = window == "5h" ? "5-hour limit" : window == "week" ? "weekly limit" : "\(window) limit"
+        return CatLine(text: left <= 3 ? "\(agent)'s \(limit) is almost out: \(left)% left" : "Heads up: \(left)% of \(agent)'s \(limit) left",
+                       symbol: "gauge.with.dots.needle.0percent", seconds: 6)
+    }
+    /// Starting a game with its friend.
+    static let handsStart = "Rock, paper, scissors!"
+    /// After the game, by how it went and what it's like.
+    static func handsWon(_ coins: Int, have: Int, competitive: Bool, how: String?) -> CatLine {
+        let said = how.map { "\($0)! " } ?? ""
+        return CatLine(text: competitive ? "\(said)Too easy! +\(coins) coins (\(have))" : "\(said)I won! +\(coins) coins (\(have))", symbol: "dollarsign.circle.fill")
+    }
+    static func handsLost(_ coins: Int, have: Int, competitive: Bool, how: String?) -> CatLine {
+        let said = how.map { "\($0). " } ?? ""
+        return CatLine(text: competitive ? "\(said)Best of three? −\(coins) coins (\(have))" : "\(said)Aww. −\(coins) coins (\(have))", symbol: "dollarsign.circle")
+    }
+    static let handsDraw = ["A draw!", "Great minds…", "Again? Nah, a draw."]
+    /// Asked for a game when one of them had run out of coins.
+    static func handsShared(_ coins: Int, petGave: Bool) -> CatLine {
+        CatLine(text: petGave ? "Here, \(coins) coins for my friend. Let's play!" : "My friend spotted me \(coins) coins. Let's play!", symbol: "dollarsign.circle.fill")
+    }
+    static let handsBroke = CatLine(text: "We're both out of coins. More pocket money tomorrow!", symbol: "dollarsign.circle")
+    static let handsBusy = CatLine(text: "My friend's busy. Ask me again in a moment!", symbol: "hand.raised")
 }
 
 // MARK: - Battery
@@ -616,8 +688,12 @@ final class NotificationWatcher: @unchecked Sendable {
 final class MusicWatcher {
     private var observers: [NSObjectProtocol] = []
     private var lastTrack = ""
-    private var playerPlaying = false
+    /// Apple Music or Spotify is playing, and whether what it plays is lofi.
+    private(set) var playerPlaying = false
+    private(set) var playerIsLofi = false
     private let playback = PlaybackWatcher()
+    /// Something else is playing: a browser, another player.
+    var othersPlaying: Bool { playback.isPlaying }
     private let onLine: (CatLine) -> Void
     private let onPlaying: (Bool) -> Void
 
@@ -636,7 +712,8 @@ final class MusicWatcher {
                 let state = info["Player State"] as? String ?? ""
                 let song = info["Name"] as? String ?? ""
                 let artist = info["Artist"] as? String ?? ""
-                MainActor.assumeIsolated { self?.changed(state: state, song: song, artist: artist) }
+                let album = info["Album"] as? String ?? ""
+                MainActor.assumeIsolated { self?.changed(state: state, song: song, artist: artist, album: album) }
             })
         }
         playback.start { [weak self] in self?.report() }
@@ -648,11 +725,13 @@ final class MusicWatcher {
         playback.stop()
         lastTrack = ""
         playerPlaying = false
+        playerIsLofi = false
         onPlaying(false)
     }
 
-    private func changed(state: String, song: String, artist: String) {
+    private func changed(state: String, song: String, artist: String, album: String) {
         playerPlaying = state == "Playing"
+        playerIsLofi = playerPlaying && Lofi.isLofi(song + " " + artist + " " + album)
         report()
         guard playerPlaying, !song.isEmpty else { return }
         let track = song + "\u{1}" + artist
@@ -773,19 +852,19 @@ final class ScreenshotWatcher {
     }
 }
 
-// MARK: - Volume and brightness
+// MARK: - Volume
 
 /// The output volume (and mute) of the current speakers, from CoreAudio's
-/// property listeners, and the built-in display's brightness. Each says its
-/// level in one bubble that updates in place while a key is held.
+/// property listeners. It says the level in one bubble that updates in place
+/// while a key is held. Brightness is not read: macOS has no public API for
+/// the built-in display's level, and a private framework can break Droppy on
+/// any macOS update.
 @MainActor
 final class LevelsWatcher {
     private let onLine: (CatLine) -> Void
     private var device = AudioObjectID(kAudioObjectUnknown)
     private var lastVolume: Int?
     private var lastMuted: Bool?
-    private var brightnessTimer: Timer?
-    private var lastBrightness: Float?
     private var running = false
 
     private let volumeListener: AudioObjectPropertyListenerBlock
@@ -813,15 +892,6 @@ final class LevelsWatcher {
         var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice, scope: kAudioObjectPropertyScopeGlobal)
         AudioObjectAddPropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, deviceListener)
         attachToDefaultDevice()
-
-        // Brightness has no public change notification; a cheap read a few
-        // times a second, and only a key-sized step speaks, so auto-brightness
-        // drifting never does.
-        lastBrightness = Self.brightness()
-        brightnessTimer = Timer.scheduledTimer(withTimeInterval: 0.35, repeats: true) { [weak self] _ in
-            MainActor.assumeIsolated { self?.readBrightness() }
-        }
-        brightnessTimer?.tolerance = 0.1
     }
 
     func stop() {
@@ -830,8 +900,6 @@ final class LevelsWatcher {
         var address = Self.address(kAudioHardwarePropertyDefaultOutputDevice, scope: kAudioObjectPropertyScopeGlobal)
         AudioObjectRemovePropertyListenerBlock(AudioObjectID(kAudioObjectSystemObject), &address, .main, deviceListener)
         detachFromDevice()
-        brightnessTimer?.invalidate()
-        brightnessTimer = nil
     }
 
     // MARK: Volume
@@ -889,36 +957,6 @@ final class LevelsWatcher {
             let symbol = percent == 0 ? "speaker.fill" : (percent < 34 ? "speaker.wave.1.fill" : (percent < 67 ? "speaker.wave.2.fill" : "speaker.wave.3.fill"))
             onLine(CatLine(text: CatWords.volume(percent), symbol: symbol, key: "volume"))
         }
-    }
-
-    // MARK: Brightness
-
-    private typealias GetBrightness = @convention(c) (UInt32, UnsafeMutablePointer<Float>) -> Int32
-
-    /// DisplayServices is the framework the brightness keys go through; looked
-    /// up at runtime, and quietly absent if a future macOS removes it.
-    private static let getBrightness: GetBrightness? = {
-        guard let handle = dlopen("/System/Library/PrivateFrameworks/DisplayServices.framework/DisplayServices", RTLD_LAZY),
-              let symbol = dlsym(handle, "DisplayServicesGetBrightness") else { return nil }
-        return unsafeBitCast(symbol, to: GetBrightness.self)
-    }()
-
-    private static func brightness() -> Float? {
-        guard let getBrightness else { return nil }
-        var displays = [CGDirectDisplayID](repeating: 0, count: 8)
-        var count: UInt32 = 0
-        CGGetOnlineDisplayList(8, &displays, &count)
-        let builtIn = displays.prefix(Int(count)).first { CGDisplayIsBuiltin($0) != 0 } ?? CGMainDisplayID()
-        var value: Float = 0
-        return getBrightness(builtIn, &value) == 0 ? value : nil
-    }
-
-    private func readBrightness() {
-        guard let value = Self.brightness() else { return }
-        defer { lastBrightness = value }
-        guard let last = lastBrightness, abs(value - last) >= 0.03 else { return }
-        let percent = Int((value * 100).rounded())
-        onLine(CatLine(text: CatWords.brightness(percent), symbol: value < 0.5 ? "sun.min.fill" : "sun.max.fill", key: "brightness"))
     }
 }
 

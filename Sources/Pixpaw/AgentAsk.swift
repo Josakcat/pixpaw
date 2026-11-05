@@ -10,6 +10,12 @@
 //  answered unless you click; ignored, the agent asks you as usual.
 //  While the card is up, Option-1 to Option-4 pick an answer and Option-0
 //  hands the question back, so your hands stay on the keyboard.
+//  A risky one (a command that deletes for good, a force-push, a secrets
+//  file) gets the pet's hackles up: a warning on the card, no "Always
+//  allow", and the Option keys only after a moment, so a reflex can't
+//  allow it, and allowing it takes Touch ID (or your password).
+//  An agent's hook that takes a typed answer gets a field for one: your own
+//  answer to a question, or what to do instead of a command it asked about.
 //
 
 import AppKit
@@ -29,6 +35,9 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
     var options: [String]
     /// What it says aloud, when that is on.
     var spoken: String?
+    /// Whether the hook takes a typed answer: "answer" (your own answer to
+    /// its question) or "instead" (no, and what to do instead).
+    var typed: String?
 
     /// Where questions and answers pass between the hook and the pet.
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -38,6 +47,8 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
     static var alive: URL { folder.appendingPathComponent("alive") }
     /// The answer that hands the question back to the agent's own prompt.
     static let skip = "skip"
+    /// Before an answer you typed, so the hook tells it from the buttons'.
+    static let typedPrefix = "text:"
 
     var file: URL { Self.folder.appendingPathComponent("\(id).json") }
     var answerFile: URL { Self.folder.appendingPathComponent("\(id).answer") }
@@ -52,9 +63,52 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
         ask.detail = ask.detail.map { String($0.prefix(240)) }
         ask.place = ask.place.map { String($0.prefix(40)) }
         ask.spoken = ask.spoken.map { String($0.prefix(160)) }
+        if !["answer", "instead"].contains(ask.typed ?? "") { ask.typed = nil }
         ask.options = Array(ask.options.map { String($0.prefix(40)) }.filter { !$0.isEmpty }.prefix(4))
+        // Allowed for good, a risky one would never be asked about again.
+        if ask.risk != nil { ask.options.removeAll { $0 == "Always allow" } }
         return ask.options.isEmpty ? nil : ask
     }
+
+    /// What makes it risky, said plainly ("Deletes files for good"), or nil.
+    var risk: String? {
+        guard let detail, !detail.isEmpty else { return nil }
+        if detail.contains(Self.secrets.pattern) { return Self.secrets.reason }
+        // A search or a page only looks like a command.
+        guard !title.hasPrefix("Search"), !title.hasPrefix("Open this page") else { return nil }
+        return Self.risks.first { detail.contains($0.pattern) }?.reason
+    }
+
+    private struct Risk {
+        let pattern: Regex<AnyRegexOutput>
+        let reason: String
+
+        init(_ pattern: String, _ reason: String) {
+            self.pattern = try! Regex(pattern)
+            self.reason = reason
+        }
+    }
+
+    /// Commands that can't be taken back, or reach past this Mac.
+    nonisolated(unsafe) private static let risks = [
+        Risk(#"\brm\s+(-\S+\s+)*-[a-zA-Z]*[rRf]|\brm\b[^|;&]*--(recursive|force)\b|\bfind\b[^|;&]*\s-delete\b|\bshred\b"#, "Deletes files for good"),
+        Risk(#"\bgit\s+push\b[^|;&]*(\s-f\b|\s--force\b|\s--force-with-lease\b|\s\+\S)"#, "Force-pushes over what's there"),
+        Risk(#"\bgit\s+push\b[^|;&]*(\s--delete\b|\s-d\b|\s:\S)|\bgit\s+branch\s+[^|;&]*-D\b"#, "Deletes a branch"),
+        Risk(#"\bgit\s+reset\b[^|;&]*--hard\b|\bgit\s+clean\s+-\S*f|\bgit\s+(checkout|restore)\s+(--\s+)?\.(\s|$)|\bgit\s+stash\s+(drop|clear)\b"#, "Throws away changes"),
+        Risk(#"(?i)\b(drop\s+(table|database|schema)|truncate\s+table)\b"#, "Drops data for good"),
+        Risk(#"\b(curl|wget)\b[^;&]*\|\s*(sudo\s+)?(ba|z)?sh\b"#, "Runs a script from the internet"),
+        Risk(#"\bmkfs\b|\bdd\s+[^|;&]*of=/dev/|\bdiskutil\s+(erase|zero|partition|reformat)"#, "Can wipe a disk"),
+        Risk(#"\bsudo\b"#, "Runs as an administrator"),
+        Risk(#"\b(terraform|tofu)\s+destroy\b|\bkubectl\s+delete\b|\bdocker\s+(system\s+prune|volume\s+(rm|prune))\b"#, "Tears down what's running"),
+        Risk(#"\b(npm|yarn|pnpm|cargo|gem)\s+publish\b|\btwine\s+upload\b"#, "Publishes for everyone to see"),
+        Risk(#"\bsecurity\s+(find-\S*-password|dump-keychain)\b"#, "Reads your keychain"),
+        Risk(#"\bchmod\s+(-R\s+)?777\b|\bcrontab\s+-r\b"#, "Changes your Mac for good"),
+    ]
+
+    /// Files with keys or passwords in them, whatever the agent does to them.
+    nonisolated(unsafe) private static let secrets = Risk(
+        #"(^|[\s/"'=])(\.env(?!\.(example|sample|template|dist)\b)(\.[\w-]+)?|id_(rsa|ed25519|ecdsa)|[\w-]+\.(pem|p12|p8)|\.npmrc|\.netrc|\.pypirc|\.aws/credentials|credentials\.json|secrets?\.(json|ya?ml|toml))($|[\s"';|&)])"#,
+        "A file with secrets in it")
 
     /// Writes the answer for the hook to pick up.
     func answer(_ choice: String) {
@@ -76,21 +130,43 @@ final class AskCard {
     /// The top of the card on screen, while it is up.
     var top: CGFloat? { panel?.isVisible == true ? panel?.frame.maxY : nil }
 
+    /// How long a risky one waits for its Option keys.
+    static let riskyKeysAfter: TimeInterval = 2
+
     func show(_ ask: AgentAsk?, answer: @escaping (String) -> Void) {
         self.ask = ask
         guard let ask else { return close() }
+        guard ask.risk != nil else { return show(ask, keys: holdKeys(for: ask, answer: answer), answer: answer) }
+        // Read before it can be allowed from the keyboard: a click still can.
+        keys.release()
+        show(ask, keys: [], answer: answer)
+        DispatchQueue.main.asyncAfter(deadline: .now() + Self.riskyKeysAfter) { [weak self] in
+            MainActor.assumeIsolated {
+                guard let self, self.ask?.id == ask.id else { return }
+                self.show(ask, keys: self.holdKeys(for: ask, answer: answer), answer: answer)
+            }
+        }
+    }
+
+    private func holdKeys(for ask: AgentAsk, answer: @escaping (String) -> Void) -> Set<Int> {
         let options = ask.options
-        let held = keys.hold(min(options.count, AskKeys.answers)) { [weak self] index in
+        return keys.hold(min(options.count, AskKeys.answers)) { [weak self] index in
             // Only for the card that is still up.
             guard self?.ask?.id == ask.id else { return }
             answer(index == 0 ? AgentAsk.skip : options[index - 1])
         }
+    }
+
+    private func show(_ ask: AgentAsk, keys held: Set<Int>, answer: @escaping (String) -> Void) {
         let view = AskCardView(ask: ask, keys: held, answer: answer)
         if let hosting {
             hosting.rootView = view
         } else {
             let hosting = AskHostingView(rootView: view)
             let panel = CatPanel(contentRect: CGRect(x: 0, y: 0, width: 10, height: 10))
+            // Key only while you click into the answer field, without
+            // bringing Droppy forward.
+            panel.takesKeys = true
             panel.contentView = hosting
             self.hosting = hosting
             self.panel = panel
@@ -135,11 +211,20 @@ struct AskCardView: View {
     var keys: Set<Int> = []
     let answer: (String) -> Void
 
+    private static let warning = Color(red: 0.75, green: 0.15, blue: 0.12)
+    @State private var typing = ""
+
     var body: some View {
+        let risk = ask.risk
         VStack(alignment: .leading, spacing: 6) {
             Label(ask.place.map { "\(ask.agent) · \($0)" } ?? ask.agent, systemImage: "hand.raised.fill")
                 .font(.system(size: 10.5, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color(white: 0.35))
+            if let risk {
+                Label("Careful: \(risk.prefix(1).lowercased() + risk.dropFirst())", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 11.5, weight: .bold, design: .rounded))
+                    .foregroundStyle(Self.warning)
+            }
             Text(ask.title)
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
                 .fixedSize(horizontal: false, vertical: true)
@@ -150,7 +235,8 @@ struct AskCardView: View {
                     .padding(.horizontal, 6)
                     .padding(.vertical, 4)
                     .frame(maxWidth: .infinity, alignment: .leading)
-                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous).fill(Color(white: 0.93)))
+                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill(risk == nil ? Color(white: 0.93) : Color(red: 1, green: 0.9, blue: 0.88)))
                     .fixedSize(horizontal: false, vertical: true)
             }
             HStack(spacing: 6) {
@@ -163,8 +249,30 @@ struct AskCardView: View {
                             }
                         }
                     }
-                    .buttonStyle(AskButtonStyle(prominent: index == 0, warns: option.localizedCaseInsensitiveContains("deny")))
+                    // A risky one puts nothing forward: Allow is no easier than Deny.
+                    .buttonStyle(AskButtonStyle(prominent: index == 0 && risk == nil, warns: option.localizedCaseInsensitiveContains("deny")))
                     .accessibilityLabel(option)
+                }
+            }
+            if let typed = ask.typed {
+                HStack(spacing: 4) {
+                    TextField("Answer", text: $typing,
+                              prompt: Text(typed == "instead" ? "Or tell \(ask.agent) what to do instead" : "Or type your own answer")
+                                .foregroundStyle(Color(white: 0.5)))
+                        .textFieldStyle(.plain)
+                        .foregroundStyle(Color(white: 0.1))
+                        .font(.system(size: 11.5, design: .rounded))
+                        .padding(.horizontal, 7)
+                        .padding(.vertical, 4)
+                        .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color(white: 0.93)))
+                        .onSubmit(send)
+                    Button(action: send) {
+                        Image(systemName: "arrow.up.circle.fill").font(.system(size: 17))
+                    }
+                    .buttonStyle(.plain)
+                    .foregroundStyle(Color(red: 0.27, green: 0.27, blue: 0.96))
+                    .disabled(typing.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty)
+                    .accessibilityLabel("Send")
                 }
             }
             Button(keys.contains(0) ? "Answer in \(ask.agent) instead  ⌥0" : "Answer in \(ask.agent) instead") { answer(AgentAsk.skip) }
@@ -181,8 +289,17 @@ struct AskCardView: View {
         .overlay(AskBubbleShape().stroke(Color(white: 0.12), lineWidth: 2))
         .padding(2)
         .fixedSize()
+        .onChange(of: ask.id) { typing = "" }
+        // A white card in dark mode too, its field and caret included.
+        .environment(\.colorScheme, .light)
         .accessibilityElement(children: .contain)
-        .accessibilityLabel("\(ask.agent) asks: \(ask.title)")
+        .accessibilityLabel(risk.map { "Careful. \(ask.agent) asks: \(ask.title) \($0)." } ?? "\(ask.agent) asks: \(ask.title)")
+    }
+
+    private func send() {
+        let text = typing.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !text.isEmpty else { return }
+        answer(AgentAsk.typedPrefix + String(text.prefix(500)))
     }
 }
 

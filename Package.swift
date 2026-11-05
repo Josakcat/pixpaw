@@ -12,7 +12,7 @@ let package = Package(
         .library(name: "Pixpaw", type: .dynamic, targets: ["Pixpaw"])
     ],
     dependencies: [
-        .package(url: "https://gitlab.com/droppyformac1/droppykit.git", from: "1.6.0")
+        .package(url: "https://gitlab.com/droppyformac1/droppykit.git", from: "1.18.0")
     ],
     targets: [
         .target(

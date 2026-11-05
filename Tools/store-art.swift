@@ -970,6 +970,64 @@ canvas(Int(W), Int(H), "Screenshot-18.png") { ctx in
     label("Option-1 to answer", at: CGPoint(x: third.x + 130, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
 }
 
+// 19. Talk to it: say what you'd like, take meeting notes, play lofi.
+canvas(Int(W), Int(H), "Screenshot-19.png") { ctx in
+    desktop(ctx, W, H, title: "Talk to it", subtitle: "Say what you'd like, let it take your meeting notes, put on lofi.")
+    let first = CGPoint(x: 90, y: floorY)
+    pet(ctx, "cat", "sit", feet: first, px: 9)
+    toolTag(ctx, "\u{201C}focus for 25 minutes\u{201D}", symbol: "waveform", at: CGPoint(x: first.x + 20 * 9, y: floorY), scale: 2)
+    bubble(ctx, "Focus for 25 minutes. Go!", symbol: "timer", tip: CGPoint(x: first.x + 14.5 * 9, y: first.y - 22 * 9))
+    label("Control-Option-T", at: CGPoint(x: first.x + 160, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    let second = CGPoint(x: 640, y: floorY)
+    pet(ctx, "dog", "sit", feet: second, px: 9, laptop: true)
+    toolTag(ctx, "Taking notes · 12 min", symbol: "note.text", at: CGPoint(x: second.x + 20 * 9, y: floorY), scale: 2)
+    bubble(ctx, "I'll sum it up when the call ends", symbol: "list.bullet.clipboard", tip: CGPoint(x: second.x + 14.5 * 9, y: second.y - 22 * 9))
+    label("Meeting notes", at: CGPoint(x: second.x + 160, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    let third = CGPoint(x: 1200, y: floorY)
+    cat(ctx, "happy", coat: "gray", feet: third, px: 9)
+    bubble(ctx, "Lofi's on!", symbol: "music.note", tip: CGPoint(x: third.x + 14.5 * 9, y: third.y - 22 * 9))
+    label("YouTube, Spotify, Apple Music", at: CGPoint(x: third.x + 140, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
+// 20. Safer with your agents: a warning and Touch ID on risky asks, CI after a push.
+canvas(Int(W), Int(H), "Screenshot-20.png") { ctx in
+    desktop(ctx, W, H, title: "Safer with your agents", subtitle: "A warning and Touch ID on risky asks, and CI watched after every push.")
+    let first = CGPoint(x: 150, y: floorY)
+    pet(ctx, "cat", "sit", feet: first, px: 9)
+    askCard(ctx, header: "Claude · shop", title: "Run this command?", detail: "rm -rf build/ ~/old-site", buttons: ["Allow with Touch ID  ⌥1", "Deny  ⌥2"],
+            tip: CGPoint(x: first.x + 14.5 * 9, y: first.y - 17.5 * 9), scale: 1.6, link: "Deletes files for good")
+    label("Touch ID to allow", at: CGPoint(x: first.x + 130, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+
+    let second = CGPoint(x: 820, y: floorY)
+    cat(ctx, "happy", coat: "gray", feet: second, px: 9)
+    toolTag(ctx, "Build and Tests", symbol: "checkmark.circle.fill", at: CGPoint(x: second.x + 20 * 9, y: floorY), scale: 2)
+    bubble(ctx, "All green! Your app is up at localhost:5173", symbol: "party.popper", tip: CGPoint(x: second.x + 14.5 * 9, y: second.y - 22 * 9))
+    label("CI after a push", at: CGPoint(x: second.x + 160, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
+// 21. On DockDoor Pro's Dock: the pet walks on the icons, in front of them.
+canvas(Int(W), Int(H), "Screenshot-21.png") { ctx in
+    desktop(ctx, W, H, title: "Walks on your Dock", subtitle: "With DockDoor Pro's Dock, your pet walks on the icons, in front of them.")
+    let bar = CGRect(x: 220, y: 760, width: 1160, height: 130)
+    ctx.setFillColor(rgb(0x1E1E24, 0.82).cgColor)
+    ctx.addPath(CGPath(roundedRect: bar, cornerWidth: 32, cornerHeight: 32, transform: nil)); ctx.fillPath()
+    let colors: [UInt32] = [0x3B82F6, 0x22C55E, 0xF59E0B, 0xEF4444, 0xA855F7, 0x14B8A6, 0xEC4899, 0x64748B, 0xF97316]
+    for (i, color) in colors.enumerated() {
+        let big = i == 4
+        let side: CGFloat = big ? 150 : 96
+        let x = bar.minX + 30 + CGFloat(i) * 124 - (big ? 27 : 0)
+        let icon = CGRect(x: x, y: bar.maxY - 17 - side, width: side, height: side)
+        ctx.setFillColor(rgb(color).cgColor)
+        ctx.addPath(CGPath(roundedRect: icon, cornerWidth: side * 0.23, cornerHeight: side * 0.23, transform: nil)); ctx.fillPath()
+    }
+    let feet = CGPoint(x: bar.minX + 30 + 4 * 124 - 70, y: bar.minY)
+    cat(ctx, "walk2", coat: "gray", collar: "redCollar", feet: feet, px: 9)
+    bubble(ctx, "Up here!", symbol: "pawprint.fill", tip: CGPoint(x: feet.x + 14.5 * 9, y: feet.y - 22 * 9))
+    label("Automatic when DockDoor Pro is running", at: CGPoint(x: W / 2, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in
     ctx.setFillColor(rgb(0x4446F4).cgColor)

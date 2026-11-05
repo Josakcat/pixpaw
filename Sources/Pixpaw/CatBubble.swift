@@ -1,3 +1,4 @@
+// droppykit-lint: allow-file own-window: the pet's click-through speech bubble, a small panel over its head that goes where the pet goes and closes in deactivate(); agreed by Droppy for the Store, 2026-11-04
 //
 //  CatBubble.swift
 //  Pixpaw
@@ -129,6 +130,7 @@ final class CatBubble {
             let panel = CatPanel(contentRect: CGRect(x: 0, y: 0, width: 10, height: 10))
             panel.ignoresMouseEvents = true
             panel.level = .statusBar
+            panel.followsPetLevel = false
             panel.contentView = hosting
             self.hosting = hosting
             self.panel = panel

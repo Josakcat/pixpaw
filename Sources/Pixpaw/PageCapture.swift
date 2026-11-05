@@ -70,6 +70,29 @@ struct Browser: Equatable {
     }
 }
 
+/// Every Apple event and AppleScript a capture sends, on ONE serial queue:
+/// NSAppleScript is not safe to use from more than one thread, and a browser
+/// that is slow to answer must never hold Droppy's main thread (Droppy's hang
+/// watchdog reports exactly that). The main thread only waits by awaiting.
+final class CaptureQueue: @unchecked Sendable {
+    static let shared = CaptureQueue()
+    private let queue = DispatchQueue(label: "app.pixpaw.page-capture.apple-events", qos: .userInitiated)
+
+    func perform<T: Sendable>(_ work: @escaping @Sendable () throws -> T) async throws -> T {
+        try await withCheckedThrowingContinuation { continuation in
+            queue.async {
+                // Resumed once, here, whichever way the work ends.
+                do { continuation.resume(returning: try work()) } catch { continuation.resume(throwing: error) }
+            }
+        }
+    }
+}
+
+/// The shots a capture took, handed to the stitching off the main thread.
+private struct CaptureShots: @unchecked Sendable {
+    let frames: [(top: CGFloat, image: CGImage)]
+}
+
 @MainActor
 enum PageCapture {
     /// The tallest picture it makes, in points; a page that goes on
@@ -93,10 +116,10 @@ enum PageCapture {
             throw PageCaptureProblem.noScreenRecording
         }
         // In front, so it draws as it scrolls.
-        try script("tell application id \"\(browser.bundleID)\" to activate")
+        try await script("tell application id \"\(browser.bundleID)\" to activate")
         try await Task.sleep(for: settle)
 
-        let start = try measure()
+        let start = try await measure()
         guard let windowID = frontWindow(of: app.processIdentifier) else { throw PageCaptureProblem.noPage }
         let content: SCShareableContent
         do {
@@ -115,35 +138,51 @@ enum PageCapture {
 
         // Where the page shows in the window, and how many points to its
         // pixels (page zoom).
-        let viewport = viewport(pid: app.processIdentifier, in: window.frame)
-            ?? CGRect(x: window.frame.minX, y: window.frame.maxY - start.viewHeight * window.frame.width / start.viewWidth,
-                      width: window.frame.width, height: start.viewHeight * window.frame.width / start.viewWidth)
+        let pid = app.processIdentifier
+        let windowFrame = window.frame
+        let found = try? await CaptureQueue.shared.perform { Self.viewport(pid: pid, in: windowFrame) }
+        let viewport = found.flatMap { $0 }
+            ?? CGRect(x: windowFrame.minX, y: windowFrame.maxY - start.viewHeight * windowFrame.width / start.viewWidth,
+                      width: windowFrame.width, height: start.viewHeight * windowFrame.width / start.viewWidth)
         let points = viewport.height / start.viewHeight
 
         var frames: [(top: CGFloat, image: CGImage)] = []
-        defer { _ = try? run(restore(x: start.x, y: start.y)) }
-        var at = try scroll(to: 0, x: start.x)
-        var height = at.height
-        while true {
-            try await Task.sleep(for: settle)
-            let shot = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
-            frames.append((at.y * points, shot))
-            if frames.count == 1 { try run(hideStuck) }
-            height = max(height, at.height)
-            let next = at.y + start.viewHeight
-            guard next < height, next * points < tallest else { break }
-            let moved = try scroll(to: next, x: start.x)
-            // The page wouldn't go any further.
-            guard moved.y > at.y else { break }
-            at = moved
+        var height: CGFloat = 0
+        do {
+            var at = try await scroll(to: 0, x: start.x)
+            height = at.height
+            while true {
+                try await Task.sleep(for: settle)
+                let shot = try await SCScreenshotManager.captureImage(contentFilter: filter, configuration: config)
+                frames.append((at.y * points, shot))
+                if frames.count == 1 { try await run(hideStuck) }
+                height = max(height, at.height)
+                let next = at.y + start.viewHeight
+                guard next < height, next * points < tallest else { break }
+                let moved = try await scroll(to: next, x: start.x)
+                // The page wouldn't go any further.
+                guard moved.y > at.y else { break }
+                at = moved
+            }
+        } catch {
+            _ = try? await run(restore(x: start.x, y: start.y))
+            throw error
         }
+        _ = try? await run(restore(x: start.x, y: start.y))
 
+        // Joining and writing the picture is the slow part: off the main thread.
         let tall = min(height * points, tallest)
         let outScale = max(1, min(scale, tallestPixels / tall))
-        guard let image = stitch(frames, width: viewport.width, height: tall, viewHeight: viewport.height,
-                                 crop: viewport.offsetBy(dx: -window.frame.minX, dy: -window.frame.minY),
-                                 shotScale: scale, outScale: outScale) else { throw PageCaptureProblem.failed }
-        return try save(image, title: start.title)
+        let shots = CaptureShots(frames: frames)
+        let crop = viewport.offsetBy(dx: -windowFrame.minX, dy: -windowFrame.minY)
+        let folder = self.folder
+        let fallbackName = "\(browser.name) page"
+        let title = start.title
+        return try await Task.detached(priority: .userInitiated) {
+            guard let image = Self.stitch(shots.frames, width: viewport.width, height: tall, viewHeight: viewport.height,
+                                          crop: crop, shotScale: scale, outScale: outScale) else { throw PageCaptureProblem.failed }
+            return try Self.save(image, title: title, fallbackName: fallbackName, in: folder)
+        }.value
     }
 
     // MARK: The browser
@@ -151,36 +190,56 @@ enum PageCapture {
     /// The one being captured.
     private static var browser = Browser.all[0]
 
-    /// Asks once for Droppy to control the browser, off the main thread,
-    /// since the question waits for you.
+    /// Asks once for Droppy to control the browser, on the capture's Apple
+    /// event queue, since the question waits for you.
     private static func mayControl(_ browser: Browser) async -> Bool {
         let id = browser.bundleID
-        return await Task.detached {
+        return (try? await CaptureQueue.shared.perform {
             let target = NSAppleEventDescriptor(bundleIdentifier: id)
             guard let desc = target.aeDesc else { return false }
             return AEDeterminePermissionToAutomateTarget(desc, typeWildCard, typeWildCard, true) == noErr
-        }.value
+        }) ?? false
     }
 
+    /// How long one Apple event to the browser may take, so a browser that
+    /// stops answering ends the capture instead of AppleScript's two minutes.
+    private static let eventTimeout = 10
+
+    /// One step of the capture, on the Apple event queue. It only talks to
+    /// the browser while it is running: a browser quit meanwhile is never
+    /// launched again (`tell application id` alone would start it).
     @discardableResult
-    private static func script(_ source: String) throws -> String {
-        var error: NSDictionary?
-        guard let result = NSAppleScript(source: source)?.executeAndReturnError(&error) else {
-            let number = error?[NSAppleScript.errorNumber] as? Int
-            let message = error?[NSAppleScript.errorMessage] as? String ?? ""
-            if number == -1743 { throw PageCaptureProblem.notAllowed(browser) }
-            if message.localizedCaseInsensitiveContains("JavaScript") { throw PageCaptureProblem.noJavaScript(browser) }
-            if number == -1719 || number == -1728 || number == -600 { throw PageCaptureProblem.noPage }
-            throw PageCaptureProblem.failed
+    private static func script(_ source: String) async throws -> String {
+        let browser = self.browser
+        let bounded = """
+        with timeout of \(eventTimeout) seconds
+        if application id "\(browser.bundleID)" is running then
+        \(source)
+        else
+        error "\(browser.name) is not running" number -600
+        end if
+        end timeout
+        """
+        return try await CaptureQueue.shared.perform {
+            var error: NSDictionary?
+            // droppykit-lint: allow process: an in-process AppleScript only for a whole-page capture the user asked for, on one serial background queue, every event bounded by `with timeout` and sent only while the browser is running
+            guard let result = NSAppleScript(source: bounded)?.executeAndReturnError(&error) else {
+                let number = error?[NSAppleScript.errorNumber] as? Int
+                let message = error?[NSAppleScript.errorMessage] as? String ?? ""
+                if number == -1743 { throw PageCaptureProblem.notAllowed(browser) }
+                if message.localizedCaseInsensitiveContains("JavaScript") { throw PageCaptureProblem.noJavaScript(browser) }
+                if number == -1719 || number == -1728 || number == -600 { throw PageCaptureProblem.noPage }
+                throw PageCaptureProblem.failed
+            }
+            return result.stringValue ?? ""
         }
-        return result.stringValue ?? ""
     }
 
     /// Runs JavaScript in the front tab.
     @discardableResult
-    private static func run(_ javaScript: String) throws -> String {
+    private static func run(_ javaScript: String) async throws -> String {
         let quoted = javaScript.replacingOccurrences(of: "\\", with: "\\\\").replacingOccurrences(of: "\"", with: "\\\"")
-        return try script(browser.script(quoted))
+        return try await script(browser.script(quoted))
     }
 
     private struct Place: Decodable {
@@ -194,16 +253,16 @@ enum PageCapture {
 
     private static let place = "JSON.stringify({x: scrollX, y: scrollY, height: Math.max(document.documentElement.scrollHeight, document.body ? document.body.scrollHeight : 0), viewWidth: innerWidth, viewHeight: innerHeight, title: document.title})"
 
-    private static func measure() throws -> Place {
-        guard let data = try run(place).data(using: .utf8),
+    private static func measure() async throws -> Place {
+        guard let data = try await run(place).data(using: .utf8),
               let place = try? JSONDecoder().decode(Place.self, from: data),
               place.viewWidth > 0, place.viewHeight > 0 else { throw PageCaptureProblem.failed }
         return place
     }
 
-    private static func scroll(to y: CGFloat, x: CGFloat) throws -> Place {
-        try run("window.scrollTo({top: \(Int(y)), left: \(Int(x)), behavior: 'instant'})")
-        return try measure()
+    private static func scroll(to y: CGFloat, x: CGFloat) async throws -> Place {
+        try await run("window.scrollTo({top: \(Int(y)), left: \(Int(x)), behavior: 'instant'})")
+        return try await measure()
     }
 
     /// Headers and buttons that stay put as you scroll would show on every
@@ -234,7 +293,7 @@ enum PageCapture {
     /// The part of the window the page shows in, found through
     /// Accessibility; without it, the page is taken to fill the bottom of
     /// the window.
-    private static func viewport(pid: pid_t, in window: CGRect) -> CGRect? {
+    nonisolated private static func viewport(pid: pid_t, in window: CGRect) -> CGRect? {
         guard AXIsProcessTrusted() else { return nil }
         let app = AXUIElementCreateApplication(pid)
         AXUIElementSetMessagingTimeout(app, 0.5)
@@ -255,12 +314,12 @@ enum PageCapture {
         return nil
     }
 
-    private static func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
+    nonisolated private static func value(_ element: AXUIElement, _ attribute: String) -> CFTypeRef? {
         var value: CFTypeRef?
         return AXUIElementCopyAttributeValue(element, attribute as CFString, &value) == .success ? value : nil
     }
 
-    private static func frame(of element: AXUIElement) -> CGRect? {
+    nonisolated private static func frame(of element: AXUIElement) -> CGRect? {
         guard let position = value(element, kAXPositionAttribute), let size = value(element, kAXSizeAttribute) else { return nil }
         var point = CGPoint.zero, extent = CGSize.zero
         guard AXValueGetValue(position as! AXValue, .cgPoint, &point), AXValueGetValue(size as! AXValue, .cgSize, &extent) else { return nil }
@@ -271,7 +330,7 @@ enum PageCapture {
 
     /// Lays the screens one under another, each adding only what the ones
     /// before it hadn't shown.
-    private static func stitch(_ frames: [(top: CGFloat, image: CGImage)], width: CGFloat, height: CGFloat, viewHeight: CGFloat,
+    nonisolated private static func stitch(_ frames: [(top: CGFloat, image: CGImage)], width: CGFloat, height: CGFloat, viewHeight: CGFloat,
                                crop: CGRect, shotScale: CGFloat, outScale: CGFloat) -> CGImage? {
         let pixelWidth = Int((width * outScale).rounded()), pixelHeight = Int((height * outScale).rounded())
         guard pixelWidth > 0, pixelHeight > 0,
@@ -306,7 +365,7 @@ enum PageCapture {
         return FileManager.default.urls(for: .desktopDirectory, in: .userDomainMask)[0]
     }
 
-    private static func save(_ image: CGImage, title: String) throws -> URL {
+    nonisolated private static func save(_ image: CGImage, title: String, fallbackName: String, in folder: URL) throws -> URL {
         let format = DateFormatter()
         format.calendar = Calendar(identifier: .gregorian)
         format.locale = Locale(identifier: "en_US_POSIX")
@@ -314,7 +373,7 @@ enum PageCapture {
         var name = title.components(separatedBy: CharacterSet(charactersIn: "/:\\\n\r\t")).joined(separator: " ")
             .trimmingCharacters(in: .whitespaces)
         if name.count > 60 { name = String(name.prefix(60)).trimmingCharacters(in: .whitespaces) + "…" }
-        if name.isEmpty { name = "\(browser.name) page" }
+        if name.isEmpty { name = fallbackName }
         let url = folder.appendingPathComponent("\(name) \(format.string(from: Date())).png")
         guard let destination = CGImageDestinationCreateWithURL(url as CFURL, UTType.png.identifier as CFString, 1, nil) else { throw PageCaptureProblem.failed }
         CGImageDestinationAddImage(destination, image, nil)

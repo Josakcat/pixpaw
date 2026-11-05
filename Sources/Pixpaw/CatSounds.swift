@@ -15,7 +15,7 @@ import AppKit
 
 @MainActor
 final class CatSounds {
-    enum Sound { case meow, purr, chew }
+    enum Sound { case meow, purr, chew, hiss }
 
     static let shared = CatSounds()
 
@@ -33,6 +33,7 @@ final class CatSounds {
 
     private var voices: [PetKind: Voice] = [:]
     private var lastMeow = Date.distantPast
+    private lazy var hiss = NSSound(data: Self.wav(Self.hissSamples()))
 
     private init() {}
 
@@ -49,6 +50,8 @@ final class CatSounds {
             voice.calls.randomElement().map(start)
         case .purr: voice.content.map(start)
         case .chew: voice.chew.map(start)
+        // A warning: a dog barks it, everyone else hisses.
+        case .hiss: (kind.actsLike == .dog ? voice.calls.first : hiss).map(start)
         }
     }
 
@@ -126,6 +129,24 @@ final class CatSounds {
     }
 
     // MARK: Synthesis
+
+    /// "Hhhsss": breathy noise, bright and sharp at the start, fading out.
+    private static func hissSamples() -> [Float] {
+        let duration = 0.7
+        let count = Int(duration * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        var last: Float = 0
+        for i in 0..<count {
+            let t = Double(i) / sampleRate
+            let noise = Float.random(in: -1...1)
+            // Differenced noise: the hiss, without the rumble.
+            let bright = noise - last
+            last = noise
+            let envelope = min(1, t / 0.04) * pow(1 - t / duration, 1.6)
+            samples[i] = bright * Float(envelope) * 0.3
+        }
+        return samples
+    }
 
     /// "Mi-aow": the pitch rises then falls while the vowel opens and closes,
     /// with a little vibrato.

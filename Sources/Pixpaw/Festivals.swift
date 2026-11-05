@@ -1,3 +1,4 @@
+// droppykit-lint: allow-file own-window: festival decorations on their real dates only, one click-through panel per screen just under the pet's level, each festival switchable in Settings and all closed in deactivate(); agreed by Droppy for the Store, 2026-11-04
 //
 //  Festivals.swift
 //  Pixpaw

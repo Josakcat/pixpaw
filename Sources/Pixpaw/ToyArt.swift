@@ -120,7 +120,8 @@ enum ToyArt {
         return [image(art.rows, art.palette), image(mirrored, art.palette)].compactMap { $0 }
     }
 
-    private static func image(_ rows: [String], _ palette: [Character: UInt32]) -> CGImage? {
+    /// A text grid drawn as an image, `o` in ink, `.` see-through.
+    static func image(_ rows: [String], _ palette: [Character: UInt32]) -> CGImage? {
         let w = rows.map(\.count).max() ?? 0, h = rows.count
         guard w > 0 else { return nil }
         var bytes = [UInt8](repeating: 0, count: w * h * 4)

@@ -1,3 +1,4 @@
+// droppykit-lint: allow-file own-window: Pixpaw is a desktop pet, so the pet is its own small borderless, non-activating panel at the floating level, or the status-bar level (like its speech bubble) while DockDoor Pro runs, so it can stand in front of that app's own Dock and its magnified icons (never over the notch or the menu bar, out of full-screen apps), shown only while the user lets it out and closed in deactivate(); agreed by Droppy for the Store, 2026-11-04
 //
 //  CatController.swift
 //  Pixpaw
@@ -196,6 +197,29 @@ final class CatController: ObservableObject {
     var onCapturePage: (() -> Void)?
     /// Record a GIF of it.
     var onRecordGIF: (() -> Void)?
+    var onLofi: (() -> Void)?
+    var onPauseLofi: (() -> Void)?
+    /// For its menu: the focus time ("25 min", "12 min left") and where
+    /// lofi comes from ("YouTube").
+    var focusLabel: (() -> String?)?
+    var lofiLabel: (() -> String?)?
+    /// Meeting notes: how long it's been listening ("12 min") while it is,
+    /// and whether there are notes to open.
+    var notesLabel: (() -> String?)?
+    var hasNotes: (() -> Bool)?
+    var onNotes: (() -> Void)?
+    var onOpenNotes: (() -> Void)?
+    /// The port of a dev server an agent started that is up now, and
+    /// opening it in the browser.
+    var localServer: (() -> Int?)?
+    var onOpenServer: (() -> Void)?
+    /// The repository whose CI just failed, while there's a run to look at.
+    var failedCI: (() -> String?)?
+    var onOpenFailedCI: (() -> Void)?
+    /// Talk to me, in its menu, while that's on.
+    var canTalk: (() -> Bool)?
+    var onTalk: (() -> Void)?
+    var lofiPlaying: Bool { isFriend ? buddy?.lofiPlaying ?? false : lofiVibe }
     /// Start or stop a focus session; the droplet keeps the clock.
     var onFocus: (() -> Void)?
     /// Files dropped on it, to take to the shelf when it gets there.
@@ -226,7 +250,11 @@ final class CatController: ObservableObject {
     private var typing: Bool { typesAlong && Date() < typingUntil }
     /// At its laptop, working along with you: sitting during a focus session,
     /// while an agent works, or while you type.
-    var atLaptop: Bool { (focusing || agentWorking || typing) && mood == .sitting }
+    var atLaptop: Bool { (focusing || agentWorking || typing || lofiVibe) && mood == .sitting }
+    /// What's playing is lofi: it puts its headphones on and studies to it
+    /// at its laptop, nodding along slowly, instead of dancing.
+    @Published var lofi = false { didSet { if lofi != oldValue { redraw() } } }
+    private var lofiVibe: Bool { lofi && musicPlaying }
     /// The other cat, when there are two. Each sometimes wanders over to sit
     /// with the other, or runs at it for a game of tag.
     weak var buddy: CatController?
@@ -237,7 +265,36 @@ final class CatController: ObservableObject {
     /// Stars earned today, per source and in all, against the daily limits.
     @Published private(set) var starDay: StarDay
     private var lastPetStar = Date.distantPast
-    private enum BuddyPlan { case visit, tag, scuffle }
+    private enum BuddyPlan { case visit, tag, scuffle, hands }
+    /// Its character, for what it gets up to with its friend.
+    var traits: [PetTrait] = []
+    /// Asked before a game of rock, paper, scissors: whether both have coins
+    /// to put on it.
+    /// Whether both can put coins on a game; `asked` when you asked for it.
+    var canPlayHands: ((_ asked: Bool) -> Bool)?
+    /// A game played to the end: whether the pet won, or nil for a draw,
+    /// and how ("Paper covers rock").
+    var onHandsPlayed: ((_ won: Bool?, _ how: String?) -> Void)?
+    /// In a game of rock, paper, scissors with its friend.
+    private(set) var playingHands = false
+    /// On its way to a game you asked for: says so if it can't be played.
+    private var handsAsked = false
+    /// Since when a coding agent has kept it waiting on a long command: it
+    /// stays at its laptop eating popcorn, then turns an hourglass over,
+    /// gathers cobwebs, and at last dozes off.
+    var waitingSince: Date?
+    /// Where a bug from a failed command is scuttling, for it to run after
+    /// now and then.
+    var bugSpot: (() -> CGPoint?)?
+    /// Running at a bug, and what happens when it gets there.
+    private var bugRun = false
+    private var onBugReached: (() -> Void)?
+    /// A moment's picture over its head (confetti, a rain cloud, a hand) and
+    /// until when.
+    private var reaction: (art: AgentArt, until: Date)?
+    /// Hackles up over a risky ask, until then.
+    private var bristlesUntil: Date?
+    private var bristling: Bool { bristlesUntil.map { Date() < $0 } ?? false }
     /// Rolling about with its friend in a cloud of dust.
     private var cloud: DustCloud?
     private(set) var scuffling = false
@@ -348,6 +405,7 @@ final class CatController: ObservableObject {
     private var strokeSeen: TimeInterval = 0
     private var lastStroked: TimeInterval = 0
     private var surfaceCache: (at: Date, surfaces: [CatSurface])?
+    private var sawDockDoor: (running: Bool, bar: CGRect?) = (false, nil)
     /// The drag pasteboard's count when we last looked, and whether the drag
     /// in progress (left button still down) carries files.
     private var dragCount = NSPasteboard(name: .drag).changeCount
@@ -518,11 +576,14 @@ final class CatController: ObservableObject {
     var statusTitle: String {
         let kind = kind.actsLike
         if focusing, mood.isIdle { return "Keeping you company" }
+        if playingHands { return "Rock, paper, scissors" }
+        if let since = waitingSince, mood == .sitting { return Date().timeIntervalSince(since) >= Self.dozesAfter ? "Dozing off, still waiting" : "Waiting on a command" }
         if agentWorking, mood == .sitting { return "Coding along" }
         if typing, mood == .sitting { return "Typing along" }
         if bowlIsTreat, mood == .goingToBowl { return "Off for a treat" }
         if bowlIsTreat, mood == .eating { return "Munching a treat" }
         if isHungry, mood.isIdle { return "Hungry" }
+        if lofiVibe, mood == .sitting { return "Studying to lofi beats" }
         if musicPlaying, mood == .sitting { return "Vibing to the music" }
         if lowBattery, mood.isIdle { return "Sleepy, low battery" }
         if busyMac, mood.isIdle { return "Feeling the heat" }
@@ -609,6 +670,7 @@ final class CatController: ObservableObject {
         if agentWorking, mood == .sitting { return "Coding" }
         if typing, mood == .sitting { return "Typing" }
         if isHungry, mood.isIdle { return "Hungry" }
+        if lofiVibe, mood == .sitting { return "Lofi" }
         if musicPlaying, mood == .sitting { return "Vibing" }
         if kind == .bee {
             switch mood {
@@ -720,8 +782,12 @@ final class CatController: ObservableObject {
     }
 
     /// Puts on, or takes off with nil, something already unlocked.
+    /// The stars that unlock what it can wear: its own, or for the friend,
+    /// your pet's, since every star the friend earns goes to your pet.
+    var wardrobeStars: Int { isFriend ? buddy?.points ?? points : points }
+
     func wear(_ item: CatAccessory?, in slot: CatAccessory.Slot) {
-        if let item, item.unlockAt > points { return }
+        if let item, item.unlockAt > wardrobeStars { return }
         switch slot {
         case .hat: hat = item
         case .collar: collar = item
@@ -854,7 +920,7 @@ final class CatController: ObservableObject {
     /// A new song: a cat that is only sitting, grooming or strolling stops
     /// where it stands and dances. Anything it is busy with comes first.
     func dance() {
-        guard panel != nil, musicPlaying else { return }
+        guard panel != nil, musicPlaying, !lofiVibe else { return }
         switch mood {
         case .sitting, .grooming:
             break
@@ -1106,6 +1172,12 @@ final class CatController: ObservableObject {
         watchDrags()
         updateClickThrough(mouse)
         if tick % 3 == 0 { followPerch() }
+        if tick % 15 == 0 { DockDoorPro.refresh() }
+        // Each pet (and a friend's) notices on its own; the look is shared.
+        if DockDoorPro.running != sawDockDoor.running || DockDoorPro.bar != sawDockDoor.bar {
+            sawDockDoor = (DockDoorPro.running, DockDoorPro.bar)
+            dockDoorChanged()
+        }
         stepToy(mouse)
         if ball != nil, tick % 30 == 0, Date().timeIntervalSince(fetchStarted) > 30 { endFetch() }
         let target = prey(mouse)
@@ -1123,7 +1195,7 @@ final class CatController: ObservableObject {
             if tick % 6 == 0, route?.jump == nil { planChase(to: mouse) }
             if advance(speed: Self.runSpeed) { enter(.sitting) }
         case .walking:
-            if hasPrey { buddyPlan = nil; startHunt(target) } else if toy?.kind == .yarn { buddyPlan = nil; enter(.playing) } else if bowlHasFood { buddyPlan = nil; headToBowl() } else if wantsToChase(mouse) { buddyPlan = nil; startChase(to: mouse) } else if advance(speed: buddyPlan == .tag || buddyPlan == .scuffle || fetchRuns || busyMac || delivering != nil ? Self.runSpeed : Self.walkSpeed * (lowBattery ? 0.55 : 1)) { arrived() }
+            if hasPrey { buddyPlan = nil; startHunt(target) } else if toy?.kind == .yarn { buddyPlan = nil; enter(.playing) } else if bowlHasFood { buddyPlan = nil; headToBowl() } else if wantsToChase(mouse) { buddyPlan = nil; startChase(to: mouse) } else if advance(speed: buddyPlan == .tag || buddyPlan == .scuffle || (buddyPlan == .hands && handsAsked) || fetchRuns || bugRun || busyMac || delivering != nil ? Self.runSpeed : Self.walkSpeed * (lowBattery ? 0.55 : 1)) { arrived() }
         case .sitting, .grooming:
             if dizzyTicks > 0 {
                 // Sits it out, looking this way and that.
@@ -1305,6 +1377,160 @@ final class CatController: ObservableObject {
         if mood == .sitting { enter(.happy) }
     }
 
+    // MARK: Rock, paper, scissors
+
+    /// A game with its friend: "Rock, paper, scissors!", a hand over each
+    /// head, and the winner pleased; a draw goes again, up to three times.
+    private func startHands(with other: CatController, round: Int = 0) {
+        // Again after a draw, the hands from the last round may still be up.
+        let asked = handsAsked
+        handsAsked = false
+        // A hand from a game a while ago may not have been cleared yet.
+        let handsDown = reaction.map { Date() >= $0.until } ?? true
+        guard let theirs = other.feet, abs(theirs.y - position.y) < 12, round > 0 || (handsDown && other.joinHands()) else {
+            if round > 0 {
+                other.endHands()
+                endHands()
+            } else if asked {
+                say(CatWords.handsBusy, essential: true)
+            }
+            return enter(.sitting)
+        }
+        reaction = nil
+        playingHands = true
+        facesRight = theirs.x > position.x
+        enter(.sitting)
+        stateLength = Int(Self.fps * 12)
+        if round == 0 { remark(CatWords.handsStart) }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.2) { [weak self, weak other] in
+            MainActor.assumeIsolated {
+                guard let self, let other, self.playingHands, other.playingHands else { return }
+                let mine = AgentArt.hands.randomElement() ?? .rock, yours = AgentArt.hands.randomElement() ?? .rock
+                self.react(mine, for: 2.2)
+                other.react(yours, for: 2.2)
+                DispatchQueue.main.asyncAfter(deadline: .now() + 2.4) { [weak self, weak other] in
+                    MainActor.assumeIsolated {
+                        guard let self, let other, self.playingHands, other.playingHands else { return }
+                        if mine == yours, round < 2 { return self.startHands(with: other, round: round + 1) }
+                        self.endHands()
+                        other.endHands()
+                        let won: Bool? = mine == yours ? nil : mine.beats(yours)
+                        switch won {
+                        case true?:
+                            self.enter(.happy)
+                            other.react(.rainCloud, for: 2.5)
+                        case false?:
+                            other.enter(.happy)
+                            self.react(.rainCloud, for: 2.5)
+                        case nil:
+                            break
+                        }
+                        self.onHandsPlayed?(won, won == true ? mine.beating(yours) : won == false ? yours.beating(mine) : nil)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Asked for a game now (`play?toy=hands`, or from either pet's menu):
+    /// over to its friend for one, if there's a friend out and both have coins.
+    func challengeFriend() {
+        // Asked from the friend's menu: your pet comes over to play it.
+        if isFriend { return buddy?.challengeFriend() ?? () }
+        guard panel != nil, !playingHands, let other = buddy?.feet, canPlayHands?(true) == true else { return }
+        handsAsked = true
+        // Already beside its friend: straight into the game.
+        if abs(other.y - position.y) < 12, abs(other.x - position.x) < CatSprites.catSize.width * 1.5, let buddy {
+            return startHands(with: buddy)
+        }
+        let side: CGFloat = other.x > position.x ? -1 : 1
+        let spot = CGPoint(x: other.x + side * (CatSprites.catSize.width * 0.8), y: other.y)
+        planRoute(to: moves == .anywhere ? spot : CGPoint(x: spot.x, y: floorSurface(near: spot).y),
+                  on: moves == .anywhere ? nil : floorSurface(near: spot))
+        // It runs over for a game you asked for, rather than strolling.
+        buddyPlan = .hands
+        enter(.walking)
+    }
+
+    /// The friend plays along when it's sitting about, not busy with anything.
+    func joinHands() -> Bool {
+        guard panel != nil, !scuffling, !playingHands, mood.isIdle, buddyPlan == nil, !asleepAtHome, !isStretching else { return false }
+        playingHands = true
+        if let other = buddy?.feet { facesRight = other.x > position.x }
+        enter(.sitting)
+        stateLength = Int(Self.fps * 12)
+        return true
+    }
+
+    func endHands() {
+        guard playingHands else { return }
+        playingHands = false
+        if mood == .sitting { stateLength = Int(Self.fps * 2) }
+    }
+
+    // MARK: Waiting on agents
+
+    /// After this long waiting on a command, it nods off at its laptop.
+    static let dozesAfter: TimeInterval = 25 * 60
+
+    /// A picture over its head for a moment: confetti, a rain cloud, a hand.
+    func react(_ art: AgentArt, for seconds: TimeInterval) {
+        reaction = (art, Date().addingTimeInterval(seconds))
+        redraw()
+    }
+
+    /// An agent wants to do something risky: it comes over with its hackles
+    /// up, down low and puffing up by turns, until you've had a look.
+    func bristle(for seconds: TimeInterval = 6) {
+        bristlesUntil = Date().addingTimeInterval(seconds)
+    }
+
+    /// The command it was waiting on is over: confetti and a jump for joy
+    /// when it worked, a little rain cloud when it didn't.
+    func commandFinished(ok: Bool) {
+        react(ok ? .confetti : .rainCloud, for: ok ? 3.5 : 4)
+        if ok { celebrate() }
+    }
+
+    /// The command passed: it runs at the bug and catches it.
+    func catchBug(at spot: CGPoint, then caught: @escaping () -> Void) {
+        guard panel != nil, !isFriend, mood != .held, mood != .climbing else { return caught() }
+        runAtBug(spot, then: caught)
+    }
+
+    private func runAtBug(_ spot: CGPoint, then reached: (() -> Void)?) {
+        let target = CGPoint(x: spot.x - CatSprites.catSize.width / 2, y: spot.y)
+        planRoute(to: moves == .anywhere ? target : CGPoint(x: target.x, y: floorSurface(near: target).y),
+                  on: moves == .anywhere ? nil : floorSurface(near: target))
+        buddyPlan = nil
+        bugRun = true
+        onBugReached = reached
+        enter(.walking)
+    }
+
+    /// A helper is back with what it found: pleased to have it.
+    func parcelArrived() {
+        guard panel != nil, mood.isIdle || mood == .happy else { return }
+        enter(.happy)
+    }
+
+    /// What is over its head instead of the usual heart or note: a moment's
+    /// reaction, or what it's doing while it waits on a command.
+    private func agentEffect() -> (image: CGImage, rise: CGFloat)? {
+        if let reaction {
+            if Date() < reaction.until, mood != .climbing, mood != .held {
+                let hand = AgentArt.hands.contains(reaction.art)
+                return reaction.art.frame(at: tick, every: 3).map { ($0, hand ? 0 : CGFloat((tick / 3) % 3)) }
+            }
+            if Date() >= reaction.until { self.reaction = nil }
+        }
+        guard let since = waitingSince, mood == .sitting else { return nil }
+        let waited = Date().timeIntervalSince(since)
+        if waited >= Self.dozesAfter { return CatSprites.shared.image(.zzz).map { ($0, CGFloat((stateTicks / 6) % 3) * 2) } }
+        let art: AgentArt = waited < 180 ? .popcorn : waited < 600 ? .hourglass : .cobweb
+        return art.frame(at: tick, every: art == .hourglass ? 18 : 5).map { ($0, 0) }
+    }
+
     // MARK: Fetch
 
     /// A game of fetch: the ball in the air, the run after it, the trip
@@ -1415,6 +1641,8 @@ final class CatController: ObservableObject {
 
     /// Shows what an agent is doing on a tag at its side, or takes it down
     /// with nil.
+    var toolShown: AgentTool? { toolTag.tool }
+
     func showTool(_ tool: AgentTool?) {
         guard !isFriend else { return }
         toolTag.show(tool)
@@ -1472,6 +1700,14 @@ final class CatController: ObservableObject {
         if delivering != nil {
             return enter(.happy)
         }
+        if bugRun {
+            bugRun = false
+            let reached = onBugReached
+            onBugReached = nil
+            enter(reached == nil ? .sitting : .happy)
+            reached?()
+            return
+        }
         if fetchStage == .chasing || fetchStage == .carrying {
             return fetchArrived()
         }
@@ -1485,6 +1721,8 @@ final class CatController: ObservableObject {
             buddy?.celebrate()
         } else if plan == .scuffle, let other = buddy {
             startScuffle(with: other)
+        } else if plan == .hands, let other = buddy {
+            startHands(with: other)
         } else {
             enter(.sitting)
         }
@@ -1506,6 +1744,15 @@ final class CatController: ObservableObject {
             enter(.sitting)
             return
         }
+        // Waiting on an agent's long command: it doesn't leave its laptop.
+        if waitingSince != nil || playingHands {
+            enter(.sitting)
+            return
+        }
+        // A bug about: now and then it runs after it, and the bug runs off.
+        if let bug = bugSpot?(), Int.random(in: 0..<3) == 0 {
+            return runAtBug(bug, then: nil)
+        }
         // An agent at work: back to its own laptop three times in four.
         if agentWorking, Int.random(in: 0..<4) != 0 {
             enter(.sitting)
@@ -1513,22 +1760,28 @@ final class CatController: ObservableObject {
         }
         // With a buddy around: a third of the time go and sit with it, now
         // and then run at it for a game of tag.
-        if let other = buddy?.feet, Int.random(in: 0..<10) < (isFriend ? 4 : 2) {
+        // A sleepy one goes over less often; a playful one plays tag more.
+        if let other = buddy?.feet, Int.random(in: 0..<10) < (isFriend ? 4 : 2) + (traits.contains(.sleepy) ? -1 : 0) {
             let roll = Int.random(in: 0..<6)
-            let tag = roll < 2
-            // Now and then the pet, never the friend, starts a play-fight.
-            let scuffle = !isFriend && roll == 2
+            let tag = roll < (traits.contains(.playful) ? 3 : 2)
+            // Now and then the pet, never the friend, starts a play-fight,
+            // or a game of rock, paper, scissors for coins: more often when
+            // it's competitive or likes a bet, never a fight when it's calm.
+            let scuffle = !isFriend && roll == 2 && !traits.contains(.calm)
+            let likesGames = traits.contains(.competitive) || traits.contains(.gambler)
+            let hands = !isFriend && !tag && (roll == 3 || (roll == 4 && likesGames)) && canPlayHands?(false) == true
             let side: CGFloat = other.x > position.x ? -1 : 1
             let spot = CGPoint(x: other.x + side * (CatSprites.catSize.width * 0.8), y: other.y)
             planRoute(to: moves == .anywhere ? spot : CGPoint(x: spot.x, y: floorSurface(near: spot).y),
                       on: moves == .anywhere ? nil : floorSurface(near: spot))
-            buddyPlan = scuffle ? .scuffle : tag ? .tag : .visit
+            buddyPlan = scuffle ? .scuffle : hands ? .hands : tag ? .tag : .visit
             enter(.walking)
             return
         }
         if musicPlaying {
             // Three dances in four; now and then a stroll to a new spot.
-            if Int.random(in: 0..<4) == 0 {
+            // To lofi it mostly stays at its laptop, studying.
+            if Int.random(in: 0..<(lofiVibe ? 8 : 4)) == 0 {
                 let (spot, surface) = randomSpot()
                 planRoute(to: spot, on: surface)
                 enter(.walking)
@@ -1578,6 +1831,11 @@ final class CatController: ObservableObject {
     private func enter(_ next: CatMood) {
         if next != mood { log?("mood \(mood) -> \(next) at \(position)") }
         if next != .walking { headingHome = false }
+        // Picked up or off after something else on the way: no bug at the end.
+        if next != .walking, next != .jumping, next != .falling {
+            bugRun = false
+            onBugReached = nil
+        }
         if next != .walking, let files = delivering {
             delivering = nil
             onDeliver?(files)
@@ -2055,7 +2313,33 @@ final class CatController: ObservableObject {
         let screen = Self.screen(containing: CGPoint(x: point.x + CatSprites.catSize.width / 2, y: point.y + 1))
             ?? Self.screen(containing: point) ?? NSScreen.main
         let area = screen?.visibleFrame ?? .zero
+        // DockDoor Pro's bar along the bottom of this screen: the pet walks on its icons.
+        if let bar = DockDoorPro.bar, let frame = screen?.frame, frame.contains(CGPoint(x: bar.midX, y: bar.midY)),
+           bar.minY - frame.minY < 150, bar.maxY > area.minY {
+            return CatSurface(y: bar.maxY, minX: max(area.minX, bar.minX), maxX: min(area.maxX, bar.maxX), windowID: nil)
+        }
         return CatSurface(y: area.minY, minX: area.minX, maxX: area.maxX, windowID: nil)
+    }
+
+    /// DockDoor Pro started, quit, or its bar moved: above it, and onto the new floor.
+    private func dockDoorChanged() {
+        // Every pet-level panel already made (the pet, its home, tags, signs, toys); not the bubble.
+        for case let window as CatPanel in NSApp.windows where window.followsPetLevel {
+            window.level = DockDoorPro.petLevel
+        }
+        if let home = homePanel {
+            let floor = floorSurface(near: CGPoint(x: home.frame.midX, y: home.frame.minY))
+            home.setFrameOrigin(CGPoint(x: min(max(home.frame.minX, floor.minX), floor.maxX - home.frame.width), y: floor.y))
+        }
+        guard panel != nil, moves != .anywhere, perch == nil, !isMidAir, mood != .held else { return }
+        let floor = floorSurface(near: position)
+        if position.y > floor.y + 1 {
+            startFalling()
+        } else if position.y < floor.y - 1 {
+            route = nil
+            position.y = floor.y
+            place()
+        }
     }
 
     private func currentSurface() -> CatSurface {
@@ -2381,6 +2665,8 @@ final class CatController: ObservableObject {
     private func animate() {
         let next: CatFrame
         switch mood {
+        // Hackles up: down low, then puffed up, fast.
+        case .sitting where bristling: next = (stateTicks / 3) % 2 == 0 ? .crouch1 : .crouch2
         case .sitting where musicPlaying:
             // Head-bobbing to the beat, eyes closed on the down beat, and a
             // turn to the other side every four beats.
@@ -2397,7 +2683,7 @@ final class CatController: ObservableObject {
         case .walking, .goingToBowl:
             // A four-beat walk, 1-2-3-2, at six steps a second.
             next = route?.jump != nil ? .run1
-                : buddyPlan == .tag || buddyPlan == .scuffle || fetchRuns || busyMac || delivering != nil ? ((tick / 2) % 2 == 0 ? .run1 : .run2)
+                : buddyPlan == .tag || buddyPlan == .scuffle || fetchRuns || bugRun || busyMac || delivering != nil ? ((tick / 2) % 2 == 0 ? .run1 : .run2)
                 : [CatFrame.walk1, .walk2, .walk3, .walk2][(tick / 2) % 4]
         case .chasing: next = route?.jump != nil ? .run1 : ((tick / 2) % 2 == 0 ? .run1 : .run2)
         case .jumping: next = .run1
@@ -2428,7 +2714,8 @@ final class CatController: ObservableObject {
         }
         if mood != .held { legSwing = 0 }
         if next != frame { frame = next }
-        bob = (mood == .sitting && musicPlaying && (tick / 5) % 2 == 1) ? CatSprites.scale * 2 : 0
+        // A bounce to the beat; to lofi, a slow nod.
+        bob = (mood == .sitting && musicPlaying && (tick / (lofiVibe ? 9 : 5)) % 2 == 1) ? CatSprites.scale * (lofiVibe ? 1 : 2) : 0
         // A key went down: it taps along, a pixel up and back.
         if atLaptop, tapTicks > 0 { bob += CatSprites.scale }
         if kind.flies, mood != .held, mood != .sleeping, mood != .eating {
@@ -2464,14 +2751,15 @@ final class CatController: ObservableObject {
 
     private func redraw() {
         guard let catLayer, let effectLayer else { return }
-        let effectShowing = mood == .happy || mood == .sleeping || (mood == .sitting && (isHungry || musicPlaying || dizzyTicks > 0 || yawnTicks > 0 || focusing || agentWorking || typing || busyMac)) || (mood == .walking && busyMac)
-        let look = "\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(wearsHeadphones)|\(costume ?? "")|\(legSwing)|\(atLaptop)|\(mood == .climbing ? climbSide ?? 0 : 0)"
+        let special = agentEffect()
+        let effectShowing = special != nil || reaction != nil || mood == .happy || mood == .sleeping || (mood == .sitting && (isHungry || musicPlaying || dizzyTicks > 0 || yawnTicks > 0 || focusing || agentWorking || typing || busyMac)) || (mood == .walking && busyMac)
+        let look = "\(CatSprites.shared.version)|\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(wearsHeadphones || lofiVibe)|\(costume ?? "")|\(legSwing)|\(atLaptop)|\(mood == .climbing ? climbSide ?? 0 : 0)"
         if let drawn, drawn.frame == frame, drawn.coat == coat, drawn.right == facesRight, drawn.bob == bob,
            drawn.look == look, !effectShowing, effectLayer.opacity == 0 {
             return
         }
         drawn = (frame, coat, facesRight, bob, look)
-        let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar, headphones: wearsHeadphones, costume: costume, kind: kind,
+        let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar, headphones: wearsHeadphones || lofiVibe, costume: costume, kind: kind,
                                                  swing: legSwing, laptop: atLaptop)
         spriteHeight = sprite.map { CGFloat($0.height) * CatSprites.scale } ?? spriteHeight
         catLayer.contents = sprite
@@ -2498,6 +2786,7 @@ final class CatController: ObservableObject {
         let scale = CatSprites.scale
         let effect: CatEffect?
         switch mood {
+        case _ where special != nil: effect = nil
         case .happy: effect = .heart
         case .sleeping: effect = .zzz
         case .sitting where dizzyTicks > 0: effect = [CatEffect.dizzy1, .dizzy2, .dizzy3][(tick / 2) % 3]
@@ -2509,7 +2798,7 @@ final class CatController: ObservableObject {
         case .sitting where musicPlaying: effect = .note
         default: effect = nil
         }
-        guard let effect, let image = CatSprites.shared.image(effect) else {
+        guard let image = special?.image ?? effect.flatMap({ CatSprites.shared.image($0) }) else {
             effectLayer.opacity = 0
             shownEffect = nil
             return
@@ -2523,10 +2812,11 @@ final class CatController: ObservableObject {
         let headX = facesRight ? size.width * 0.72 : size.width * 0.28
         let rise: CGFloat
         switch effect {
+        case nil: rise = special?.rise ?? 0
         case .heart: rise = CGFloat(stateTicks) * 0.9
         case .fish: rise = CGFloat((stateTicks / 8) % 2) * 2
         // A fresh note floats up on each turn, in step with the head.
-        case .note: rise = CGFloat(tick % 20) * 1.6
+        case .note: rise = lofiVibe ? CGFloat(tick % 40) * 0.8 : CGFloat(tick % 20) * 1.6
         case .code: rise = CGFloat(tick % 24) * 1.2
         default: rise = CGFloat((stateTicks / 6) % 3) * 2
         }
@@ -2608,7 +2898,7 @@ final class CatController: ObservableObject {
         if !didDrag, hypot(screenPoint.x - pressPoint.x, screenPoint.y - pressPoint.y) <= 4 { return }
         if !didDrag {
             didDrag = true
-            panel?.level = .floating
+            panel?.level = DockDoorPro.petLevel
             perch = nil
             perchOrigin = nil
             carrySpeed = 0
@@ -2733,7 +3023,7 @@ final class CatController: ObservableObject {
         CatSounds.shared.play(.purr, voice: kind)
         earn(.pet)
         if pets % 5 == 0 { remark(CatWords.purr(kind)) }
-        panel?.level = .floating
+        panel?.level = DockDoorPro.petLevel
         if mood != .eating { enter(.happy) }
     }
 
@@ -2848,12 +3138,15 @@ final class CatController: ObservableObject {
 /// A borderless, non-activating panel: clicking the cat never steals focus
 /// from the app you are in, and it follows you across Spaces.
 final class CatPanel: NSPanel {
+    /// False for the speech bubble, which always sits at the status-bar level.
+    var followsPetLevel = true
+
     init(contentRect: CGRect) {
         super.init(contentRect: contentRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
-        level = .floating
+        level = DockDoorPro.petLevel
         hidesOnDeactivate = false
         isReleasedWhenClosed = false
         isMovable = false
@@ -2862,7 +3155,10 @@ final class CatPanel: NSPanel {
         collectionBehavior = [.canJoinAllSpaces, .stationary, .ignoresCycle]
     }
 
-    override var canBecomeKey: Bool { false }
+    /// Whether it may take the keyboard, for a text field on it.
+    var takesKeys = false
+
+    override var canBecomeKey: Bool { takesKeys }
     override var canBecomeMain: Bool { false }
 
     /// The cat may be dropped or carried part off screen; never shove it back.
@@ -3004,56 +3300,105 @@ final class CatView: NSView {
         MainActor.assumeIsolated { controller.cancelPress() }
         let menu = NSMenu()
         menu.autoenablesItems = false
-        func item(_ title: String, _ symbol: String, _ action: Selector) -> NSMenuItem {
+        // `badge`: what the item is at now, on its right ("25 min", "Hungry").
+        func item(_ title: String, _ symbol: String, _ action: Selector, badge: String? = nil) -> NSMenuItem {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            if let badge, !badge.isEmpty { item.badge = NSMenuItemBadge(string: badge) }
             return item
         }
-        menu.addItem(item("Feed", "fork.knife", #selector(feed)))
-        menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
-        menu.addItem(item("Take a photo", "camera.fill", #selector(photo)))
-        menu.addItem(item("Record a GIF", "record.circle", #selector(recordGIF)))
-        if PageCapture.browserIsOpen {
-            menu.addItem(item("Capture the whole page", "camera.viewfinder", #selector(capturePage)))
+        func submenu(_ title: String, _ symbol: String, badge: String? = nil, _ items: [NSMenuItem]) -> NSMenuItem {
+            let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
+            entry.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            if let badge { entry.badge = NSMenuItemBadge(string: badge) }
+            let inner = NSMenu()
+            inner.autoenablesItems = false
+            items.forEach(inner.addItem)
+            entry.submenu = inner
+            return entry
         }
-        menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
-        if let meeting = MainActor.assumeIsolated({ controller.joinTitle }) {
+        let state = MainActor.assumeIsolated {
+            (meeting: controller.joinTitle, hungry: controller.isHungry, asleep: controller.isAsleep,
+             home: controller.hasHome && controller.homeOn, focusing: controller.focusing, onBreak: controller.onBreak,
+             focus: controller.focusLabel?(), lofi: controller.lofiLabel?(), lofiOn: controller.lofiPlaying,
+             note: controller.signIsNote, friend: controller.buddy != nil, games: controller.kind.actsLike.games,
+             playing: controller.toyKind != nil || controller.fetching, server: controller.localServer?(),
+             failedCI: controller.failedCI?(), talks: controller.canTalk?() ?? false,
+             notes: controller.notesLabel?(), notesKept: controller.hasNotes?() ?? false, takesNotes: controller.onNotes != nil)
+        }
+
+        // What can't wait comes first, together: the app your agent just
+        // started, a push whose checks failed, a meeting about to start.
+        if let port = state.server {
+            menu.addItem(item("Open localhost:\(port)", "safari", #selector(openServer)))
+        }
+        if let repo = state.failedCI {
+            menu.addItem(item("See why \(repo)'s CI failed", "xmark.octagon", #selector(openFailedCI)))
+        }
+        if let meeting = state.meeting {
             menu.addItem(item("Join “\(meeting)”", "video.fill", #selector(joinMeeting)))
         }
-        menu.addItem(item("Add a note…", "signpost.right", #selector(askSign)))
-        if MainActor.assumeIsolated({ controller.signIsNote }) {
-            menu.addItem(item("Done with this note", "checkmark.circle", #selector(dropSign)))
-        }
-        let focusing = MainActor.assumeIsolated { controller.focusing }
-        let onBreak = MainActor.assumeIsolated { controller.onBreak }
-        menu.addItem(focusing ? item("Stop focusing", "stop.circle", #selector(focus))
-                     : onBreak ? item("Skip the break", "forward.end", #selector(focus)) : item("Focus", "timer", #selector(focus)))
-        let asleep = MainActor.assumeIsolated { controller.isAsleep }
-        let home = MainActor.assumeIsolated { controller.hasHome && controller.homeOn }
-        menu.addItem(asleep ? item("Wake up", "sun.max", #selector(wake))
-                     : home ? item("Go home for a nap", "house.fill", #selector(nap)) : item("Nap", "moon.zzz", #selector(nap)))
-        let play = NSMenuItem(title: "Play", action: nil, keyEquivalent: "")
-        play.image = NSImage(systemSymbolName: "gamecontroller", accessibilityDescription: nil)
-        let toys = NSMenu()
+        if !menu.items.isEmpty { menu.addItem(.separator()) }
+
+        menu.addItem(.sectionHeader(title: "Care"))
+        if state.talks { menu.addItem(item("Talk to me", "mic.fill", #selector(talk))) }
+        menu.addItem(item("Feed", "fork.knife", #selector(feed), badge: state.hungry ? "Hungry" : nil))
+        menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
+        menu.addItem(state.asleep ? item("Wake up", "sun.max", #selector(wake))
+                     : state.home ? item("Go home for a nap", "house.fill", #selector(nap)) : item("Nap", "moon.zzz", #selector(nap)))
+
+        menu.addItem(.sectionHeader(title: "Play"))
         // Only the games this one plays, its own toy first.
-        for game in MainActor.assumeIsolated({ controller.kind.actsLike.games }) {
+        var toys: [NSMenuItem] = state.games.map { game in
             let entry = item(game.title, game.symbol, #selector(playGame(_:)))
             entry.representedObject = game.rawValue
-            toys.addItem(entry)
+            return entry
         }
-        if MainActor.assumeIsolated({ controller.toyKind != nil || controller.fetching }) {
-            toys.addItem(.separator())
-            toys.addItem(item("Stop playing", "stop.circle", #selector(stopPlaying)))
+        if state.friend {
+            toys.append(.separator())
+            toys.append(item("Rock, paper, scissors", "hand.raised.fingers.spread", #selector(playHands)))
         }
-        play.submenu = toys
-        menu.addItem(play)
+        if state.playing {
+            toys.append(.separator())
+            toys.append(item("Stop playing", "stop.circle", #selector(stopPlaying)))
+        }
+        menu.addItem(submenu("Play", "gamecontroller", toys))
+        menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
+
+        menu.addItem(.sectionHeader(title: "Work"))
+        menu.addItem(state.focusing ? item("Stop focus", "stop.circle", #selector(focus), badge: state.focus)
+                     : state.onBreak ? item("Skip the break", "forward.end", #selector(focus), badge: state.focus)
+                     : item("Focus", "timer", #selector(focus), badge: state.focus))
+        menu.addItem(state.lofiOn ? item("Pause lofi", "pause.circle", #selector(pauseLofi))
+                     : item("Play lofi", "headphones", #selector(lofi), badge: state.lofi))
+        menu.addItem(item("Add a note…", "signpost.right", #selector(askSign)))
+        if state.note {
+            menu.addItem(item("Done with this note", "checkmark.circle", #selector(dropSign)))
+        }
+
+        if state.takesNotes {
+            menu.addItem(.sectionHeader(title: "Meetings"))
+            menu.addItem(state.notes != nil ? item("Stop meeting notes", "stop.circle.fill", #selector(meetingNotes), badge: state.notes)
+                         : item("Take meeting notes", "waveform.badge.mic", #selector(meetingNotes)))
+            if state.notesKept, state.notes == nil {
+                menu.addItem(item("Open the last meeting notes", "doc.text", #selector(openNotes)))
+            }
+        }
+
+        menu.addItem(.separator())
+        var captures = [item("Photo", "camera.fill", #selector(photo)), item("GIF", "film", #selector(recordGIF))]
+        if PageCapture.browserIsOpen {
+            captures.append(item("Whole page", "camera.viewfinder", #selector(capturePage)))
+        }
+        menu.addItem(submenu("Capture", "camera", captures))
 
         let (points, worn, collars) = MainActor.assumeIsolated {
-            (controller.points, [controller.hat, controller.collar], controller.kind.wearsCollars)
+            (controller.wardrobeStars, [controller.hat, controller.collar], controller.kind.wearsCollars)
         }
-        let wardrobe = NSMenuItem(title: "Wardrobe (\(points) ★)", action: nil, keyEquivalent: "")
+        let wardrobe = NSMenuItem(title: "Wardrobe", action: nil, keyEquivalent: "")
         wardrobe.image = NSImage(systemSymbolName: "tshirt", accessibilityDescription: nil)
+        wardrobe.badge = NSMenuItemBadge(string: "\(points) ★")
         let clothes = NSMenu()
         clothes.autoenablesItems = false
         // Only a character that has a collar drawn for it is offered one.
@@ -3087,8 +3432,16 @@ final class CatView: NSView {
     @objc private func askSign() { MainActor.assumeIsolated { controller?.onAskSign?() } }
     @objc private func dropSign() { MainActor.assumeIsolated { controller?.signDone() } }
     @objc private func recordGIF() { MainActor.assumeIsolated { controller?.onRecordGIF?() } }
+    @objc private func lofi() { MainActor.assumeIsolated { controller?.onLofi?() } }
+    @objc private func pauseLofi() { MainActor.assumeIsolated { controller?.onPauseLofi?() } }
+    @objc private func playHands() { MainActor.assumeIsolated { controller?.challengeFriend() } }
     @objc private func capturePage() { MainActor.assumeIsolated { controller?.onCapturePage?() } }
     @objc private func joinMeeting() { MainActor.assumeIsolated { controller?.joinMeeting() } }
+    @objc private func openServer() { MainActor.assumeIsolated { controller?.onOpenServer?() } }
+    @objc private func meetingNotes() { MainActor.assumeIsolated { controller?.onNotes?() } }
+    @objc private func openNotes() { MainActor.assumeIsolated { controller?.onOpenNotes?() } }
+    @objc private func talk() { MainActor.assumeIsolated { controller?.onTalk?() } }
+    @objc private func openFailedCI() { MainActor.assumeIsolated { controller?.onOpenFailedCI?() } }
     @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
     @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
     @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }

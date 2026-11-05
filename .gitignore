@@ -8,6 +8,7 @@ shots/
 Design/
 Tools/__pycache__/
 # Agent wiring written by `droppykit agent`: absolute paths for one Mac.
+# Tracked here on purpose; ignored in the public export.
 AGENTS.md
 CLAUDE.md
 .mcp.json

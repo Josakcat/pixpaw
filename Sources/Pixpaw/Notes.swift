@@ -129,7 +129,11 @@ final class DistractionWatcher {
         guard let app = NSWorkspace.shared.frontmostApplication,
               app.bundleIdentifier != Bundle.main.bundleIdentifier else { return nil }
         var places = [app.localizedName ?? ""]
-        if let title = Self.frontWindowTitle(of: app.processIdentifier) { places.append(title) }
+        if let title = Self.frontWindowTitle(of: app.processIdentifier) {
+            // Lofi to study to, on YouTube or anywhere, is no distraction.
+            if Lofi.isLofi(title) { return nil }
+            places.append(title)
+        }
         return words.first { word in places.contains { Self.place($0, has: word) } }
     }
 

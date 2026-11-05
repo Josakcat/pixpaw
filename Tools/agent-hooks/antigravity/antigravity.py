@@ -7,7 +7,9 @@ the Antigravity app, the IDE and the agy CLI alike:
 
     antigravity.py working   PreInvocation: a turn starts
     antigravity.py tool      PreToolUse: what it's about to do, for the tag
-                             at the pet's side
+                             at the pet's side; a subagent sent off
+    antigravity.py tool-done PostToolUse: whether a command worked, and a
+                             subagent back
     antigravity.py done      Stop: finished, or failed
 
 It always prints nothing. A PreToolUse hook that prints a decision changes
@@ -56,6 +58,22 @@ TOOLS = {
     "read_url_content": "WebFetch", "read_url": "WebFetch",
     "invoke_subagent": "Task", "browser_subagent": "Task",
 }
+
+
+def workspace():
+    """workspace.py beside this file, which the install copies with it (one
+    folder up for a plugin installed before 1.10); None if it's missing."""
+    here = os.path.dirname(os.path.abspath(__file__))
+    sys.path[:0] = [here, os.path.dirname(here)]
+    try:
+        import workspace as found
+        return found
+    except Exception:
+        return None
+
+
+def folder(event):
+    return os.path.realpath(str(event.get("cwd") or event.get("workspacePath") or os.getcwd()))
 
 
 def scheme():
@@ -144,18 +162,33 @@ def usage_left(model):
             json.dump({"at": time.time(), "table": table}, open(USAGE, "w"))
         except OSError:
             pass
-    # Rows: group, limit, percent left, when it resets.
-    group = "claude and gpt" if re.search(r"claude|gpt", str(model), re.I) else "gemini models"
+    # Rows: group, limit, percent left, when it resets. A group is either
+    # the plan's family ("Gemini Models", "Claude and GPT models") or one
+    # model with a limit of its own ("Gemini 4 Argon"); both count for the
+    # model in use, so each window says the lower of the two.
+    family = "claude and gpt" if re.search(r"claude|gpt", str(model), re.I) else "gemini models"
+    plain_model = squash(model)
     left = {}
     for row in table.splitlines():
         cells = [c.strip() for c in row.split("\t")]
-        if len(cells) >= 3 and cells[0].lower().startswith(group) and re.fullmatch(r"\d+%", cells[2]):
-            if "five hour" in cells[1].lower():
-                left["5h"] = cells[2]
-            elif "weekly" in cells[1].lower():
-                left["week"] = cells[2]
-    said = " · ".join(f"{k} {left[k]}" for k in ("5h", "week") if k in left)
+        if len(cells) < 3 or not re.fullmatch(r"\d+%", cells[2]):
+            continue
+        group = squash(cells[0])
+        ours = group.startswith(squash(family)) or (plain_model and (group in plain_model or plain_model in group))
+        if not ours:
+            continue
+        kind = cells[1].lower()
+        window = "5h" if "five hour" in kind else "week" if "weekly" in kind else None
+        if window:
+            left[window] = min(left.get(window, 100), int(cells[2][:-1]))
+    said = " · ".join(f"{k} {left[k]}%" for k in ("5h", "week") if k in left)
     return f"{said} left" if said else ""
+
+
+def squash(name):
+    """A model's or group's name to compare: lower case, letters and digits
+    only ("Gemini 4 Argon", "gemini-4-argon" -> "gemini4argon")."""
+    return re.sub(r"[^a-z0-9]", "", str(name or "").lower())
 
 
 def target(tool, args):
@@ -173,6 +206,21 @@ def target(tool, args):
         host = u.urlsplit(str(args.get("Url") or args.get("url") or "")).hostname
         return f"https://{host}" if host else ""
     return ""
+
+
+def outcome(event):
+    """ok, or failed when the call came back with an error or a command
+    with a non-zero exit code."""
+    result = event.get("toolResult") or event.get("toolResponse") or event.get("result")
+    if event.get("error"):
+        return "failed"
+    if isinstance(result, dict):
+        if result.get("error") or str(result.get("status", "")).lower() in ("error", "failed"):
+            return "failed"
+        code = result.get("exitCode", result.get("ExitCode", result.get("exit_code")))
+        if isinstance(code, int) and code != 0:
+            return "failed"
+    return "ok"
 
 
 def main():
@@ -196,18 +244,39 @@ def main():
         # Once a turn: the first call to the model.
         if event.get("invocationNum", 0) == 0:
             tell(name=NAME, state="working", task=short(automation(asked), 40))
+            if (kit := workspace()) and event.get("conversationId"):
+                kit.turn_start(f"Antigravity-{event['conversationId']}", folder(event))
     elif state == "tool":
         call = event.get("toolCall") or {}
         name = str(call.get("name") or "")
         args = call.get("args") if isinstance(call.get("args"), dict) else {}
         tool = TOOLS.get(name) or ("Browser" if name.startswith("browser_") else None)
+        call = str(call.get("id") or call.get("toolCallId") or "")[:80]
+        # For a command that starts a dev server, the port it will be on.
+        kit = workspace() if tool == "Bash" else None
+        ports = ",".join(map(str, kit.dev_ports(args.get("CommandLine")))) if kit else ""
+        # A push to GitHub: the repository and branch, to wait for its CI.
+        pushed = getattr(kit, "pushed_to", None)
+        ci = pushed(args.get("CommandLine"), str(args.get("Cwd") or folder(event))) if pushed else ""
         if tool:
-            tell(name=NAME, state="tool", tool=tool, target=target(tool, args)[:100])
+            tell(name=NAME, state="tool", tool=tool, target=target(tool, args)[:100], id=call, ports=ports, ci=ci)
+        if tool == "Task":
+            # A helper off on its errand; it comes back at PostToolUse.
+            tell(name=NAME, state="helper", event="start", id=call or f"{event.get('conversationId', '')}-{time.time()}")
+    elif state == "tool-done":
+        call = event.get("toolCall") or {}
+        tool = TOOLS.get(str(call.get("name") or ""))
+        if tool in ("Bash", "Task"):
+            # Only which call and how it went; nothing of its output.
+            tell(name=NAME, state="tool-done", tool=tool, id=str(call.get("id") or call.get("toolCallId") or "")[:80],
+                 outcome=outcome(event))
     elif state == "done":
         failed = event.get("terminationReason") in FAILED
         task = automation(asked)
         result = (short(event.get("error"), 140) if failed else answer(event.get("transcriptPath"))) if task else ""
         pairs = {"name": NAME, "state": "error" if failed else "done", "task": short(task, 40), "result": result}
+        if (kit := workspace()) and event.get("conversationId"):
+            pairs["diff"] = kit.turn_diff(f"Antigravity-{event['conversationId']}", folder(event))
         if failed:
             return tell(**pairs)
         # Asking agy takes a few seconds: a child does it, and this returns.

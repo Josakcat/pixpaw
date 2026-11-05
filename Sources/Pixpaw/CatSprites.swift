@@ -11,6 +11,8 @@ import AppKit
 /// The coats a cat can wear, in the order the widget lists them.
 enum CatCoat: String, CaseIterable, Identifiable, Codable {
     case orange, black, white, gray, siamese, calico
+    /// Your own cat's colours, read from a photo (see PhotoCoat.swift).
+    case photo
 
     var id: String { rawValue }
 
@@ -22,14 +24,26 @@ enum CatCoat: String, CaseIterable, Identifiable, Codable {
         case .gray: "Gray tabby"
         case .siamese: "Siamese"
         case .calico: "Calico"
+        case .photo: "From your photo"
         }
     }
 
-    /// The swatch the widget draws for this coat.
-    var swatch: NSColor {
-        // Calico's base fur is white; its orange patches tell it apart from White.
-        NSColor(rgb: CatArt.coats[rawValue]?[self == .calico ? "s" : "f"] ?? 0xFFFFFF)
+    /// Its colours by palette letter; until there's a photo, the gray tabby's.
+    @MainActor var palette: [Character: UInt32]? {
+        self == .photo ? PhotoCoat.palette ?? CatArt.coats[CatCoat.gray.rawValue] : CatArt.coats[rawValue]
     }
+
+    /// The coats to pick from: the one from your photo once you've chosen a photo.
+    @MainActor static var choices: [CatCoat] { allCases.filter { $0 != .photo || PhotoCoat.palette != nil } }
+
+    /// The swatch the widget draws for this coat.
+    @MainActor var swatch: NSColor {
+        // Calico's base fur is white; its orange patches tell it apart from White.
+        NSColor(rgb: palette?[self == .calico ? "s" : "f"] ?? 0xFFFFFF)
+    }
+
+    /// Whether a tick on the swatch wants to be white.
+    @MainActor var isDark: Bool { (swatch.usingColorSpace(.sRGB)?.brightnessComponent ?? 1) < 0.45 }
 }
 
 /// Who lives on the desktop: the cat, or a character picked instead of it.
@@ -282,6 +296,19 @@ final class CatSprites {
 
     private var cache: [String: CGImage] = [:]
 
+    /// Folded ears, like a Scottish Fold's, on every cat.
+    var foldedEars = false {
+        didSet { if foldedEars != oldValue { forgetDrawings() } }
+    }
+
+    /// Goes up whenever drawings already made are out of date (a new photo
+    /// coat, ears folded), so a pet on screen knows to draw itself again.
+    private(set) var version = 0
+
+    func forgetDrawings() {
+        cache.removeAll()
+        version += 1
+    }
     /// The frame in its coat, wearing the hat and collar if it has them, and
     /// headphones in place of the hat while a pair is connected, or else a
     /// costume hat of the day (a party hat, a nightcap). The image
@@ -295,8 +322,10 @@ final class CatSprites {
         let hat = headphones && !kind.isOwn ? nil : costume ?? hat?.rawValue
         let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(headphones).\(swing).\(laptop)"
         if let hit = cache[key] { return hit }
-        guard let rows = (CatArt.frames[art] ?? OwnPets.frames[art]).map({ swing == 0 ? $0 : Self.swing($0, by: swing) }),
-              let palette = kind.isOwn ? OwnPets.colours[kind] : CatArt.coats[kind.hasCoats ? coat.rawValue : kind.rawValue] else { return nil }
+        let folded = foldedEars && kind == .cat
+        guard let rows = (CatArt.frames[art] ?? OwnPets.frames[art]).map({ folded ? Self.fold($0) : $0 })
+                .map({ swing == 0 ? $0 : Self.swing($0, by: swing) }),
+              let palette = kind.isOwn ? OwnPets.colours[kind] : kind.hasCoats ? coat.palette : CatArt.coats[kind.rawValue] else { return nil }
         // A pet you drew wears its hat on top of its head, and no collar.
         let anchor = CatArt.anchors[art] ?? OwnPets.hatSpots[art].map { ($0.0, $0.1, -1.0, -1) }
         let width = rows.first?.count ?? 0
@@ -347,6 +376,20 @@ final class CatSprites {
         let image = Self.render(grid)
         cache[key] = image
         return image
+    }
+
+    /// The cat's ears folded down: each pointed ear (a tip over outline,
+    /// pink, outline) loses its tip and lies flat as a line of outline.
+    private static func fold(_ rows: [String]) -> [String] {
+        var grid = rows.map(Array.init)
+        for y in grid.indices.dropLast() {
+            for x in grid[y].indices.dropFirst().dropLast() where grid[y][x] == "o" && (y == 0 || grid[y - 1][x] == ".")
+                && x + 1 < grid[y + 1].count && String(grid[y + 1][x - 1...x + 1]) == "opo" {
+                grid[y][x] = "."
+                grid[y + 1][x] = "o"
+            }
+        }
+        return grid.map { String($0) }
     }
 
     /// The bottom quarter of a frame (legs, tail) pushed `amount` art pixels

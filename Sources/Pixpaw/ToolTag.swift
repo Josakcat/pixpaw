@@ -21,6 +21,13 @@ struct AgentTool: Equatable {
     /// for a command or a helper, which can run for minutes.
     var lasts: TimeInterval = 8
 
+    init(agent: String, symbol: String, text: String, lasts: TimeInterval) {
+        self.agent = agent
+        self.symbol = symbol
+        self.text = text
+        self.lasts = lasts
+    }
+
     init?(agent: String, tool rawTool: String, target rawTarget: String?) {
         let tool = rawTool.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !tool.isEmpty else { return nil }
@@ -73,7 +80,7 @@ struct AgentTool: Equatable {
     /// A command's program and, when it is a plain word, what it is told to
     /// do ("git status", "swift build"); nothing after that, which is where
     /// tokens and paths would be.
-    private static func command(_ line: String) -> String? {
+    static func command(_ line: String) -> String? {
         let words = line.split(whereSeparator: \.isWhitespace).map(String.init)
         guard var program = words.first else { return nil }
         // `cd somewhere && …` says nothing; look past it.

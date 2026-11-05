@@ -8,6 +8,7 @@ import AVFoundation
 import Combine
 import DroppyKit
 import IOKit.pwr_mgt
+import LocalAuthentication
 import SwiftUI
 import UniformTypeIdentifiers
 
@@ -29,6 +30,15 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     private enum Key {
         static let coat = "coat"
+        static let photoCoat = "photoCoat"
+        static let talks = "talks"
+        static let notesModel = "meetingNotesModel"
+        static let notesModelName = "meetingNotesModelName"
+        static let notesLanguage = "meetingNotesLanguage"
+        static let notesHearOthers = "meetingNotesHearOthers"
+        static let notesSource = "meetingNotesSource"
+        static let hooksHeard = "hooksHeard"
+        static let foldedEars = "foldedEars"
         static let kind = "character"
         static let festivals = "festivals"
         static let festivalGreeted = "festivalGreeted"
@@ -80,7 +90,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let tellsScheduled = "tellsScheduled"
         static let scheduledOnSign = "scheduledOnSign"
         static let readsAsksAloud = "agentAsksAloud"
+        static let touchIDForRisky = "touchIDForRisky"
         static let showsAgentTools = "agentTools"
+        static let lofiSource = "lofiSource"
+        static let lofiLink = "lofiLink"
+        static let lofiWithFocus = "lofiWithFocus"
+        /// Waits on long commands, and helpers out on errands.
+        static let showsWaits = "agentWaits"
+        static let watchesCI = "watchesCI"
+        static let menuBarUsage = "menuBarUsage"
+        static let agentFiles = "agentFiles"
+        static let asksClaudeUsage = "asksClaudeUsage"
+        /// The pets' characters, coins and score at rock, paper, scissors.
+        static let social = "social"
+        static let stats = "stats"
         static let tellsLevels = "tellsLevels"
         static let tellsHeadphones = "tellsHeadphones"
         static let autoQuiet = "quietDuringCalls"
@@ -90,6 +113,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let friendCoat = "friendCoat"
         /// The friend's character; unset, the same as the pet's.
         static let friendKind = "friendKind"
+        /// What the friend wears, chosen from its own menu.
+        static let friendHat = "friendHat"
+        static let friendCollar = "friendCollar"
         static let health = "healthReminders"
         /// Before reminders had their own times: the stretch one's to begin with.
         static let healthMinutes = "healthMinutes"
@@ -149,16 +175,94 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var answersAsks = true
     /// And it reads them out.
     @Published private(set) var readsAsksAloud = true
+    @Published private(set) var touchIDForRisky = true
+    /// Touch ID is up for a risky one: no second prompt over it.
+    private var confirmingRisky = false
     /// What a coding agent is doing ("Editing CatController.swift"), on a
     /// tag at the pet's side.
     @Published private(set) var showsAgentTools = true
+    @Published private(set) var showsWaits = true
+    @Published private(set) var watchesCI = false
+    /// CI being waited for after a push, by "owner/repo@branch".
+    private var ciWatches: [String: CIWatch] = [:]
+    /// The run that failed last, for the pet's menu, until opened or green.
+    private var ciFailedURL: URL?
+    private var ciFailedRepo: String?
+    /// The paw in the menu bar with what's left of each agent's plan.
+    @Published private(set) var showsMenuBar = true
+    /// What's left of each agent's plan, re-read once a minute.
+    @Published private(set) var planUsage: [PlanUsage] = []
+    /// "5h 77% · week 59% left" as an agent's hook last sent it, for the
+    /// agents with no file of their own (Codex, others).
+    private var reportedUsage: [String: (usage: String, at: Date)] = [:]
+    @Published private(set) var lofiSource = LofiSource.youtube
+    @Published private(set) var lofiLink = ""
+    @Published private(set) var lofiWithFocus = false
+    /// Lofi the pet started: until the music has been off for a while,
+    /// whatever plays is taken for it, since Lofi Girl's tracks don't say
+    /// "lofi" in their names.
+    private var lofiStartedAt: Date?
+    private var musicStoppedAt: Date?
+    /// Started for a focus session, so a break pauses it.
+    private var lofiForFocus = false
+    /// When the pet paused it for a break: the next round within half an
+    /// hour picks it up again rather than opening it a second time.
+    private var lofiPausedAt: Date?
+    private var lofiPaused: Bool { lofiPausedAt.map { Date().timeIntervalSince($0) < 30 * 60 } ?? false }
     /// When the tool's tag comes down, unless the agent says more.
     private var toolAt = Date.distantPast
+    /// Commands agents are running, oldest first: past a little while, the
+    /// pet sits and waits on the oldest with it.
+    private var commands: [RunningCommand] = []
+    /// Ports a dev server an agent just started may come up on, and since
+    /// when; then the one that came up, for the menu.
+    private var serverWatch: (ports: [Int], since: Date)?
+    @Published private(set) var localServer: Int?
+    private var serverCheckedAt = Date.distantPast
+    /// The little helpers out on an agent's errand, by the agent's own id.
+    private var helpers: [String: HelperPet] = [:]
+    /// Bugs from failed tests and builds, by the command ("npm test").
+    private var bugs: [String: PixelBug] = [:]
+    /// Plan usage already warned about, by agent and window ("Claude 5h"),
+    /// with how low it was: once at 10% left, once more at 3%.
+    private var usageWarned: [String: Int] = [:]
+    private var usageCheckedAt = Date.distantPast
+    /// How fast each plan has gone down lately.
+    private var planPace = PlanPace()
+    /// Without the hooks: what Claude Code, Codex and Antigravity's own logs
+    /// say (AgentFiles.swift).
+    @Published private(set) var readsAgentFiles = true
+    private let claudeFiles = ClaudeSessions()
+    private let codexFiles = CodexRollouts()
+    private let antigravityFiles = AntigravityBrains()
+    private let geminiFiles = GeminiChats()
+    private var filesReadAt = Date.distantPast
+    /// When each agent's hook last spoke: while they do, the logs keep quiet.
+    private var hookHeardAt: [String: Date] = [:]
+    /// What the logs said, held a moment for a hook saying the same.
+    private var fileEvents: [(at: Date, agent: String, event: AgentFileEvent)] = []
+    /// Asking the `claude` command for the plan left.
+    @Published private(set) var asksClaudeUsage = true
+    private var claudeUsageAskedAt = Date.distantPast
+    private var claudeUsageTask: Task<Void, Never>?
+    /// Codex's plan as its log has it, with when each window resets.
+    private var fileUsage: [String: (text: String, plan: PlanUsage)] = [:]
+    /// The pets' characters, purses and score.
+    @Published private(set) var social = PetSocial.fresh()
+    /// This year's tally, for a card at its end.
+    @Published private(set) var stats = PetStats()
     private var askTimer: Timer?
     private var askQueue: [AgentAsk] = []
+    /// The question up on the pet's card, also in the menu bar's menu.
+    @Published private(set) var openAsk: AgentAsk?
+    /// The shelf widget on its plan-left page instead of the pet's.
+    @Published private(set) var widgetShowsPlans = false
+
+    func toggleWidgetPlans() { widgetShowsPlans.toggle() }
     private var askShownAt = Date.distantPast
     private var aliveAt = Date.distantPast
     private let voice = AVSpeechSynthesizer()
+    private let notePrompt = NotePrompt()
     private var awakeAssertion: IOPMAssertionID?
     @Published private(set) var tellsLevels = true
     @Published private(set) var tellsHeadphones = true
@@ -184,6 +288,27 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// The pets you drew, and what went wrong bringing the last one in.
     @Published private(set) var ownPets: [OwnPet] = []
     @Published private(set) var ownPetProblem: String?
+    @Published private(set) var photoCoatProblem: String?
+    @Published private(set) var readingPhoto = false
+    @Published private(set) var hasPhotoCoat = false
+    @Published private(set) var foldedEars = false
+    /// Talk to your pet: on once the microphone and speech recognition are allowed.
+    @Published private(set) var talks = false
+    @Published private(set) var talkProblem: String?
+    private let listener = PetListener()
+    /// Meeting notes: the meeting being written down, and how it's summed up.
+    private var meeting: MeetingRecorder?
+    private var meetingTimer: Timer?
+    @Published private(set) var takingNotes = false
+    @Published private(set) var summingUp = false
+    @Published private(set) var notesProblem: String?
+    @Published private(set) var lastNotes: URL?
+    @Published private(set) var notesModel = NoteModel.apple
+    @Published private(set) var notesModelName = ""
+    @Published private(set) var notesLanguage = MeetingLanguage.likely
+    @Published private(set) var notesSource = MeetingSource.both
+    /// Antigravity's models, once asked (`agy models`).
+    @Published private(set) var antigravityModels: [(id: String, name: String)] = []
     private var focusTimer: Timer?
     private var health: ReminderCoach?
 
@@ -217,6 +342,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var music: MusicWatcher?
     @Published private(set) var notificationsAllowed = false
     @Published private(set) var calendarAllowed = false
+    /// What Droppy is allowed, for Settings → Permissions.
+    @Published private(set) var permissionStatus: [DropletPermission: DropletPermissionStatus] = [:]
+    /// When each hook last spoke, kept across launches for Settings → Permissions
+    /// (agent names, and "pixpaw-ask" for the question hook).
+    @Published private(set) var hooksHeard: [String: Date] = [:]
     private var battery: BatteryWatcher?
     private var heat: HeatWatcher?
     /// When it last said the Mac was working hard, so it says so now and then, not every time.
@@ -230,6 +360,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var notifications: NotificationWatcher?
 
     private let activitySubject = CurrentValueSubject<LiveActivityState?, Never>(nil)
+    private let lockSubject = CurrentValueSubject<LockScreenStatusEntry?, Never>(nil)
     private var moodWatch: AnyCancellable?
 
     public func activate(host: DropletHost) throws {
@@ -238,6 +369,18 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         ownPets = prefs.value(forKey: Key.ownPets, as: [OwnPet].self) ?? []
         OwnPets.soundFolder = host.environment.containerDirectory.appendingPathComponent("Own pet sounds", isDirectory: true)
         OwnPets.use(ownPets)
+        PhotoCoat.use(prefs.value(forKey: Key.photoCoat, as: [String: UInt32].self))
+        hasPhotoCoat = PhotoCoat.palette != nil
+        foldedEars = prefs.value(forKey: Key.foldedEars, default: false)
+        CatSprites.shared.foldedEars = foldedEars
+        talks = prefs.value(forKey: Key.talks, default: false)
+        notesModel = NoteModel(rawValue: prefs.value(forKey: Key.notesModel, default: "")) ?? (NoteModel.apple.available ? .apple : .none)
+        notesModelName = prefs.value(forKey: Key.notesModelName, default: "")
+        notesLanguage = MeetingLanguage(rawValue: prefs.value(forKey: Key.notesLanguage, default: "")) ?? .likely
+        // Before the choice of three, a switch for hearing the others too.
+        notesSource = MeetingSource(rawValue: prefs.value(forKey: Key.notesSource, default: ""))
+            ?? (prefs.value(forKey: Key.notesHearOthers, default: true) ? .both : .microphone)
+        hooksHeard = (prefs.value(forKey: Key.hooksHeard, as: [String: Double].self) ?? [:]).mapValues(Date.init(timeIntervalSince1970:))
         let kind = PetKind(rawValue: prefs.value(forKey: Key.kind, default: PetKind.cat.rawValue)) ?? .cat
         let cat = CatController(
             kind: kind.isOwn && OwnPets.pet(kind) == nil ? .cat : kind,
@@ -264,6 +407,29 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.onPhoto = { [weak self] in self?.takePhoto() }
         cat.onCapturePage = { [weak self] in self?.capturePage() }
         cat.onRecordGIF = { [weak self] in self?.recordGIF() }
+        cat.onLofi = { [weak self] in self?.playLofi() }
+        cat.onPauseLofi = { [weak self] in self?.pauseLofi() }
+        cat.lofiLabel = { [weak self] in self?.lofiSource.short }
+        cat.localServer = { [weak self] in self?.localServer }
+        cat.onOpenServer = { [weak self] in self?.openLocalServer() }
+        cat.canTalk = { [weak self] in self?.talks == true }
+        cat.notesLabel = { [weak self] in
+            guard let self, let meeting = self.meeting else { return nil }
+            return "\(meeting.minutes) min"
+        }
+        cat.hasNotes = { [weak self] in self?.lastNotes != nil }
+        cat.onNotes = { [weak self] in self?.toggleMeetingNotes() }
+        cat.onOpenNotes = { [weak self] in
+            if let notes = self?.lastNotes { self?.host?.workspace.open(notes) }
+        }
+        cat.onTalk = { [weak self] in self?.talkToPet() }
+        cat.failedCI = { [weak self] in self?.ciFailedURL == nil ? nil : self?.ciFailedRepo }
+        cat.onOpenFailedCI = { [weak self] in
+            guard let self, let url = self.ciFailedURL else { return }
+            self.host?.workspace.open(url)
+            self.ciFailedURL = nil
+        }
+        cat.focusLabel = { [weak self] in self?.focusLabel }
         cat.onFocus = { [weak self] in self?.toggleFocus() }
         // Counted from the first time the droplet ran, which its folder
         // remembers for anyone who had it before the tally existed.
@@ -274,6 +440,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         let logger = host.log
         cat.log = { message in logger.debug(message) }
         self.cat = cat
+        if let kept = prefs.value(forKey: Key.social, as: PetSocial.self) { social = kept } else { prefs.setValue(social, forKey: Key.social) }
+        stats = prefs.value(forKey: Key.stats, as: PetStats.self) ?? PetStats()
+        cat.traits = social.petTraits
+        cat.canPlayHands = { [weak self] asked in self?.canPlayHands(asked: asked) ?? false }
+        cat.onHandsPlayed = { [weak self] won, how in self?.handsPlayed(won, how: how) }
+        cat.bugSpot = { [weak self] in self?.bugs.values.first { !$0.caught }?.spot }
         isPinned = prefs.value(forKey: Key.pinned, default: false)
         tellsNotifications = prefs.value(forKey: Key.tellsNotifications, default: true)
         tellsCalendar = prefs.value(forKey: Key.tellsCalendar, default: true)
@@ -307,7 +479,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         tellsScheduled = prefs.value(forKey: Key.tellsScheduled, default: true)
         scheduledOnSign = prefs.value(forKey: Key.scheduledOnSign, default: true)
         readsAsksAloud = prefs.value(forKey: Key.readsAsksAloud, default: true)
+        touchIDForRisky = prefs.value(forKey: Key.touchIDForRisky, default: true)
         showsAgentTools = prefs.value(forKey: Key.showsAgentTools, default: true)
+        showsWaits = prefs.value(forKey: Key.showsWaits, default: true)
+        watchesCI = prefs.value(forKey: Key.watchesCI, default: false)
+        showsMenuBar = prefs.value(forKey: Key.menuBarUsage, default: true)
+        readsAgentFiles = prefs.value(forKey: Key.agentFiles, default: true)
+        asksClaudeUsage = prefs.value(forKey: Key.asksClaudeUsage, default: true)
+        lofiSource = LofiSource(rawValue: prefs.value(forKey: Key.lofiSource, default: LofiSource.youtube.rawValue)) ?? .youtube
+        lofiLink = prefs.value(forKey: Key.lofiLink, default: "")
+        lofiWithFocus = prefs.value(forKey: Key.lofiWithFocus, default: false)
         tellsLevels = prefs.value(forKey: Key.tellsLevels, default: true)
         tellsHeadphones = prefs.value(forKey: Key.tellsHeadphones, default: true)
         quietsAutomatically = prefs.value(forKey: Key.autoQuiet, default: true)
@@ -328,6 +509,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         askTimer = Timer.scheduledTimer(withTimeInterval: 1, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.tickAsks() }
         }
+        publishLockScreen()
+        refreshPlanUsage()
         refreshPermissionState()
         applyQuiet()
         permissionWatch = NSWorkspace.shared.notificationCenter.addObserver(
@@ -345,7 +528,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
         host.shortcuts.register(
             id: "toggle-cat",
-            title: "Show or hide the cat",
+            title: "Show or hide your pet",
             defaultShortcut: DropletKeyboardShortcut(
                 keyCode: 8, // C
                 modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue
@@ -363,8 +546,24 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         ) { [weak self] in
             self?.askForNote()
         }
+        host.shortcuts.register(
+            id: "talk",
+            title: "Talk to your pet",
+            defaultShortcut: DropletKeyboardShortcut(
+                keyCode: 17, // T
+                modifiers: NSEvent.ModifierFlags([.control, .option]).rawValue
+            )
+        ) { [weak self] in
+            self?.talkToPet()
+        }
+        host.shortcuts.register(id: "meeting-notes", title: "Start or stop meeting notes", defaultShortcut: nil) { [weak self] in
+            self?.toggleMeetingNotes()
+        }
         host.shortcuts.register(id: "record-gif", title: "Record a GIF of your pet", defaultShortcut: nil) { [weak self] in
             self?.recordGIF()
+        }
+        host.shortcuts.register(id: "play-lofi", title: "Play lofi", defaultShortcut: nil) { [weak self] in
+            self?.playLofi()
         }
         host.shortcuts.register(id: "capture-page", title: "Capture the whole page in your browser", defaultShortcut: nil) { [weak self] in
             self?.capturePage()
@@ -372,16 +571,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         host.shortcuts.register(id: "join-meeting", title: "Join your next video call", defaultShortcut: nil) { [weak self] in
             self?.joinNextMeeting()
         }
-        host.shortcuts.register(id: "call-cat", title: "Call the cat over", defaultShortcut: nil) { [weak self] in
+        host.shortcuts.register(id: "call-cat", title: "Call your pet over", defaultShortcut: nil) { [weak self] in
             self?.callOver()
         }
-        host.shortcuts.register(id: "quiet-cat", title: "Turn the cat's quiet mode on or off", defaultShortcut: nil) { [weak self] in
+        host.shortcuts.register(id: "quiet-cat", title: "Turn your pet's quiet mode on or off", defaultShortcut: nil) { [weak self] in
             self?.toggleQuiet()
         }
-        host.shortcuts.register(id: "feed-cat", title: "Feed the cat", defaultShortcut: nil) { [weak self] in
+        host.shortcuts.register(id: "feed-cat", title: "Feed your pet", defaultShortcut: nil) { [weak self] in
             self?.feed()
         }
-        host.shortcuts.register(id: "nap-cat", title: "Send the cat to nap in the notch", defaultShortcut: nil) { [weak self] in
+        host.shortcuts.register(id: "nap-cat", title: "Send your pet to nap in the notch", defaultShortcut: nil) { [weak self] in
             self?.cat?.goHome()
         }
 
@@ -421,8 +620,17 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     public func deactivate() {
+        stopCIWatches()
+        listener.stop()
+        meetingTimer?.invalidate()
+        meetingTimer = nil
+        _ = meeting?.stop()
+        meeting = nil
+        notePrompt.close()
         gif?.cancel()
         gif = nil
+        claudeUsageTask?.cancel()
+        claudeUsageTask = nil
         festivalCheck?.invalidate()
         focusTimer?.invalidate()
         focusTimer = nil
@@ -447,12 +655,18 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         askTimer?.invalidate()
         askTimer = nil
         skipAllAsks()
+        sendHelpersHome(now: true)
+        clearBugs()
+        commands = []
+        serverWatch = nil
+        localServer = nil
         voice.stopSpeaking(at: .immediate)
         agents = [:]
         refreshKeepAwake()
         moodWatch?.cancel()
         moodWatch = nil
         activitySubject.send(nil)
+        lockSubject.send(nil)
         cat?.hide()
         cat = nil
         host = nil
@@ -464,6 +678,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         guard let cat else { return }
         out ? cat.show() : cat.hide()
         isOut = cat.isVisible
+        if !isOut {
+            sendHelpersHome(now: true)
+            clearBugs()
+        }
         updateFriend()
         host?.preferences.setValue(isOut, forKey: Key.visible)
         publishActivity()
@@ -478,6 +696,291 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func setCoat(_ coat: CatCoat) {
         cat?.coat = coat
         persist()
+    }
+
+    /// Reads a photo of your own cat into a coat and puts it on. Vision does
+    /// it on the Mac; only the colours are kept.
+    func coatFromPhoto() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [.image]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a photo of your cat: clearly in view, in good light, on a plain background."
+        NSApp.activate()
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { self?.readPhoto(url) }
+        }
+    }
+
+    private func readPhoto(_ url: URL) {
+        readingPhoto = true
+        photoCoatProblem = nil
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { Result { try PhotoCoat.read(url) } }.value
+            guard let self else { return }
+            readingPhoto = false
+            switch result {
+            case .success(let palette):
+                PhotoCoat.use(palette)
+                hasPhotoCoat = true
+                host?.preferences.setValue(palette, forKey: Key.photoCoat)
+                if cat?.kind.hasCoats == false { setKind(.cat) }
+                setCoat(.photo)
+                cat?.celebrate()
+            case .failure(let error):
+                photoCoatProblem = error.localizedDescription
+            }
+        }
+    }
+
+    func forgetPhotoCoat() {
+        PhotoCoat.use(nil)
+        hasPhotoCoat = false
+        host?.preferences.setValue([String: UInt32]?.none, forKey: Key.photoCoat)
+        if cat?.coat == .photo { setCoat(.gray) }
+        if friendCoat == .photo { setFriendCoat(.gray) }
+    }
+
+    /// Turning it on asks for the microphone and speech recognition,
+    /// through Droppy, which owns the prompts.
+    func setTalks(_ on: Bool) {
+        talkProblem = nil
+        guard on else {
+            listener.stop()
+            talks = false
+            host?.preferences.setValue(false, forKey: Key.talks)
+            return
+        }
+        guard let host else { return }
+        Task { @MainActor [weak self] in
+            var allowed = true
+            for permission in [DropletPermission.microphone, .speechRecognition] where host.permissions.status(for: permission) != .granted {
+                let status = await host.permissions.request(permission)
+                if status == .denied { host.permissions.openSystemSettings(for: permission) }
+                if status != .granted { allowed = false }
+            }
+            guard let self else { return }
+            self.talks = allowed
+            host.preferences.setValue(allowed, forKey: Key.talks)
+            if !allowed { self.talkProblem = "Droppy needs the microphone and speech recognition, in System Settings → Privacy & Security." }
+        }
+    }
+
+    /// Listens for a few seconds and does what you say; again while it
+    /// listens, it stops and goes by what it heard.
+    func talkToPet() {
+        guard talks else { return }
+        if listener.listening { return listener.finish() }
+        if !isOut { setOut(true) }
+        guard let cat else { return }
+        listener.hearing = { [weak cat] text in
+            cat?.say(CatLine(text: "“\(text.count > 60 ? "…" + text.suffix(59) : Substring(text))”", symbol: "ear", key: "listen", seconds: 2))
+        }
+        do {
+            try listener.listen { [weak self] said in self?.heard(said) }
+            cat.callOver()
+            cat.say(CatWords.listening)
+        } catch {
+            cat.say(CatLine(text: error.localizedDescription, symbol: "mic.slash", seconds: 6))
+        }
+    }
+
+    private func heard(_ said: String) {
+        guard let cat else { return }
+        guard let command = PetCommand.parse(said) else {
+            return cat.say(said.isEmpty ? CatWords.heardNothing : CatWords.didntUnderstand)
+        }
+        switch command {
+        case .come: callOver()
+        case .feed: feed()
+        case .treat: cat.giveTreat()
+        case .nap: napNow()
+        case .stretch: cat.stretchWithMe()
+        case .photo: takePhoto()
+        case .gif: recordGIF()
+        case .join: joinNextMeeting()
+        case let .focus(minutes): startFocus(minutes: minutes)
+        case .stopFocus: stopFocus()
+        case .lofi: playLofi()
+        case .pauseLofi: pauseLofi()
+        case let .play(game): cat.play(game ?? cat.kind.actsLike.games.first ?? .yarn)
+        case let .note(text): addNote(text)
+        case .usage: cat.say(usageSaid)
+        case let .quiet(on): setQuietByHand(on)
+        case .praise:
+            cat.earn(.pet)
+            cat.celebrate()
+        }
+    }
+
+    // MARK: Meeting notes
+
+    func setNotesModel(_ model: NoteModel) {
+        notesModel = model
+        notesModelName = ""
+        host?.preferences.setValue(model.rawValue, forKey: Key.notesModel)
+        host?.preferences.setValue("", forKey: Key.notesModelName)
+        if model == .antigravity { loadAntigravityModels() }
+    }
+
+    func setNotesModelName(_ name: String) {
+        notesModelName = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(80))
+        host?.preferences.setValue(notesModelName, forKey: Key.notesModelName)
+    }
+
+    func setNotesLanguage(_ language: MeetingLanguage) {
+        notesLanguage = language
+        host?.preferences.setValue(language.rawValue, forKey: Key.notesLanguage)
+    }
+
+    func setNotesSource(_ source: MeetingSource) {
+        notesSource = source
+        host?.preferences.setValue(source.rawValue, forKey: Key.notesSource)
+    }
+
+    func openNotesFolder() {
+        try? FileManager.default.createDirectory(at: MeetingNotes.folder, withIntermediateDirectories: true)
+        host?.workspace.open(MeetingNotes.folder)
+    }
+
+    /// `agy models`, for the model picker.
+    func loadAntigravityModels() {
+        guard antigravityModels.isEmpty, let agy = NoteModel.antigravity.command else { return }
+        Task { [weak self] in
+            let listed = await Task.detached(priority: .utility) { () -> [(id: String, name: String)] in
+                // droppykit-lint: allow process: `agy models` (read-only) from the user's own Antigravity CLI, only to fill the meeting-notes model picker once they pick Antigravity, off the main thread and ended after 20 seconds
+                let process = Process()
+                process.executableURL = agy
+                process.arguments = ["models"]
+                process.currentDirectoryURL = FileManager.default.temporaryDirectory
+                let output = Pipe()
+                process.standardOutput = output
+                process.standardError = FileHandle.nullDevice
+                guard (try? process.run()) != nil else { return [] }
+                DispatchQueue.global().asyncAfter(deadline: .now() + 20) { if process.isRunning { process.terminate() } }
+                let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
+                process.waitUntilExit()
+                return text.split(separator: "\n").compactMap { line in
+                    let parts = line.split(separator: "\t", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
+                    return parts.count == 2 && !parts[0].contains(" ") ? (parts[0], parts[1]) : nil
+                }
+            }.value
+            self?.antigravityModels = listed
+        }
+    }
+
+    /// Starts listening to the meeting, or stops and writes it up.
+    func toggleMeetingNotes() {
+        if meeting != nil { return stopMeetingNotes() }
+        guard !summingUp, let host else { return }
+        notesProblem = nil
+        // The Mac's sound alone needs no microphone.
+        let needed: [DropletPermission] = notesSource.hearsMicrophone ? [.microphone, .speechRecognition] : [.speechRecognition]
+        Task { @MainActor [weak self] in
+            for permission in needed where host.permissions.status(for: permission) != .granted {
+                let status = await host.permissions.request(permission)
+                if status == .denied { host.permissions.openSystemSettings(for: permission) }
+                guard status == .granted else {
+                    let what = needed.count > 1 ? "the microphone and speech recognition" : "speech recognition"
+                    self?.notesProblem = "Droppy needs \(what), in System Settings → Privacy & Security."
+                    self?.cat?.say(CatLine(text: "I need \(what) for that.", symbol: "mic.slash", seconds: 5))
+                    return
+                }
+            }
+            await self?.startMeetingNotes()
+        }
+    }
+
+    private func startMeetingNotes() async {
+        guard meeting == nil else { return }
+        if !isOut { setOut(true) }
+        do {
+            let recorder = try MeetingRecorder(language: notesLanguage, title: cat?.joinTitle ?? MeetingLink.next()?.title)
+            meeting = recorder
+            takingNotes = true
+            try await recorder.start(notesSource)
+            cat?.say(CatWords.notesStarted(hearsOthers: recorder.hearsOthers, wanted: notesSource))
+            showNotesTag()
+            meetingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated {
+                    guard let self, let meeting = self.meeting else { return }
+                    // Three hours at most: it was forgotten.
+                    if meeting.minutes >= 180 { return self.stopMeetingNotes() }
+                    self.showNotesTag()
+                }
+            }
+        } catch {
+            _ = meeting?.stop()
+            meeting = nil
+            takingNotes = false
+            notesProblem = error.localizedDescription
+            cat?.say(CatLine(text: error.localizedDescription, symbol: "mic.slash", seconds: 6))
+        }
+    }
+
+    private func showNotesTag() {
+        guard let meeting else { return }
+        let tag = AgentTool(agent: "Notes", symbol: "waveform.badge.mic", text: "Taking notes · \(meeting.minutes) min", lasts: 40)
+        toolAt = Date().addingTimeInterval(tag.lasts)
+        cat?.showTool(tag)
+    }
+
+    private func stopMeetingNotes() {
+        guard let meeting else { return }
+        meetingTimer?.invalidate()
+        meetingTimer = nil
+        let lines = meeting.stop()
+        self.meeting = nil
+        takingNotes = false
+        let transcript = MeetingNotes.transcript(lines, bothSides: meeting.hearsMicrophone && meeting.hearsOthers)
+        let model = lines.isEmpty ? .none : notesModel
+        let name = notesModelName
+        let language = notesLanguage
+        let by = model == .none ? nil : model == .apple ? "Apple Intelligence" : [model.title.components(separatedBy: " (").first ?? "", name].filter { !$0.isEmpty }.joined(separator: " ")
+        summingUp = model != .none
+        if model != .none {
+            cat?.say(CatWords.summingUp(by ?? ""))
+            let tag = AgentTool(agent: "Notes", symbol: "text.append", text: "Writing it up", lasts: 900)
+            toolAt = Date().addingTimeInterval(tag.lasts)
+            cat?.showTool(tag)
+        }
+        Task { [weak self] in
+            await meeting.stopped?.value
+            var summary = ""
+            var failed: String?
+            if model != .none {
+                do { summary = try await MeetingNotes.summarize(transcript, language: language, model: model, name: name) }
+                catch { failed = error.localizedDescription }
+            }
+            guard let self else { return }
+            self.summingUp = false
+            self.cat?.showTool(nil)
+            if let failed { summary = "_\(failed)_" }
+            do {
+                let file = try MeetingNotes.save(title: meeting.title, startedAt: meeting.startedAt, minutes: meeting.minutes,
+                                                 summary: summary, by: failed == nil ? by : nil, transcript: transcript)
+                self.lastNotes = file
+                self.addToShelf([file])
+                self.cat?.say(failed == nil ? CatWords.notesReady : CatWords.notesWithoutSummary)
+                if failed == nil { self.cat?.celebrate() }
+            } catch {
+                self.notesProblem = error.localizedDescription
+                self.cat?.say(CatLine(text: "I couldn't save the notes: \(error.localizedDescription)", symbol: "exclamationmark.triangle", seconds: 6))
+            }
+        }
+    }
+
+    /// What's left of each plan, in a line.
+    private var usageSaid: CatLine {
+        let left = planUsage.compactMap { plan in plan.lowest.map { "\(AgentLook.name(plan)) \($0)%" } }
+        return CatLine(text: left.isEmpty ? "No plan usage yet." : left.joined(separator: " · ") + " left",
+                       symbol: "gauge.with.dots.needle.67percent", seconds: 5)
+    }
+
+    func setFoldedEars(_ on: Bool) {
+        foldedEars = on
+        CatSprites.shared.foldedEars = on
+        host?.preferences.setValue(on, forKey: Key.foldedEars)
     }
 
     /// Swaps the cat for another character, or back; the friend follows.
@@ -527,6 +1030,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         guard let index = id.map({ id in notes.firstIndex { $0.id == id } }) ?? (notes.isEmpty ? nil : 0) else { return false }
         notes.remove(at: index)
         saveNotes()
+        countStat(.notesDone)
         cat?.earn(.note)
         if noteStreak.countToday() {
             host?.preferences.setValue(noteStreak, forKey: Key.noteStreak)
@@ -642,23 +1146,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.say(CatWords.noteDue(note.text), essential: true)
     }
 
-    /// Asks for a note to add.
+    /// Asks for a note to add, in a panel that never stops Droppy while it
+    /// waits (a modal alert would hold Droppy's main thread until answered).
     func askForNote() {
-        let alert = NSAlert()
-        alert.messageText = "Give your pet a note"
-        let full = notes.count >= PetNote.limit
-        alert.informativeText = full
-            ? "Its list is full (\(PetNote.limit) notes). Click the sign when one is done to make room."
-            : "It holds the first note up on its sign until you click it done, then the next. Add a time like “in 10 min” or “at 5pm” and it comes over to remind you."
-        let field = NSTextField(frame: CGRect(x: 0, y: 0, width: 280, height: 24))
-        field.placeholderString = "Buy milk"
-        if !full { alert.accessoryView = field }
-        alert.addButton(withTitle: full ? "OK" : "Add")
-        if !full { alert.addButton(withTitle: "Cancel") }
-        alert.window.initialFirstResponder = field
         if !isOut { setOut(true) }
-        NSApp.activate()
-        if alert.runModal() == .alertFirstButtonReturn, !full { addNote(field.stringValue) }
+        notePrompt.show(full: notes.count >= PetNote.limit, limit: PetNote.limit) { [weak self] text in
+            self?.addNote(text)
+        }
     }
 
     // MARK: Nudges
@@ -694,11 +1188,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Puts files on Droppy's shelf the way its Services menu item, Add to
     /// Droppy Shelf, does. Inside Droppy that is its own services provider,
     /// called directly (asking the services server would wait on itself);
-    /// anywhere else, the service by name.
+    /// anywhere else, the service by name. All of it on the main thread:
+    /// pasteboards and services are AppKit.
     private func addToShelf(_ urls: [URL]) {
         let board = NSPasteboard.withUniqueName()
         board.clearContents()
         board.writeObjects(urls as [NSURL])
+        // droppykit-lint: allow dynamic-lookup: Droppy's own Add to Droppy Shelf service (its public Services menu item), called in process because DroppyKit has no shelf-add API and asking the services server from inside Droppy would wait on itself; the selector is the fixed NSServices signature
         let selector = NSSelectorFromString("addToShelf:userData:error:")
         if let provider = NSApp.servicesProvider as? NSObject, provider.responds(to: selector),
            let method = class_getInstanceMethod(type(of: provider), selector) {
@@ -709,13 +1205,21 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             cat?.say(problem == nil ? CatWords.shelved : CatWords.noShelf)
             return
         }
+        // A host with services of its own but not this one would be asking
+        // itself, and NSPerformService waits for the answer: say so instead.
+        guard NSApp.servicesProvider == nil else {
+            board.releaseGlobally()
+            cat?.say(CatWords.noShelf)
+            return
+        }
+        // The service by name, on the main thread, once the drop that
+        // brought the files has finished.
         let name = board.name
-        DispatchQueue.global(qos: .userInitiated).async {
-            let done = NSPerformService("Add to Droppy Shelf", NSPasteboard(name: name))
-            DispatchQueue.main.async { [weak self] in
-                NSPasteboard(name: name).releaseGlobally()
-                self?.cat?.say(done ? CatWords.shelved : CatWords.noShelf)
-            }
+        DispatchQueue.main.async { [weak self] in
+            let board = NSPasteboard(name: name)
+            let done = NSPerformService("Add to Droppy Shelf", board)
+            board.releaseGlobally()
+            self?.cat?.say(done ? CatWords.shelved : CatWords.noShelf)
         }
     }
 
@@ -990,12 +1494,15 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             MainActor.assumeIsolated { self?.finishFocus() }
         }
         if nudgesOn { distractions.start() }
+        if lofiWithFocus { playLofi(forFocus: true) }
         applyQuiet()
         publishActivity()
     }
 
     /// Ends the session, a Pomodoro break included.
     func stopFocus() {
+        pauseLofiForBreak()
+        lofiForFocus = false
         clearFocus()
         clearBreak()
         cat?.keepSaying(nil)
@@ -1004,6 +1511,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     private func clearFocus() {
+        if let focusStartedAt { countStat(.focusMinutes, Int(Date().timeIntervalSince(focusStartedAt) / 60)) }
         focusTimer?.invalidate()
         focusTimer = nil
         focusStartedAt = nil
@@ -1021,6 +1529,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     private func finishFocus() {
+        countStat(.focusRounds)
         let minutes = Int(((focusEndsAt ?? Date()).timeIntervalSince(focusStartedAt ?? Date()) / 60).rounded())
         guard pomodoroOn else {
             stopFocus()
@@ -1034,6 +1543,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Pomodoro: five minutes off after each round, fifteen after the
     /// fourth, starting with a stretch together.
     private func startBreak() {
+        pauseLofiForBreak()
         clearFocus()
         let round = pomodoroRound
         let minutes = round % 4 == 0 ? 15 : 5
@@ -1281,6 +1791,29 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             calendarAllowed = calendar
             refreshAlerts()
         }
+        if let host {
+            var status: [DropletPermission: DropletPermissionStatus] = [:]
+            for permission in PixpawPermission.allCases.map(\.permission) { status[permission] = host.permissions.status(for: permission) }
+            // Accessibility as macOS itself has it, the way the notifications row does.
+            if notifications { status[.accessibility] = .granted }
+            if calendar { status[.calendars] = .granted }
+            if status != permissionStatus { permissionStatus = status }
+        }
+    }
+
+    /// Notes a hook speaking, at most once a minute so the preferences aren't
+    /// written on every tool call.
+    private func heardHook(_ name: String) {
+        let now = Date()
+        if let last = hooksHeard[name], now.timeIntervalSince(last) < 60 { return }
+        hooksHeard[name] = now
+        host?.preferences.setValue(hooksHeard.mapValues(\.timeIntervalSince1970), forKey: Key.hooksHeard)
+    }
+
+    /// When a hook for this agent last spoke: any name it sent that starts the same way
+    /// ("Claude", "Claude Code").
+    func hookHeard(_ agent: String) -> Date? {
+        hooksHeard.filter { $0.key.lowercased().hasPrefix(agent.lowercased()) }.values.max()
     }
 
     /// Asks through Droppy, which owns the system prompt.
@@ -1429,8 +1962,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if out, tellsMusic {
             if music == nil {
                 // A new song names itself and starts the cat dancing again.
-                music = MusicWatcher(onLine: { [weak cat] line in say(line); cat?.dance() }, onPlaying: { [weak cat] playing in
+                music = MusicWatcher(onLine: { [weak cat] line in say(line); cat?.dance() }, onPlaying: { [weak self, weak cat] playing in
                     if cat?.musicPlaying != playing { cat?.musicPlaying = playing }
+                    self?.updateLofi(playing: playing)
                 }, log: { [weak cat] message in cat?.log?(message) })
             }
             music?.start()
@@ -1492,15 +2026,25 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// (it needs you) or `error`, with an optional line of text.
     /// `task`: a scheduled run's name (a Desktop scheduled task or a /loop),
     /// and `result` the first line of what it came back with.
-    func agentEvent(name rawName: String, state rawState: String, text: String?, usage: String? = nil, task: String? = nil, result: String? = nil) {
+    func agentEvent(name rawName: String, state rawState: String, text: String?, usage: String? = nil, task: String? = nil, result: String? = nil,
+                    diff: String? = nil) {
         guard tellsAgents else { return }
         let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
         guard !name.isEmpty, let state = AgentStatus.State(rawValue: rawState.lowercased()) else { return }
         let previous = agents[name]?.state
-        agents[name] = AgentStatus(name: name, state: state, at: Date())
+        // "3 files · +84 −12": counts only, kept to what one looks like.
+        let changed = diff.map { String($0.prefix(48)) }.flatMap { $0.wholeMatch(of: #/[0-9a-z ·+−-]+/#) != nil ? $0 : nil }
+        agents[name] = AgentStatus(name: name, state: state, at: Date(), diff: state == .done ? changed : nil)
         publishActivity()
         refreshKeepAwake()
         if state != .working { cat?.showTool(nil) }
+        // A turn over: no command of its is still running in the foreground.
+        if state == .done || state == .error { endCommands(of: name) }
+        if state == .done, let usage { checkUsage(of: name, usage) }
+        if let usage, !usage.isEmpty {
+            reportedUsage[name] = (String(usage.prefix(60)), Date())
+            refreshPlanUsage()
+        }
         guard previous != state else { return }
 
         let detail = text.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(90)) }.flatMap { $0.isEmpty ? nil : $0 }
@@ -1511,9 +2055,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         case .working:
             cat?.say(CatLine(text: CatWords.agentWorking(name), symbol: "sparkles"))
         case .done:
-            // Done, and how much of the plan is left, e.g. "5h 76% · week 59% left".
+            // Done, what it changed and how much of the plan is left, e.g.
+            // "3 files · +84 −12 · 5h 76% · week 59% left".
             let left = usage.map { String($0.prefix(40)) }.flatMap { $0.isEmpty ? nil : $0 }
-            cat?.say(CatLine(text: left.map { "\(CatWords.agentDone(name)) \($0)" } ?? CatWords.agentDone(name), symbol: "checkmark.circle.fill"))
+            let after = [changed, left].compactMap { $0 }.joined(separator: " · ")
+            cat?.say(CatLine(text: after.isEmpty ? CatWords.agentDone(name) : "\(CatWords.agentDone(name)) \(after)", symbol: "checkmark.circle.fill"))
             cat?.celebrate()
         case .waiting:
             // Already over its head with the buttons to answer.
@@ -1529,9 +2075,25 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// An agent about to use a tool (`agent?state=tool&tool=Edit&target=…`):
     /// the tag at the pet's side says what and to which file, until the
     /// agent goes quiet for a few seconds or finishes.
-    func agentTool(name rawName: String, tool: String, target: String?) {
-        guard tellsAgents, showsAgentTools else { return }
+    func agentTool(name rawName: String, tool: String, target: String?, id: String? = nil, ports: String? = nil, ci: String? = nil) {
+        guard tellsAgents else { return }
+        if tool == "Bash", let ports { watchServer(ports) }
+        if tool == "Bash", let ci { watchCI(String(ci.prefix(200))) }
         let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        // The agent moved on to its next tool, so the command before is over,
+        // even without a hook saying how it went; calls made together arrive
+        // within a moment of each other and are kept.
+        if commands.contains(where: { $0.agent == name && Date().timeIntervalSince($0.since) > 2 }) {
+            commands.removeAll { $0.agent == name && Date().timeIntervalSince($0.since) > 2 }
+            tickCommands()
+        }
+        if tool == "Bash", !name.isEmpty {
+            let label = target.flatMap { AgentTool.command(String($0.prefix(300))) } ?? "A command"
+            commands.append(RunningCommand(id: id.map { String($0.prefix(80)) } ?? UUID().uuidString, agent: name, label: label, since: Date()))
+            commands.removeAll { Date().timeIntervalSince($0.since) > RunningCommand.forgottenAfter }
+            if commands.count > 8 { commands.removeFirst(commands.count - 8) }
+        }
+        guard showsAgentTools else { return }
         guard !name.isEmpty, let shown = AgentTool(agent: name, tool: String(tool.prefix(64)), target: target.map { String($0.prefix(300)) }) else { return }
         if agents[name]?.state != .working {
             agents[name] = AgentStatus(name: name, state: .working, at: Date())
@@ -1547,6 +2109,538 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         showsAgentTools = on
         host?.preferences.setValue(on, forKey: Key.showsAgentTools)
         if !on { cat?.showTool(nil) }
+    }
+
+    func setWatchesCI(_ on: Bool) {
+        watchesCI = on
+        host?.preferences.setValue(on, forKey: Key.watchesCI)
+        if !on { stopCIWatches() }
+    }
+
+    /// Whether GitHub's `gh` command is on this Mac, for Settings to say.
+    var hasGH: Bool { CIWatch.gh != nil }
+
+    private func stopCIWatches() {
+        ciWatches.values.forEach { $0.stop() }
+        ciWatches = [:]
+    }
+
+    /// Your agent pushed "owner/repo@branch": wait for its GitHub Actions.
+    private func watchCI(_ pushed: String) {
+        guard watchesCI, CIWatch.gh != nil, ciWatches[pushed] == nil || ciWatches.count < 4 else { return }
+        ciWatches[pushed]?.stop()
+        var made: CIWatch?
+        made = CIWatch(pushed) { [weak self] event in
+            guard let self, let watch = made else { return }
+            self.ciHeard(event, from: watch)
+            if case .started = event { return }
+            if self.ciWatches[pushed] === watch { self.ciWatches[pushed] = nil }
+        }
+        guard let watch = made else { return }
+        ciWatches[pushed] = watch
+        watch.start()
+    }
+
+    private func ciHeard(_ event: CIWatch.Event, from watch: CIWatch) {
+        guard isOut, let cat else { return }
+        let bug = "CI \(watch.name)"
+        switch event {
+        case let .started(workflows):
+            cat.say(CatWords.ciWaiting(watch.name, workflows))
+        case .passed:
+            cat.say(CatWords.ciPassed(watch.name))
+            if ciFailedRepo == watch.name { ciFailedURL = nil }
+            if let caught = bugs[bug] { catchBug(caught) } else { cat.celebrate() }
+        case let .failed(workflow, url):
+            cat.say(CatWords.ciFailed(watch.name, workflow))
+            CatSounds.shared.play(.hiss, voice: cat.kind)
+            ciFailedURL = url
+            ciFailedRepo = watch.name
+            releaseBug(bug)
+        case .cancelled:
+            cat.say(CatWords.ciCancelled(watch.name))
+        }
+    }
+
+    func setShowsWaits(_ on: Bool) {
+        showsWaits = on
+        host?.preferences.setValue(on, forKey: Key.showsWaits)
+        if !on { sendHelpersHome(now: false) }
+        tickCommands()
+    }
+
+    // MARK: Lofi
+
+    func setLofiSource(_ source: LofiSource) {
+        lofiSource = source
+        host?.preferences.setValue(source.rawValue, forKey: Key.lofiSource)
+        lofiPausedAt = nil
+    }
+
+    func setLofiLink(_ link: String) {
+        lofiLink = link.trimmingCharacters(in: .whitespacesAndNewlines)
+        host?.preferences.setValue(lofiLink, forKey: Key.lofiLink)
+    }
+
+    func setLofiWithFocus(_ on: Bool) {
+        lofiWithFocus = on
+        host?.preferences.setValue(on, forKey: Key.lofiWithFocus)
+    }
+
+    /// Beats to study to, from where you listen; picked up again when the
+    /// pet paused them for a break.
+    func playLofi(forFocus: Bool = false) {
+        if !isOut { setOut(true) }
+        if forFocus { lofiForFocus = true }
+        let source = lofiSource
+        if lofiPaused {
+            lofiPausedAt = nil
+            lofiStartedAt = Date()
+            Task { await Lofi.resume(source) }
+            return
+        }
+        // Still playing from before: nothing to open again.
+        if let lofiStartedAt, musicStoppedAt == nil, Date().timeIntervalSince(lofiStartedAt) > 5, cat?.musicPlaying == true { return }
+        let link = lofiLink
+        Task { [weak self] in
+            let opened = await Lofi.play(source, ownLink: link)
+            guard let self else { return }
+            if opened {
+                self.lofiPausedAt = nil
+                self.lofiStartedAt = Date()
+                self.musicStoppedAt = nil
+                self.cat?.say(CatWords.lofiOn(source))
+            } else {
+                self.cat?.say(CatWords.lofiNoLink)
+            }
+        }
+    }
+
+    /// Paused from its menu; Play lofi picks it up again.
+    func pauseLofi() {
+        lofiPausedAt = Date()
+        let source = lofiSource, playing = music?.othersPlaying ?? false
+        Task { await Lofi.pause(source, somethingPlaying: playing) }
+    }
+
+    /// For the pet's menu: how long a session is, or what's left of one.
+    private var focusLabel: String {
+        if let end = focusEndsAt ?? breakEndsAt { return "\(max(1, Int((end.timeIntervalSinceNow / 60).rounded(.up)))) min left" }
+        return "\(focusMinutes) min"
+    }
+
+    /// A break, or the end of focus: pauses lofi it started for the session.
+    private func pauseLofiForBreak() {
+        guard lofiForFocus, lofiStartedAt != nil, !lofiPaused, cat?.musicPlaying == true else { return }
+        lofiPausedAt = Date()
+        let source = lofiSource, playing = music?.othersPlaying ?? false
+        Task { await Lofi.pause(source, somethingPlaying: playing) }
+    }
+
+    /// Whether what's playing is lofi: a song that says so, or the music the
+    /// pet started, until it has been off for a couple of minutes.
+    private func updateLofi(playing: Bool) {
+        if playing { musicStoppedAt = nil } else if musicStoppedAt == nil { musicStoppedAt = Date() }
+        // Played again by hand during the break: nothing for the next round
+        // to pick up (the play/pause key would pause it instead).
+        if playing, let paused = lofiPausedAt, Date().timeIntervalSince(paused) > 8 { lofiPausedAt = nil }
+        if let stopped = musicStoppedAt, Date().timeIntervalSince(stopped) > 120, !lofiPaused { lofiStartedAt = nil }
+        let ours = lofiStartedAt != nil && (music?.playerPlaying == true || music?.othersPlaying == true)
+        let lofi = playing && (music?.playerIsLofi == true || ours)
+        if cat?.lofi != lofi { cat?.lofi = lofi }
+    }
+
+    // MARK: Long commands
+
+    /// A tool an agent used is over (`agent?state=tool-done&tool=Bash&id=…&outcome=ok|failed|stopped`).
+    /// A command that kept the pet waiting ends in confetti or a rain cloud;
+    /// a helper's errand ends in a parcel.
+    func agentToolDone(name rawName: String, tool: String, id: String?, outcome: String?) {
+        guard tellsAgents else { return }
+        let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        switch tool {
+        case "Bash":
+            let index = commands.firstIndex { $0.id == id } ?? commands.firstIndex { $0.agent == name }
+            guard let index else { return }
+            let command = commands.remove(at: index)
+            let took = Date().timeIntervalSince(command.since)
+            tickCommands()
+            guard showsWaits, outcome != "stopped" else { return }
+            if outcome == "failed", took >= RunningCommand.waitsAfter || RunningCommand.checksWork(command.label) {
+                releaseBug(command.label)
+            } else if outcome != "failed", let bug = bugs[command.label] {
+                catchBug(bug)
+            }
+            guard took >= RunningCommand.waitsAfter else { return }
+            countStat(.longCommands)
+            countStat(.minutesWaited, Int(took / 60))
+            let ok = outcome != "failed"
+            cat?.commandFinished(ok: ok)
+            let length = RunningCommand.length(took)
+            cat?.say(ok ? CatWords.commandPassed(command.label, length) : CatWords.commandFailed(command.label, length))
+        case "Task", "Agent":
+            helperEvent(name: name, id: id, event: "done")
+        default:
+            break
+        }
+    }
+
+    /// Every second: the pet waits on the oldest command that has run past a
+    /// little while, with how long it has taken on its tag.
+    private func tickCommands() {
+        commands.removeAll { Date().timeIntervalSince($0.since) > RunningCommand.forgottenAfter }
+        let waiting = showsWaits ? commands.first { Date().timeIntervalSince($0.since) >= RunningCommand.waitsAfter } : nil
+        cat?.waitingSince = waiting?.since
+        guard let waiting, showsAgentTools else {
+            // Its hourglass tag comes down with the command.
+            if cat?.toolShown?.symbol == "hourglass" { cat?.showTool(nil) }
+            return
+        }
+        let tag = AgentTool(agent: waiting.agent, symbol: "hourglass",
+                            text: "\(waiting.label) · \(RunningCommand.length(Date().timeIntervalSince(waiting.since)))", lasts: 5)
+        toolAt = Date().addingTimeInterval(tag.lasts)
+        if cat?.toolShown != tag { cat?.showTool(tag) }
+    }
+
+    /// The agent's turn is over: its commands are too.
+    private func endCommands(of agent: String) {
+        commands.removeAll { $0.agent == agent }
+        tickCommands()
+    }
+
+    // MARK: Dev servers
+
+    /// An agent ran a command that starts a dev server (`ports=5173`, or
+    /// the usual ones for a project's own script): watch for it to come up.
+    /// Of several, one already in use belongs to something else.
+    private func watchServer(_ list: String) {
+        let ports = list.split(separator: ",").prefix(8).compactMap { Int($0) }.filter { (1...65535).contains($0) }
+        guard !ports.isEmpty else { return }
+        let fresh = ports.count == 1 ? ports : ports.filter { !LocalServer.isListening($0) }
+        guard !fresh.isEmpty else { return }
+        serverWatch = (fresh, Date())
+        serverCheckedAt = .distantPast
+    }
+
+    /// Every two seconds: has the server come up (it says so once), and is
+    /// the one in the menu still there?
+    private func tickServer() {
+        guard Date().timeIntervalSince(serverCheckedAt) >= 2, localServer != nil || serverWatch != nil else { return }
+        serverCheckedAt = Date()
+        if let port = localServer, !LocalServer.isListening(port) { localServer = nil }
+        guard let watch = serverWatch else { return }
+        // A server that hasn't come up in three minutes isn't coming.
+        guard Date().timeIntervalSince(watch.since) < 180 else { return serverWatch = nil }
+        guard let port = watch.ports.first(where: LocalServer.isListening) else { return }
+        serverWatch = nil
+        guard port != localServer else { return }
+        localServer = port
+        if tellsAgents, cat?.chatty == true { cat?.say(CatLine(text: CatWords.serverUp(port), symbol: "safari")) }
+    }
+
+    func openLocalServer() {
+        guard let port = localServer, let url = URL(string: "http://localhost:\(port)") else { return }
+        host?.workspace.open(url)
+    }
+
+    // MARK: Bugs
+
+    /// Tests or a build failed: a bug turns up and scuttles about, one per
+    /// command, three at most.
+    private func releaseBug(_ key: String) {
+        guard isOut, let cat, bugs[key] == nil else { return }
+        for (old, bug) in bugs where Date().timeIntervalSince(bug.since) > RunningCommand.forgottenAfter {
+            bug.remove()
+            bugs[old] = nil
+        }
+        guard bugs.count < 3, let bug = PixelBug(key: key, near: cat) else { return }
+        bugs[key] = bug
+        bug.start()
+    }
+
+    /// The same command passed: the pet runs over and catches its bug, and
+    /// earns stars for it. Caught after a few seconds whatever happens, so
+    /// a pet that was picked up on the way doesn't leave it about.
+    private func catchBug(_ bug: PixelBug) {
+        bugs[bug.key] = nil
+        bug.freeze()
+        // Held here, not in `bugs`, until it is caught and gone.
+        let caught = { [weak self] in
+            guard !bug.caught else { return }
+            bug.squash()
+            self?.countStat(.bugsCaught)
+            self?.cat?.earn(.play)
+            self?.cat?.say(CatWords.bugCaught(bug.key))
+        }
+        cat?.catchBug(at: bug.spot, then: caught)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { caught() }
+    }
+
+    private func clearBugs() {
+        bugs.values.forEach { $0.remove() }
+        bugs = [:]
+    }
+
+    // MARK: Usage running low
+
+    /// "5h 8% · week 59% left": the pet comes over when a window is down to
+    /// 10%, and again at 3%; once a window has more again, it can warn anew.
+    private func checkUsage(of agent: String, _ usage: String) {
+        guard tellsAgents else { return }
+        for part in usage.replacingOccurrences(of: " left", with: "").components(separatedBy: " · ") {
+            let bits = part.split(separator: " ")
+            guard bits.count == 2, let left = Int(bits[1].dropLast()), bits[1].hasSuffix("%") else { continue }
+            let window = String(bits[0])
+            let key = "\(agent) \(window)"
+            guard left <= 10 else {
+                usageWarned[key] = nil
+                continue
+            }
+            let level = left <= 3 ? 3 : 10
+            guard level < usageWarned[key] ?? 100 else { continue }
+            usageWarned[key] = level
+            cat?.callOver()
+            cat?.say(CatWords.usageLow(agent, window: window, left: left), essential: true)
+        }
+    }
+
+    /// Claude Code's status line keeps its rate limits (Tools/agent-hooks/
+    /// usage.py): read now and then, so a warning comes mid-turn, not only
+    /// when Claude stops.
+    private func checkClaudeUsage() {
+        let file = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Caches/Pixpaw/claude-usage.json")
+        guard let data = try? Data(contentsOf: file),
+              let saved = (try? JSONSerialization.jsonObject(with: data)) as? [String: Any],
+              let at = saved["saved_at"] as? Double, Date().timeIntervalSince1970 - at < 6 * 3600 else { return }
+        var parts: [String] = []
+        for (window, name) in [("five_hour", "5h"), ("seven_day", "week")] {
+            guard let entry = saved[window] as? [String: Any], let used = entry["used"] as? Double else { continue }
+            // A window that has reset since is back to full.
+            let reset = (entry["resets_at"] as? Double).map { $0 < Date().timeIntervalSince1970 } ?? false
+            parts.append("\(name) \(reset ? 100 : max(0, min(100, Int((100 - used).rounded()))))%")
+        }
+        if !parts.isEmpty { checkUsage(of: "Claude", parts.joined(separator: " · ") + " left") }
+    }
+
+    // MARK: Plan usage in the menu bar
+
+    func setShowsMenuBar(_ on: Bool) {
+        showsMenuBar = on
+        host?.preferences.setValue(on, forKey: Key.menuBarUsage)
+    }
+
+    func setAsksClaudeUsage(_ on: Bool) {
+        asksClaudeUsage = on
+        host?.preferences.setValue(on, forKey: Key.asksClaudeUsage)
+        if on { askClaudeUsage(force: true) }
+    }
+
+    /// Without the status line (the Claude app doesn't run it), asks the
+    /// `claude` command what's left of the plan (ClaudeUsage.swift): soon
+    /// after Pixpaw starts, then every five minutes while Claude has been at
+    /// work in the last hour, unless the status line saved it lately.
+    private func askClaudeUsage(force: Bool = false) {
+        guard asksClaudeUsage, tellsAgents, host?.environment.isHarness == false, claudeUsageTask == nil else { return }
+        let now = Date()
+        if !force {
+            guard now.timeIntervalSince(claudeUsageAskedAt) >= 5 * 60,
+                  claudeUsageAskedAt == .distantPast || agents["Claude"].map({ now.timeIntervalSince($0.at) < 60 * 60 }) == true else { return }
+            // The status line saved it a moment ago.
+            if let saved = PlanUsageReader.claude(now: now)?.at, now.timeIntervalSince(saved) < 4 * 60 { return }
+        }
+        claudeUsageAskedAt = now
+        claudeUsageTask = Task { [weak self] in
+            let answered = await ClaudeUsage.ask()
+            guard let self else { return }
+            self.claudeUsageTask = nil
+            if answered { self.refreshPlanUsage() }
+        }
+    }
+
+    func setReadsAgentFiles(_ on: Bool) {
+        readsAgentFiles = on
+        host?.preferences.setValue(on, forKey: Key.agentFiles)
+        if !on {
+            fileEvents = []
+            fileUsage = [:]
+            refreshPlanUsage()
+        }
+    }
+
+    /// Reads what's saved again. The harness always gets a made-up example,
+    /// so its picture shows every colour and none of this Mac's own plans.
+    func refreshPlanUsage() {
+        let found = host?.environment.isHarness == true ? PlanUsageReader.sample()
+            : planPace.note(PlanUsageReader.all(reported: reportedUsage, read: fileUsage.values.map(\.plan)))
+        if found != planUsage { planUsage = found }
+    }
+
+    /// While a plan runs low or will run dry before it resets, the one with
+    /// the most left (40% or more in every window), to switch to.
+    var planToSwitchTo: PlanUsage? {
+        let short = planUsage.filter { $0.windows.contains { $0.level != .plenty || $0.runsOut != nil } }
+        guard !short.isEmpty else { return nil }
+        let shortIDs = Set(short.map(\.id))
+        return planUsage.filter { !shortIDs.contains($0.id) && ($0.lowest ?? 0) >= 40 }.max { ($0.lowest ?? 0) < ($1.lowest ?? 0) }
+    }
+
+    /// The question for the menu: the one up, or in the harness an example.
+    var menuAsk: AgentAsk? {
+        if let openAsk { return openAsk }
+        guard host?.environment.isHarness == true else { return nil }
+        return AgentAsk(id: "example-question", agent: "Claude", title: "Run this command?", detail: "npm test -- --watch=false",
+                        place: "pixpaw", options: ["Allow", "Always allow", "Deny"])
+    }
+
+    /// Every two seconds, what the agents' own logs say happened since. Each
+    /// event waits three seconds, and is dropped if that agent's hook has
+    /// spoken in the last ten minutes: with the hooks in, they tell it, with
+    /// the diff and the questions the logs don't have.
+    private func readAgentFiles() {
+        let now = Date()
+        guard readsAgentFiles, tellsAgents, host?.environment.isHarness == false else { return }
+        if now.timeIntervalSince(filesReadAt) >= 2 {
+            filesReadAt = now
+            for (agent, events) in [("Claude", claudeFiles.poll(now: now)), ("Codex", codexFiles.poll(now: now)),
+                                    ("Antigravity", antigravityFiles.poll(now: now)), ("Gemini", geminiFiles.poll(now: now))] {
+                fileEvents += events.map { (now, agent, $0) }
+            }
+        }
+        while let first = fileEvents.first, now.timeIntervalSince(first.at) >= 3 {
+            fileEvents.removeFirst()
+            let hooked = hookHeardAt[first.agent].map { now.timeIntervalSince($0) < 10 * 60 } ?? false
+            switch first.event {
+            case let .usage(text, plan):
+                fileUsage[first.agent] = (text, plan)
+                refreshPlanUsage()
+            case _ where hooked:
+                continue
+            case .working:
+                agentEvent(name: first.agent, state: "working", text: nil)
+            case .done:
+                agentEvent(name: first.agent, state: "done", text: nil, usage: fileUsage[first.agent]?.text)
+            case let .tool(name, target, id):
+                agentTool(name: first.agent, tool: name, target: target, id: id)
+            case let .toolDone(name, id, failed):
+                agentToolDone(name: first.agent, tool: name, id: id, outcome: failed ? "failed" : "ok")
+            case let .helper(id, back):
+                helperEvent(name: first.agent, id: id, event: back ? "done" : "start")
+            }
+        }
+    }
+
+    /// The agents to list in the menu bar's menu, waiting ones first.
+    var menuAgents: [AgentStatus] {
+        let order: [AgentStatus.State] = [.waiting, .error, .working, .done]
+        let mine = tellsAgents ? agents.values.sorted { order.firstIndex(of: $0.state)! < order.firstIndex(of: $1.state)! || ($0.state == $1.state && $0.name < $1.name) } : []
+        if mine.isEmpty, host?.environment.isHarness == true {
+            return [AgentStatus(name: "Claude", state: .working, at: Date().addingTimeInterval(-4 * 60)),
+                    AgentStatus(name: "Antigravity", state: .done, at: Date().addingTimeInterval(-9 * 60), diff: "3 files · +84 −12")]
+        }
+        return mine
+    }
+
+    /// The menu bar symbol: a raised hand while an agent needs you, else a
+    /// gauge as full as the emptiest window, or the paw with nothing known.
+    var menuBarSymbol: String {
+        if openAsk != nil || tellsAgents && agents.values.contains(where: { $0.state == .waiting }) { return "hand.raised.fill" }
+        guard let lowest = planUsage.compactMap(\.lowest).min() else { return "pawprint.fill" }
+        let level = lowest <= 10 ? "0" : lowest <= 33 ? "33" : lowest <= 50 ? "50" : lowest <= 75 ? "67" : "100"
+        return "gauge.with.dots.needle.\(level)percent"
+    }
+
+    // MARK: Helpers
+
+    /// A helper sent off (`agent?state=helper&event=start&id=…`) or back
+    /// with what it found (`event=done`).
+    func helperEvent(name rawName: String, id rawID: String?, event: String?) {
+        guard tellsAgents, showsWaits, isOut, let cat else { return }
+        let name = String(rawName.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+        let id = rawID.map { String($0.prefix(80)) }
+        if event == "done" {
+            // Its own id, or else the one of this agent's out longest.
+            let helper = id.flatMap { helpers[$0] } ?? helpers.values.filter { $0.agent == name }.min { $0.since < $1.since }
+            if let helper {
+                helper.deliver()
+                countStat(.parcels)
+            }
+            return
+        }
+        guard let id, helpers[id] == nil else { return }
+        // Errands that never came back.
+        for (key, old) in helpers where Date().timeIntervalSince(old.since) > RunningCommand.forgottenAfter {
+            old.leave()
+            helpers[key] = nil
+        }
+        guard helpers.count < 4, let helper = HelperPet(id: id, agent: name, beside: cat, index: helpers.count) else { return }
+        helper.onGone = { [weak self] in self?.helpers[id] = nil }
+        helpers[id] = helper
+        helper.start()
+    }
+
+    /// All helpers off home: walking, or gone at once when the pet goes in.
+    private func sendHelpersHome(now: Bool) {
+        for helper in helpers.values {
+            if now { helper.remove() } else { helper.leave() }
+        }
+        if now { helpers = [:] }
+    }
+
+    // MARK: The year together
+
+    /// One more for this year's tally.
+    func countStat(_ stat: PetStat, _ count: Int = 1) {
+        guard count > 0 else { return }
+        stats.add(stat, count)
+        host?.preferences.setValue(stats, forKey: Key.stats)
+    }
+
+    func clearStats() {
+        stats = PetStats()
+        host?.preferences.setValue(stats, forKey: Key.stats)
+    }
+
+    // MARK: Rock, paper, scissors
+
+    /// Both pets have coins to bet; one that lost everything gets a little
+    /// pocket money each day. A game you asked for still goes ahead: the
+    /// other spots it some, and if neither can, the pet says so.
+    private func canPlayHands(asked: Bool) -> Bool {
+        social.topUp(today: StarDay.today)
+        guard asked, !social.canPlay else { return social.canPlay }
+        guard let shared = social.share() else {
+            cat?.say(CatWords.handsBroke, essential: true)
+            return false
+        }
+        host?.preferences.setValue(social, forKey: Key.social)
+        cat?.say(CatWords.handsShared(shared.coins, petGave: shared.petGave), essential: true)
+        return true
+    }
+
+    /// The pet tells how it went: what it won or lost, and what it has.
+    private func handsPlayed(_ won: Bool?, how: String?) {
+        guard let won else {
+            if let line = CatWords.handsDraw.randomElement(), cat?.chatty == true { cat?.say(CatLine(text: line, symbol: "hand.raised.fill")) }
+            return
+        }
+        countStat(.gamesPlayed)
+        if won { countStat(.gamesWon) }
+        let stake = social.stake()
+        guard stake > 0 else { return }
+        social.settle(petWon: won, stake: stake)
+        host?.preferences.setValue(social, forKey: Key.social)
+        let competitive = social.petTraits.contains(.competitive)
+        guard cat?.chatty == true else { return }
+        cat?.say(won ? CatWords.handsWon(stake, have: social.petCoins, competitive: competitive, how: how)
+                     : CatWords.handsLost(stake, have: social.petCoins, competitive: competitive, how: how))
+    }
+
+    /// New characters for both, purses and score back to the start.
+    func resetSocial() {
+        social = PetSocial.fresh()
+        host?.preferences.setValue(social, forKey: Key.social)
+        cat?.traits = social.petTraits
+        friend?.traits = social.friendTraits
     }
 
     // MARK: Scheduled runs
@@ -1592,6 +2686,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         tickAsks()
     }
 
+    func setTouchIDForRisky(_ on: Bool) {
+        touchIDForRisky = on
+        host?.preferences.setValue(on, forKey: Key.touchIDForRisky)
+    }
+
     func setReadsAsksAloud(_ on: Bool) {
         readsAsksAloud = on
         host?.preferences.setValue(on, forKey: Key.readsAsksAloud)
@@ -1611,24 +2710,58 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func showNextAsk() {
         guard let cat else { return }
         askQueue.removeAll { !$0.isOpen }
-        guard !askQueue.isEmpty else { return cat.showAsk(nil) { _ in } }
+        guard !askQueue.isEmpty else { return putUp(nil) }
         let ask = askQueue.removeFirst()
         cat.callOver()
-        cat.showAsk(ask) { [weak self] choice in self?.answer(ask, with: choice) }
+        putUp(ask)
         askShownAt = Date()
-        CatSounds.shared.play(.meow, voice: cat.kind)
+        let risk = ask.risk
+        if risk != nil {
+            cat.bristle()
+            countStat(.carefulAsks)
+        }
+        CatSounds.shared.play(risk == nil ? .meow : .hiss, voice: cat.kind)
         if readsAsksAloud {
-            let speech = AVSpeechUtterance(string: ask.spoken ?? "\(ask.agent) needs you. \(ask.title)")
+            let said = ask.spoken ?? "\(ask.agent) needs you. \(ask.title)"
+            let speech = AVSpeechUtterance(string: risk.map { "Careful. \($0). \(said)" } ?? said)
             speech.voice = AVSpeechSynthesisVoice(language: "en-US")
             voice.stopSpeaking(at: .immediate)
             voice.speak(speech)
         }
     }
 
+    /// Allowing a risky one takes Touch ID, or your Mac's password: a
+    /// stray click or key can't let it through. Deny, a typed answer and
+    /// handing it back don't.
     private func answer(_ ask: AgentAsk, with choice: String) {
+        let allows = choice != AgentAsk.skip && !choice.hasPrefix(AgentAsk.typedPrefix) && !choice.localizedCaseInsensitiveContains("deny")
+        guard let risk = ask.risk, allows, touchIDForRisky else { return answered(ask, with: choice) }
+        let context = LAContext()
+        guard context.canEvaluatePolicy(.deviceOwnerAuthentication, error: nil) else { return answered(ask, with: choice) }
+        guard !confirmingRisky else { return }
+        confirmingRisky = true
+        context.localizedCancelTitle = "Not now"
+        let reason = "allow \(ask.agent) to run this: \(risk.prefix(1).lowercased() + risk.dropFirst())"
+        context.evaluatePolicy(.deviceOwnerAuthentication, localizedReason: reason) { [weak self] allowed, _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self else { return }
+                    self.confirmingRisky = false
+                    guard allowed else {
+                        self.cat?.say(CatWords.notAllowed)
+                        return
+                    }
+                    guard ask.isOpen, self.openAsk?.id == ask.id else { return }
+                    self.answered(ask, with: choice)
+                }
+            }
+        }
+    }
+
+    private func answered(_ ask: AgentAsk, with choice: String) {
         ask.answer(choice)
         voice.stopSpeaking(at: .immediate)
-        cat?.showAsk(nil) { _ in }
+        putUp(nil)
         if choice != AgentAsk.skip { cat?.say(CatWords.askAnswered(ask.agent, choice)) }
         showNextAsk()
     }
@@ -1638,7 +2771,22 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if let shown = cat?.askShown { shown.answer(AgentAsk.skip) }
         askQueue.forEach { $0.answer(AgentAsk.skip) }
         askQueue = []
-        cat?.showAsk(nil) { _ in }
+        putUp(nil)
+    }
+
+    /// Holds a question up on the card, and in the menu bar's menu; nil
+    /// takes it down from both.
+    private func putUp(_ ask: AgentAsk?) {
+        openAsk = ask
+        cat?.showAsk(ask) { [weak self] choice in
+            if let ask { self?.answer(ask, with: choice) }
+        }
+    }
+
+    /// An answer clicked in the menu bar's menu, for the question still up.
+    func answerOpenAsk(_ choice: String) {
+        guard let ask = openAsk, ask.isOpen, choice == AgentAsk.skip || ask.options.contains(choice) else { return }
+        answer(ask, with: choice)
     }
 
     /// You're at the Mac: the screen isn't locked and you've touched the
@@ -1652,6 +2800,17 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Each second: tells the hooks someone is here to answer (or that
     /// nobody is), and takes down a question its agent stopped asking.
     private func tickAsks() {
+        tickCommands()
+        tickServer()
+        publishLockScreen()
+        readAgentFiles()
+        if Date().timeIntervalSince(usageCheckedAt) >= 60 {
+            usageCheckedAt = Date()
+            checkClaudeUsage()
+            askClaudeUsage()
+            refreshPlanUsage()
+        }
+        if musicStoppedAt != nil { updateLofi(playing: cat?.musicPlaying ?? false) }
         let here = tellsAgents && answersAsks && isOut && cat != nil && Self.atTheMac
         if here {
             if Date().timeIntervalSince(aliveAt) >= 15 {
@@ -1672,7 +2831,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         if let shown = cat?.askShown, !shown.isOpen {
             voice.stopSpeaking(at: .immediate)
-            cat?.showAsk(nil) { _ in }
+            putUp(nil)
             showNextAsk()
         }
     }
@@ -1787,13 +2946,38 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if friend == nil {
             let friend = CatController(
                 kind: friendsKind, coat: friendCoat, chasesPointer: cat.chasesPointer, roaming: cat.roaming,
-                pouncesOnDrags: cat.pouncesOnDrags, chatty: false, pets: 0, lastFed: cat.lastFed
+                pouncesOnDrags: cat.pouncesOnDrags, chatty: false, pets: 0,
+                hat: CatAccessory(rawValue: host.preferences.value(forKey: Key.friendHat, default: "")),
+                collar: CatAccessory(rawValue: host.preferences.value(forKey: Key.friendCollar, default: "")),
+                lastFed: cat.lastFed
             )
             friend.isFriend = true
+            // Dressed from its own menu, with your pet's stars; kept for next time.
+            friend.onPersist = { [weak self, weak friend] in
+                guard let friend else { return }
+                self?.host?.preferences.setValue(friend.hat?.rawValue ?? "", forKey: Key.friendHat)
+                self?.host?.preferences.setValue(friend.collar?.rawValue ?? "", forKey: Key.friendCollar)
+            }
+            friend.traits = social.friendTraits
             friend.typesAlong = typesAlong
             friend.carriesFiles = carriesFiles
             friend.onDeliver = { [weak self] urls in self?.addToShelf(urls) }
             friend.forwardAward = { [weak cat] source in cat?.earn(source) }
+            // What its menu offers that isn't the friend's own (a photo, a
+            // GIF, focus, lofi, a note) does the same as from your pet's.
+            friend.onPhoto = cat.onPhoto
+            friend.onCapturePage = cat.onCapturePage
+            friend.onRecordGIF = cat.onRecordGIF
+            friend.onFocus = cat.onFocus
+            friend.focusLabel = cat.focusLabel
+            friend.onLofi = cat.onLofi
+            friend.onPauseLofi = cat.onPauseLofi
+            friend.lofiLabel = cat.lofiLabel
+            friend.localServer = cat.localServer
+            friend.onOpenServer = cat.onOpenServer
+            friend.failedCI = cat.failedCI
+            friend.onOpenFailedCI = cat.onOpenFailedCI
+            friend.onAskSign = cat.onAskSign
             friend.buddy = cat
             cat.buddy = friend
             self.friend = friend
@@ -1871,6 +3055,299 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
 // MARK: - Shelf widget
 
+extension PixpawDroplet: LockScreenStatusProviding {
+    public var lockScreenStatus: AnyPublisher<LockScreenStatusEntry?, Never> {
+        lockSubject.eraseToAnyPublisher()
+    }
+
+    /// Each second: what to see on the lock screen when you come back. An
+    /// agent that needs you first, then the focus or break clock, a long
+    /// command, how your agents got on, and otherwise what your pet is up to.
+    fileprivate func publishLockScreen() {
+        let entry = lockScreenEntry()
+        if lockSubject.value != entry { lockSubject.send(entry) }
+    }
+
+    private func lockScreenEntry() -> LockScreenStatusEntry? {
+        let now = Date()
+        let mine = tellsAgents ? agents.values.sorted { $0.name < $1.name } : []
+        if let waiting = mine.first(where: { $0.state == .waiting }) {
+            return LockScreenStatusEntry(id: "pixpaw.agent", systemImage: "hand.raised.fill", text: "\(waiting.name) needs you",
+                                         roundedCenterText: "!", roundedBottomText: String(waiting.name.prefix(10)), ticksEverySecond: false)
+        }
+        if let end = focusEndsAt ?? breakEndsAt, let start = focusStartedAt ?? breakStartedAt, end > now {
+            let left = end.timeIntervalSince(now), length = max(1, end.timeIntervalSince(start))
+            let focus = focusEndsAt != nil
+            let seconds = Int(left.rounded(.up))
+            let name = focus ? (pomodoroOn ? "Focus · round \(pomodoroRound)" : "Focus") : "Break"
+            return LockScreenStatusEntry(id: "pixpaw.session", systemImage: focus ? "timer" : "cup.and.saucer.fill",
+                                         text: String(format: "%d:%02d", seconds / 60, seconds % 60), detail: name,
+                                         roundedCenterText: "\(Int((left / 60).rounded(.up)))", roundedBottomText: focus ? "Focus" : "Break",
+                                         progress: left / length, ticksEverySecond: true)
+        }
+        if showsWaits, let waiting = commands.first(where: { now.timeIntervalSince($0.since) >= RunningCommand.waitsAfter }) {
+            return LockScreenStatusEntry(id: "pixpaw.command", systemImage: "hourglass", text: waiting.label,
+                                         detail: RunningCommand.length(now.timeIntervalSince(waiting.since)),
+                                         roundedCenterText: "\(Int(now.timeIntervalSince(waiting.since) / 60))m", roundedBottomText: waiting.label, ticksEverySecond: false)
+        }
+        if let snag = mine.first(where: { $0.state == .error }) {
+            return LockScreenStatusEntry(id: "pixpaw.agent", systemImage: "exclamationmark.triangle.fill", text: "\(snag.name) hit a snag",
+                                         roundedCenterText: "!", roundedBottomText: String(snag.name.prefix(10)), ticksEverySecond: false)
+        }
+        let working = mine.filter { $0.state == .working }
+        if !working.isEmpty {
+            let text = working.count == 1 ? "\(working[0].name) working" : "\(working.count) agents working"
+            return LockScreenStatusEntry(id: "pixpaw.agent", systemImage: "sparkles", text: text,
+                                         roundedCenterText: "…", roundedBottomText: working.count == 1 ? String(working[0].name.prefix(10)) : "Working", ticksEverySecond: false)
+        }
+        if let done = mine.first(where: { $0.state == .done }) {
+            return LockScreenStatusEntry(id: "pixpaw.agent", systemImage: "checkmark.circle.fill", text: "\(done.name) done", detail: done.diff,
+                                         roundedCenterText: "✓", roundedBottomText: "Done", ticksEverySecond: false)
+        }
+        guard let cat else { return nil }
+        return LockScreenStatusEntry(id: "pixpaw.pet", systemImage: isOut ? "pawprint.fill" : "moon.zzz.fill",
+                                     text: isOut ? cat.statusTitle : "Napping in the notch", roundedCenterText: isOut ? "♥" : "Zzz",
+                                     roundedBottomText: cat.kind.title, ticksEverySecond: false)
+    }
+}
+
+extension PixpawDroplet: MenuBarExtraProviding {
+    /// A gauge in the menu bar: how much is left of each agent's plan, and
+    /// what your agents are up to. Turned off in Settings, it goes away.
+    public func makeMenuBarExtra() -> MenuBarExtraDescriptor? {
+        guard showsMenuBar else { return nil }
+        return MenuBarExtraDescriptor(title: "Pixpaw: AI Usage left", systemImage: menuBarSymbol) { [self] in
+            AnyView(PixpawMenuBarMenu(droplet: self))
+        }
+    }
+}
+
+/// The menu under the gauge: what your pet is up to, your agents, and a
+/// bar for each window of each plan, green, then amber at 20% and red at 10%.
+private struct PixpawMenuBarMenu: View {
+    @ObservedObject var droplet: PixpawDroplet
+
+    private static let labelWidth: CGFloat = 38
+    private static let barWidth: CGFloat = 118
+
+    var body: some View {
+        // Counts down the reset times while the menu is open.
+        TimelineView(.periodic(from: .now, by: 15)) { timeline in
+            VStack(alignment: .leading, spacing: DroppySpacing.md) {
+                Label(droplet.isOut ? droplet.cat?.statusTitle ?? "Out and about" : "Napping in the notch",
+                      systemImage: droplet.isOut ? "pawprint.fill" : "moon.zzz.fill")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                    .lineLimit(1)
+                if let ask = droplet.menuAsk { askBox(ask) }
+                let agents = droplet.menuAgents
+                if !agents.isEmpty {
+                    section("Agents") {
+                        ForEach(agents, id: \.name) { agentRow($0, now: timeline.date) }
+                    }
+                }
+                section("AI Usage left") {
+                    if droplet.planUsage.isEmpty {
+                        Text("Shows up once Claude Code, Antigravity or Codex reports it. Needs the hooks in the README.")
+                            .font(.system(size: 11))
+                            .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                            .fixedSize(horizontal: false, vertical: true)
+                    } else {
+                        ForEach(PlanUsage.byAgent(droplet.planUsage)) { agentPlans($0, now: timeline.date) }
+                        if let other = droplet.planToSwitchTo, let left = other.lowest {
+                            Label("Most left: \(AgentLook.name(other)) \(left)%",
+                                  systemImage: "arrow.triangle.swap")
+                                .font(.system(size: 12, weight: .medium))
+                                .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                        }
+                    }
+                }
+                if let port = droplet.localServer {
+                    Button { droplet.openLocalServer() } label: {
+                        Label("Open localhost:\(String(port))", systemImage: "safari")
+                    }
+                    .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                }
+            }
+            .foregroundStyle(AdaptiveColors.primaryTextAuto)
+            .padding(.vertical, DroppySpacing.xs)
+            .frame(width: 290, alignment: .leading)
+        }
+    }
+
+    /// The question up on the pet's card, with the same answers: a risky one
+    /// says why and puts no answer forward.
+    private func askBox(_ ask: AgentAsk) -> some View {
+        let risk = ask.risk
+        return VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            Label(ask.place.map { "\(ask.agent) asks · \($0)" } ?? "\(ask.agent) asks", systemImage: "hand.raised.fill")
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(.orange)
+            if let risk {
+                Label("Careful: \(risk.prefix(1).lowercased() + risk.dropFirst())", systemImage: "exclamationmark.triangle.fill")
+                    .font(.system(size: 12, weight: .bold))
+                    .foregroundStyle(.red)
+            }
+            Text(ask.title)
+                .font(.system(size: 13, weight: .medium))
+                .fixedSize(horizontal: false, vertical: true)
+            if let detail = ask.detail, !detail.isEmpty {
+                Text(detail)
+                    .font(.system(size: 11, design: .monospaced))
+                    .lineLimit(3)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 4)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .background(RoundedRectangle(cornerRadius: 5, style: .continuous)
+                        .fill((risk == nil ? AdaptiveColors.contrastTintAuto : .red).opacity(0.1)))
+            }
+            HStack(spacing: DroppySpacing.xs) {
+                ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
+                    if index == 0 && risk == nil {
+                        Button(option) { droplet.answerOpenAsk(option) }
+                            .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+                    } else {
+                        Button(option) { droplet.answerOpenAsk(option) }
+                            .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                    }
+                }
+            }
+            .lineLimit(1)
+            Button("Answer in \(ask.agent) instead") { droplet.answerOpenAsk(AgentAsk.skip) }
+                .buttonStyle(.plain)
+                .font(.system(size: 11))
+                .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+        }
+        .padding(DroppySpacing.sm)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(Color.orange.opacity(0.1)))
+        .accessibilityElement(children: .contain)
+    }
+
+    private func section<Content: View>(_ title: String, @ViewBuilder content: () -> Content) -> some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+            Text(title)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+            content()
+        }
+    }
+
+    private func agentRow(_ agent: AgentStatus, now: Date) -> some View {
+        let (symbol, tint): (String, Color) = switch agent.state {
+        case .waiting: ("hand.raised.fill", .orange)
+        case .error: ("exclamationmark.triangle.fill", .red)
+        case .working: ("sparkles", AdaptiveColors.secondaryTextAuto)
+        case .done: ("checkmark.circle.fill", .green)
+        }
+        let minutes = Int(now.timeIntervalSince(agent.at) / 60)
+        let since = minutes < 1 ? "just now" : minutes < 60 ? "\(minutes) min" : "\(minutes / 60) h"
+        let state = agent.state == .done ? agent.diff ?? "Done" : agent.state.title.prefix(1).uppercased() + agent.state.title.dropFirst()
+        return HStack(spacing: DroppySpacing.sm) {
+            Image(systemName: symbol)
+                .font(.system(size: 11, weight: .semibold))
+                .foregroundStyle(tint)
+                .frame(width: 14)
+            Text(agent.name)
+                .font(.system(size: 13, weight: .medium))
+            Text(state)
+                .font(.system(size: 12))
+                .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                .lineLimit(1)
+            Spacer(minLength: DroppySpacing.sm)
+            Text(since)
+                .font(.system(size: 11).monospacedDigit())
+                .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+        }
+    }
+
+    /// A box per agent in its own color: its name and how fresh the numbers
+    /// are, then each model group (Antigravity's) with its windows.
+    private func agentPlans(_ agent: AgentPlans, now: Date) -> some View {
+        let look = AgentLook(agent.agent)
+        return VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+            HStack(alignment: .firstTextBaseline, spacing: DroppySpacing.xs) {
+                Image(systemName: look.symbol)
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(look.color)
+                Text(look.name)
+                    .font(.system(size: 13, weight: .semibold))
+                Spacer(minLength: DroppySpacing.sm)
+                if let age = agent.plans.max(by: { $0.at < $1.at })?.age(now: now) {
+                    Text(age)
+                        .font(.system(size: 11))
+                        .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                }
+            }
+            ForEach(agent.plans) { plan($0, now: now) }
+        }
+        .padding(DroppySpacing.sm)
+        .background(RoundedRectangle(cornerRadius: 10, style: .continuous).fill(look.color.opacity(0.08)))
+        .overlay(RoundedRectangle(cornerRadius: 10, style: .continuous).strokeBorder(look.color.opacity(0.25), lineWidth: 1))
+        .accessibilityElement(children: .combine)
+    }
+
+    private func plan(_ usage: PlanUsage, now: Date) -> some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            if let group = usage.group {
+                Text(group)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+            }
+            ForEach(usage.windows) { window in
+                VStack(alignment: .leading, spacing: 2) {
+                    HStack(spacing: DroppySpacing.sm) {
+                        Text(window.label)
+                            .font(.system(size: 12))
+                            .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                            .frame(width: Self.labelWidth, alignment: .leading)
+                        bar(window)
+                        Spacer(minLength: DroppySpacing.sm)
+                        Text("\(window.left)% left")
+                            .font(.system(size: 12, weight: .medium).monospacedDigit())
+                            .foregroundStyle(window.level == .plenty ? AdaptiveColors.primaryTextAuto : tint(window.level))
+                    }
+                    let reset = window.resetText(now: now), pace = window.paceText(now: now)
+                    if reset != nil || pace != nil {
+                        HStack(spacing: 0) {
+                            if let reset {
+                                Text(pace == nil ? reset : "\(reset) · ")
+                                    .foregroundStyle(AdaptiveColors.secondaryTextAuto)
+                            }
+                            if let pace {
+                                Text(pace)
+                                    .foregroundStyle(.orange)
+                            }
+                        }
+                        .font(.system(size: 11).monospacedDigit())
+                        .lineLimit(1)
+                        .padding(.leading, Self.labelWidth + DroppySpacing.sm)
+                    }
+                }
+            }
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    private func bar(_ window: PlanWindow) -> some View {
+        ZStack(alignment: .leading) {
+            Capsule(style: .continuous)
+                .fill(AdaptiveColors.contrastTintAuto.opacity(0.12))
+            Capsule(style: .continuous)
+                .fill(tint(window.level))
+                .frame(width: max(window.left > 0 ? 4 : 0, Self.barWidth * CGFloat(window.left) / 100))
+        }
+        .frame(width: Self.barWidth, height: 5)
+    }
+
+    private func tint(_ level: PlanWindow.Level) -> Color {
+        switch level {
+        case .plenty: .green
+        case .low: .orange
+        case .out: .red
+        }
+    }
+}
+
 extension PixpawDroplet: ShelfWidgetProviding {
     public var widgetDescriptors: [ShelfWidgetDescriptor] {
         [
@@ -1881,7 +3358,10 @@ extension PixpawDroplet: ShelfWidgetProviding {
                 layoutTraits: ShelfWidgetLayoutTraits(
                     preferredSoloWidth: 420,
                     preferredPairedWidth: 210,
-                    contentHeight: .fixed(158)
+                    // Header (28), the pet and its lines (about 94 laid out), the control
+                    // row (34) and two 8pt gaps, plus the 16pt the host's
+                    // insets take: nothing squeezed against the floor.
+                    contentHeight: .fixed(190)
                 )
             )
         ]
@@ -1895,14 +3375,358 @@ extension PixpawDroplet: ShelfWidgetProviding {
     public func makeWidgetSettingsPopover(_ id: ShelfWidgetID) -> AnyView? { nil }
 }
 
+/// How each agent shows wherever its usage does (the widget, the menu bar,
+/// Settings): its name, a mark and a color of its own, so it's plain whose
+/// numbers are whose.
+struct AgentLook {
+    let name: String
+    let symbol: String
+    let color: Color
+
+    init(_ agent: String) {
+        let look: (String, String, Color) = switch agent.lowercased() {
+        case "claude", "claude code": ("Claude Code", "sparkle", Color(red: 0.85, green: 0.47, blue: 0.34))
+        case "antigravity": ("Antigravity", "paperplane.fill", Color(red: 0.42, green: 0.58, blue: 1.0))
+        case "codex": ("Codex", "terminal.fill", Color(red: 0.30, green: 0.76, blue: 0.62))
+        case "cursor": ("Cursor", "cursorarrow.rays", Color(red: 0.70, green: 0.55, blue: 0.95))
+        default: (agent, "cpu", .gray)
+        }
+        name = look.0
+        symbol = look.1
+        color = look.2
+    }
+
+    /// "Claude Code", "Antigravity · Gemini".
+    static func name(_ plan: PlanUsage) -> String {
+        let agent = AgentLook(plan.agent).name
+        return plan.group.map { "\(agent) · \($0)" } ?? agent
+    }
+}
+
+/// The widget's second page, AI Usage left: what's left of each coding
+/// agent's plan in a section of its own, and a question your agent asks with
+/// its answers. Solo it's a small table, five hours and week side by side;
+/// paired, each plan's emptier window.
+private struct UsageLeftPage: View {
+    @ObservedObject var droplet: PixpawDroplet
+    let context: ShelfWidgetContext
+
+    private static let nameWidth: CGFloat = 112
+    private static let barWidth: CGFloat = 44
+    private static let percentWidth: CGFloat = 38
+    private static var columnWidth: CGFloat { barWidth + DroppySpacing.xs + percentWidth }
+
+    /// The rule down the side of each agent's section, and what's left of
+    /// the name column beside it.
+    private static let ruleWidth: CGFloat = 3
+    private static var sectionNameWidth: CGFloat { nameWidth - ruleWidth - DroppySpacing.sm }
+
+    var body: some View {
+        TimelineView(.periodic(from: .now, by: 30)) { timeline in
+            VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+                if let ask = droplet.menuAsk {
+                    askCard(ask)
+                }
+                if droplet.planUsage.isEmpty {
+                    empty
+                } else if droplet.menuAsk != nil {
+                    // The question takes the room: each agent's emptiest window on one line.
+                    ViewThatFits(in: .horizontal) {
+                        summary(named: true)
+                        summary(named: false)
+                    }
+                } else {
+                    ScrollView(.vertical, showsIndicators: false) {
+                        sections(now: timeline.date)
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .topLeading)
+        }
+    }
+
+    private var empty: some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            Text("No numbers yet")
+                .font(.system(size: 13, weight: .semibold))
+                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+            Text("They show up after Claude Code, Antigravity or Codex finishes a turn with Pixpaw's hooks on.")
+                .font(.system(size: 11))
+                .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                .fixedSize(horizontal: false, vertical: true)
+        }
+    }
+
+    // MARK: The question
+
+    /// Who asks and what, with the answers beside it; underneath, the command
+    /// it's about, or why it's risky.
+    private func askCard(_ ask: AgentAsk) -> some View {
+        let risk = ask.risk
+        // Paired, Always allow makes room for Deny.
+        let options = context.isPaired ? Array(ask.options.filter { $0 != "Always allow" }.prefix(2)) : Array(ask.options.prefix(3))
+        return VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            HStack(spacing: DroppySpacing.xs) {
+                Image(systemName: risk == nil ? "hand.raised.fill" : "exclamationmark.triangle.fill")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(risk == nil ? .orange : .red)
+                Text(ask.agent)
+                    .font(.system(size: 12, weight: .semibold))
+                    .foregroundStyle(risk == nil ? .orange : .red)
+                Text(ask.title)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+                    .lineLimit(1)
+                if !context.isPaired {
+                    Spacer(minLength: DroppySpacing.xs)
+                    answers(options, ask: ask)
+                }
+            }
+            if let line = risk ?? ask.detail, !line.isEmpty {
+                Text(line)
+                    .font(risk == nil ? .system(size: 11, design: .monospaced) : .system(size: 11, weight: .semibold))
+                    .foregroundStyle(risk == nil ? AdaptiveColors.notchSurfaceSecondaryText : .red)
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                    .padding(.horizontal, 6)
+                    .padding(.vertical, 2)
+                    .background(RoundedRectangle(cornerRadius: DroppyRadius.xs, style: .continuous)
+                        .fill(AdaptiveColors.notchSurfaceCardFill))
+            }
+            if context.isPaired {
+                answers(options, ask: ask)
+            }
+        }
+    }
+
+    /// The first answer stands out, unless the ask is risky.
+    private func answers(_ options: [String], ask: AgentAsk) -> some View {
+        HStack(spacing: DroppySpacing.xs) {
+            ForEach(Array(options.enumerated()), id: \.offset) { index, option in
+                if index == 0 && ask.risk == nil {
+                    Button(option) { droplet.answerOpenAsk(option) }
+                        .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+                } else {
+                    Button(option) { droplet.answerOpenAsk(option) }
+                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                }
+            }
+        }
+        .lineLimit(1)
+        .fixedSize()
+        .droppyFlatGlassControls()
+    }
+
+    // MARK: Usage
+
+    /// A section per agent; solo, five hours and week in columns under one
+    /// heading each, and when one runs dry at this pace at the end of its row.
+    private func sections(now: Date) -> some View {
+        VStack(alignment: .leading, spacing: 5) {
+            if !context.isPaired {
+                HStack(spacing: DroppySpacing.md) {
+                    Color.clear.frame(width: Self.nameWidth, height: 1)
+                    Text("5 hours").frame(width: Self.columnWidth, alignment: .leading)
+                    Text("Week").frame(width: Self.columnWidth, alignment: .leading)
+                }
+                .font(.system(size: 10, weight: .medium))
+                .foregroundStyle(AdaptiveColors.notchSurfaceTertiaryText)
+            }
+            ForEach(PlanUsage.byAgent(droplet.planUsage)) { section($0, now: now) }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    /// "✦ Claude Code 59%  ✈ Antigravity 18%", or just the marks when that
+    /// doesn't fit.
+    private func summary(named: Bool) -> some View {
+        HStack(spacing: DroppySpacing.md) {
+            ForEach(PlanUsage.byAgent(droplet.planUsage)) { agent in
+                let look = AgentLook(agent.agent)
+                let window = agent.plans.flatMap(\.windows).min { $0.left < $1.left }
+                HStack(spacing: 4) {
+                    Image(systemName: look.symbol)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(look.color)
+                    if named {
+                        Text(look.name)
+                            .font(.system(size: 12, weight: .semibold))
+                            .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+                    }
+                    if let window { percent(window) }
+                }
+                .fixedSize()
+                .help(look.name)
+            }
+        }
+    }
+
+    /// One agent, with a rule in its color down the side: its mark and name,
+    /// with its numbers on that line (Claude Code, Codex) or a line for each
+    /// model group under it (Antigravity).
+    private func section(_ agent: AgentPlans, now: Date) -> some View {
+        let look = AgentLook(agent.agent)
+        return VStack(alignment: .leading, spacing: 2) {
+            row(agent.single, now: now) {
+                HStack(spacing: 4) {
+                    Image(systemName: look.symbol)
+                        .font(.system(size: 9, weight: .bold))
+                        .foregroundStyle(look.color)
+                    Text(look.name)
+                        .font(.system(size: 12, weight: .semibold))
+                        .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+                }
+            }
+            if agent.single == nil {
+                ForEach(agent.plans) { plan in
+                    row(plan, now: now) {
+                        Text(plan.group ?? look.name)
+                            .font(.system(size: 12))
+                            .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                            .padding(.leading, context.isPaired ? 8 : 13)
+                    }
+                    .help(AgentLook.name(plan))
+                }
+            }
+        }
+        .padding(.leading, Self.ruleWidth + DroppySpacing.sm)
+        .overlay(alignment: .leading) {
+            Capsule(style: .continuous)
+                .fill(look.color)
+                .frame(width: Self.ruleWidth)
+        }
+        .accessibilityElement(children: .combine)
+    }
+
+    /// A name, then the plan's numbers if it has one: solo both windows and
+    /// the pace; paired the emptier window.
+    private func row<Name: View>(_ plan: PlanUsage?, now: Date, @ViewBuilder name: () -> Name) -> some View {
+        HStack(spacing: context.isPaired ? DroppySpacing.xs : DroppySpacing.md) {
+            name()
+                .lineLimit(1)
+                .minimumScaleFactor(0.75)
+                .frame(width: context.isPaired ? nil : Self.sectionNameWidth, alignment: .leading)
+            if context.isPaired {
+                Spacer(minLength: DroppySpacing.xs)
+                if let plan { pairedNumbers(plan, now: now) }
+            } else {
+                if let plan {
+                    cell(plan.windows.first { $0.label == "5h" })
+                    cell(plan.windows.first { $0.label == "Week" })
+                }
+                Spacer(minLength: 0)
+                if let plan, let window = plan.windows.first(where: { $0.paceText(now: now) != nil }),
+                   let pace = window.paceText(now: now), let when = window.paceShort(now: now) {
+                    Label(when, systemImage: "timer")
+                        .font(.system(size: 11, weight: .medium).monospacedDigit())
+                        .foregroundStyle(.orange)
+                        .lineLimit(1)
+                        .fixedSize()
+                        .help(pace)
+                }
+            }
+        }
+    }
+
+    private func cell(_ window: PlanWindow?) -> some View {
+        HStack(spacing: DroppySpacing.xs) {
+            if let window {
+                bar(window, width: Self.barWidth)
+                percent(window)
+                    .frame(width: Self.percentWidth, alignment: .trailing)
+            } else {
+                Text("–")
+                    .font(.system(size: 11))
+                    .foregroundStyle(AdaptiveColors.notchSurfaceTertiaryText)
+            }
+        }
+        .frame(width: Self.columnWidth, alignment: .leading)
+    }
+
+    /// The emptier window: its bar, percent and which it is; an orange timer
+    /// when it runs dry before it resets.
+    @ViewBuilder private func pairedNumbers(_ plan: PlanUsage, now: Date) -> some View {
+        if let window = plan.windows.min(by: { $0.left < $1.left }) {
+            HStack(spacing: DroppySpacing.xs) {
+                if let pace = window.paceText(now: now) {
+                    Image(systemName: "timer")
+                        .font(.system(size: 10, weight: .semibold))
+                        .foregroundStyle(.orange)
+                        .help(pace)
+                }
+                bar(window, width: 22)
+                percent(window)
+                    .frame(width: 34, alignment: .trailing)
+                Text(window.label == "Week" ? "wk" : window.label)
+                    .font(.system(size: 10, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.notchSurfaceTertiaryText)
+                    .frame(width: 14, alignment: .leading)
+            }
+        }
+    }
+
+    private func percent(_ window: PlanWindow) -> some View {
+        Text("\(window.left)%")
+            .font(.system(size: 12, weight: .semibold).monospacedDigit())
+            .lineLimit(1)
+            .fixedSize()
+            .foregroundStyle(window.level == .plenty ? AdaptiveColors.notchSurfacePrimaryText : tint(window.level))
+    }
+
+    private func bar(_ window: PlanWindow, width: CGFloat) -> some View {
+        ZStack(alignment: .leading) {
+            Capsule(style: .continuous)
+                .fill(AdaptiveColors.notchSurfaceCardFill)
+            Capsule(style: .continuous)
+                .fill(tint(window.level))
+                .frame(width: max(window.left > 0 ? 4 : 0, width * CGFloat(window.left) / 100))
+        }
+        .frame(width: width, height: 5)
+    }
+
+    private func tint(_ level: PlanWindow.Level) -> Color {
+        switch level {
+        case .plenty: .green
+        case .low: .orange
+        case .out: .red
+        }
+    }
+}
+
 private struct PixpawWidget: View {
     @ObservedObject var droplet: PixpawDroplet
     @ObservedObject var cat: CatController
     let context: ShelfWidgetContext
 
+    /// Droppy's shelf sizes: a control alone on the shelf is 34pt, beside
+    /// another widget 28, the header's toggles 28, a small choice 24.
+    private var actionSize: CGFloat { context.isPaired ? 28 : 34 }
+    private static let headerSize: CGFloat = 28
+    private static let choiceSize: CGFloat = 24
+
     var body: some View {
-        VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+        // The header on the card's top edge, the control row on its bottom
+        // edge, and the room between them shared above and below the pet,
+        // the way Droppy's own widgets sit on the shelf's lines.
+        VStack(alignment: .leading, spacing: 0) {
             header
+            if droplet.widgetShowsPlans {
+                Spacer(minLength: DroppySpacing.sm)
+                UsageLeftPage(droplet: droplet, context: context)
+                Spacer(minLength: 0)
+            } else {
+                petPage
+            }
+        }
+        .padding(context.contentInsets)
+        .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
+        // One family of controls on the shelf: the header's buttons draw the
+        // same flat wash as the row of controls under the pet.
+        .droppyFlatGlassControls()
+    }
+
+    @ViewBuilder private var petPage: some View {
+            Spacer(minLength: DroppySpacing.sm)
             HStack(alignment: .center, spacing: DroppySpacing.md) {
                 portrait
                 VStack(alignment: .leading, spacing: DroppySpacing.xs) {
@@ -1916,7 +3740,7 @@ private struct PixpawWidget: View {
                     fullnessBar
                     togetherLine
                     if let summary = droplet.agentSummary {
-                        Text("\(Image(systemName: "sparkles")) \(summary)")
+                        symbolText("sparkles", summary)
                             .font(.system(size: 11, weight: .medium))
                             .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
                             .lineLimit(1)
@@ -1924,30 +3748,55 @@ private struct PixpawWidget: View {
                 }
                 Spacer(minLength: 0)
             }
+            Spacer(minLength: DroppySpacing.sm)
             if !context.isCompact {
                 controls
             }
-            Spacer(minLength: 0)
-        }
-        .padding(context.contentInsets)
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var header: some View {
         HStack(spacing: DroppySpacing.xsm) {
-            Image(systemName: "pawprint.fill")
+            Image(systemName: droplet.widgetShowsPlans ? "gauge.with.dots.needle.67percent" : "pawprint.fill")
                 .font(.system(size: 12, weight: .medium))
-            Text("Pixpaw")
+            Text(droplet.widgetShowsPlans ? "AI Usage left" : "Pixpaw")
                 .font(.system(size: 12, weight: .semibold))
+                .lineLimit(1)
+                .fixedSize()
             Spacer(minLength: 0)
-            Button {
-                droplet.takePhoto()
-            } label: {
-                Image(systemName: "camera")
+            if droplet.widgetShowsPlans, !context.isPaired, let other = droplet.planToSwitchTo, let left = other.lowest {
+                Text("Most left: \(AgentLook.name(other)) \(left)%")
+                    .font(.system(size: 11, weight: .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: 20))
-            .help("Take a photo of your pet")
-            .accessibilityLabel("Take a photo of your pet")
+            Button {
+                droplet.toggleWidgetPlans()
+            } label: {
+                Image(systemName: droplet.widgetShowsPlans ? "pawprint.fill" : droplet.openAsk != nil ? "hand.raised.fill" : "gauge.with.dots.needle.67percent")
+                    .foregroundStyle(droplet.openAsk != nil && !droplet.widgetShowsPlans ? Color.orange : AdaptiveColors.notchSurfaceSecondaryText)
+            }
+            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+            .help(droplet.widgetShowsPlans ? "Back to your pet" : "AI Usage left: what's left of each AI's plan")
+            .accessibilityLabel(droplet.widgetShowsPlans ? "Show your pet" : "Show AI usage left")
+            if !droplet.widgetShowsPlans {
+                petButtons
+            }
+        }
+        .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+    }
+
+    @ViewBuilder private var petButtons: some View {
+            // Paired, the photo makes room for the plan button; it's in the pet's menu too.
+            if !context.isPaired {
+                Button {
+                    droplet.takePhoto()
+                } label: {
+                    Image(systemName: "camera")
+                }
+                .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+                .help("Take a photo of your pet")
+                .accessibilityLabel("Take a photo of your pet")
+            }
             Button {
                 droplet.chooseKind()
             } label: {
@@ -1961,7 +3810,7 @@ private struct PixpawWidget: View {
                     Image(systemName: "pawprint")
                 }
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: 20))
+            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
             .help("Character: \(cat.kind.title). Click to change.")
             .accessibilityLabel("Change character, now \(cat.kind.title)")
             Button {
@@ -1969,19 +3818,17 @@ private struct PixpawWidget: View {
             } label: {
                 Image(systemName: cat.quietReason == nil ? "bell" : "bell.slash.fill")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: 20))
-            .help(droplet.quietByHand ? "Let the cat talk again" : "Quiet: no speech bubbles")
+            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+            .help(droplet.quietByHand ? "Let your pet talk again" : "Quiet: no speech bubbles")
             .accessibilityLabel(droplet.quietByHand ? "Turn quiet mode off" : "Turn quiet mode on")
             Button {
                 droplet.toggle()
             } label: {
                 Image(systemName: droplet.isOut ? "eye.slash" : "eye")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: 20))
-            .help(droplet.isOut ? "Bring the cat inside" : "Let the cat out")
-            .accessibilityLabel(droplet.isOut ? "Hide the cat" : "Show the cat")
-        }
-        .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+            .help(droplet.isOut ? "Bring your pet inside" : "Let your pet out")
+            .accessibilityLabel(droplet.isOut ? "Hide your pet" : "Show your pet")
     }
 
     private var portrait: some View {
@@ -2002,17 +3849,23 @@ private struct PixpawWidget: View {
         .accessibilityHidden(true)
     }
 
-    /// Why it is quiet, with a bell; otherwise its stars. Built as Text, so
-    /// the bell is drawn as a symbol rather than spelled out as a string.
+    /// A symbol, then words, as one Text. The symbol is joined on rather than
+    /// interpolated into a literal: inside Droppy an interpolated Image came
+    /// out spelled as "Image(provider: …)" instead of drawn.
+    private func symbolText(_ symbol: String, _ words: String) -> Text {
+        Text(Image(systemName: symbol)) + Text(verbatim: " " + words)
+    }
+
+    /// Why it is quiet, with a bell; otherwise its stars.
     private var subline: Text {
         if let start = droplet.focusStartedAt, let end = droplet.focusEndsAt {
             let round = droplet.pomodoroOn ? " \(droplet.pomodoroRound)/4" : ""
-            return Text("\(Image(systemName: "timer")) Focus\(round), ") + Text(timerInterval: start...end, countsDown: true) + Text(" left")
+            return symbolText("timer", "Focus\(round), ") + Text(timerInterval: start...end, countsDown: true) + Text(" left")
         }
         if let start = droplet.breakStartedAt, let end = droplet.breakEndsAt {
-            return Text("\(Image(systemName: "cup.and.saucer.fill")) Break, ") + Text(timerInterval: start...end, countsDown: true) + Text(" left")
+            return symbolText("cup.and.saucer.fill", "Break, ") + Text(timerInterval: start...end, countsDown: true) + Text(" left")
         }
-        if let reason = cat.quietReason { return Text("\(Image(systemName: "bell.slash.fill")) Quiet, \(reason)") }
+        if let reason = cat.quietReason { return symbolText("bell.slash.fill", "Quiet, \(reason)") }
         return Text(pointsLine)
     }
 
@@ -2079,7 +3932,16 @@ private struct PixpawWidget: View {
 
     private var controls: some View {
         HStack(spacing: DroppySpacing.sm) {
-            ForEach(cat.kind.hasCoats ? CatCoat.allCases : []) { coat in
+            HStack(spacing: DroppySpacing.xsm) {
+                coatSwatches
+            }
+            Spacer(minLength: 0)
+            actions
+        }
+    }
+
+    @ViewBuilder private var coatSwatches: some View {
+            ForEach(cat.kind.hasCoats ? CatCoat.choices : []) { coat in
                 Button {
                     droplet.setCoat(coat)
                 } label: {
@@ -2090,29 +3952,31 @@ private struct PixpawWidget: View {
                             if coat == cat.coat {
                                 Image(systemName: "checkmark")
                                     .font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(coat == .black ? Color.white : Color.black.opacity(0.7))
+                                    .foregroundStyle(coat.isDark ? Color.white : Color.black.opacity(0.7))
                             }
                         }
                 }
-                .buttonStyle(DroppyCircleButtonStyle(size: 24))
+                .buttonStyle(DroppyCircleButtonStyle(size: Self.choiceSize))
                 .help(coat.title)
                 .accessibilityLabel(coat.title)
             }
-            Spacer(minLength: 0)
+    }
+
+    @ViewBuilder private var actions: some View {
             Button {
                 droplet.feed()
             } label: {
                 Image(systemName: "fork.knife")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: 24))
-            .help("Feed the cat")
-            .accessibilityLabel("Feed the cat")
+            .buttonStyle(DroppyCircleButtonStyle(size: actionSize))
+            .help("Feed your pet")
+            .accessibilityLabel("Feed your pet")
             Button {
                 droplet.napNow()
             } label: {
                 Image(systemName: "moon.zzz.fill")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: 24))
+            .buttonStyle(DroppyCircleButtonStyle(size: actionSize))
             .disabled(cat.mood == .sleeping)
             .help("Nap now")
             .accessibilityLabel("Nap now")
@@ -2121,15 +3985,17 @@ private struct PixpawWidget: View {
             } label: {
                 Image(systemName: droplet.breakEndsAt != nil ? "forward.end.fill" : droplet.focusEndsAt == nil ? "timer" : "stop.fill")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: 24))
+            .buttonStyle(DroppyCircleButtonStyle(size: actionSize))
             .help(droplet.breakEndsAt != nil ? "Skip the break" : droplet.focusEndsAt == nil ? "Focus for \(droplet.focusMinutes) minutes" : "Stop focusing")
             .accessibilityLabel(droplet.breakEndsAt != nil ? "Skip the break" : droplet.focusEndsAt == nil ? "Start focusing" : "Stop focusing")
-            Button(cat.mood == .sleeping ? "Wake up" : "Come here") {
+            Button {
                 droplet.callOver()
+            } label: {
+                // The pill as tall as the discs beside it.
+                Text(cat.mood == .sleeping ? "Wake up" : "Come here")
+                    .frame(minHeight: actionSize - 16)
             }
             .buttonStyle(DroppyQuietButtonStyle(size: .small))
-        }
-        .droppyFlatGlassControls()
     }
 }
 
@@ -2236,12 +4102,13 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Wardrobe", keywords: ["cat", "hat", "collar", "points", "happiness", "unlock"]),
             SettingsSearchEntry(title: "Festival decorations", keywords: ["festival", "halloween", "new year", "christmas", "songkran", "valentine", "fireworks", "ghost", "snow"]),
             SettingsSearchEntry(title: "Focus session", keywords: ["focus", "pomodoro", "timer", "work", "break"]),
+            SettingsSearchEntry(title: "Lofi", keywords: ["lofi", "lo-fi", "music", "study", "focus", "youtube", "spotify", "apple music", "lofi girl"]),
             SettingsSearchEntry(title: "Home", keywords: ["home", "house", "kennel", "hive", "nap", "sleep", "500", "unlock", "challenge"]),
             SettingsSearchEntry(title: "Break reminders", keywords: ["cat", "health", "stretch", "water", "eyes", "break", "reminder", "custom", "pill", "exercise"]),
             SettingsSearchEntry(title: "Sounds", keywords: ["cat", "meow", "purr", "sound", "mute"]),
             SettingsSearchEntry(title: "Your own pets", keywords: ["draw", "design", "custom", "own", "sprite", "pixel", "png", "aseprite", "piskel", "template", "import"]),
-            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal"]),
-            SettingsSearchEntry(title: "Where the cat walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
+            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal", "coat", "colour", "color", "photo", "picture", "my cat", "fold", "folded", "ears", "scottish"]),
+            SettingsSearchEntry(title: "Where it walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
             SettingsSearchEntry(title: "Notes", keywords: ["sign", "note", "todo", "to-do", "task", "list", "reminder", "board", "placard", "streak"]),
             SettingsSearchEntry(title: "Countdowns", keywords: ["countdown", "days", "until", "trip", "deadline", "launch", "date"]),
             SettingsSearchEntry(title: "Join your next video call", keywords: ["meeting", "zoom", "meet", "teams", "webex", "join", "call"]),
@@ -2256,82 +4123,174 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Calendar events", keywords: ["cat", "meeting", "reminder", "event", "appointment"]),
             SettingsSearchEntry(title: "Battery", keywords: ["cat", "battery", "charge", "power", "sleepy", "yawn"]),
             SettingsSearchEntry(title: "Busy Mac", keywords: ["cpu", "heat", "hot", "busy", "fan", "load", "runcat", "sweat"]),
-            SettingsSearchEntry(title: "Volume and brightness", keywords: ["cat", "sound", "volume", "mute", "brightness", "screen"]),
+            SettingsSearchEntry(title: "Volume", keywords: ["cat", "sound", "volume", "mute", "speakers"]),
             SettingsSearchEntry(title: "Headphones", keywords: ["cat", "airpods", "bluetooth", "headset", "connect"]),
-            SettingsSearchEntry(title: "Screenshots", keywords: ["screenshot", "photo", "pose", "camera"]),
-            SettingsSearchEntry(title: "Record a GIF of your pet", keywords: ["gif", "animation", "share", "discord", "record", "video"]),
-            SettingsSearchEntry(title: "Capture a whole web page", keywords: ["screenshot", "full page", "safari", "chrome", "arc", "capture", "scroll", "web"]),
+            SettingsSearchEntry(title: "Pose for screenshots", keywords: ["screenshot", "photo", "pose", "camera"]),
+            SettingsSearchEntry(title: "GIF of your pet", keywords: ["gif", "animation", "share", "discord", "record", "video"]),
+            SettingsSearchEntry(title: "A whole web page", keywords: ["screenshot", "full page", "safari", "chrome", "arc", "capture", "scroll", "web"]),
             SettingsSearchEntry(title: "Your birthday", keywords: ["birthday", "party", "confetti", "cake"]),
             SettingsSearchEntry(title: "Good morning", keywords: ["morning", "greeting", "wake", "calendar", "stretch"]),
             SettingsSearchEntry(title: "Welcome back", keywords: ["away", "return", "back", "hello", "greeting", "idle"]),
             SettingsSearchEntry(title: "Late nights", keywords: ["night", "late", "bedtime", "sleep", "nightcap", "midnight"]),
             SettingsSearchEntry(title: "Music", keywords: ["cat", "music", "song", "spotify", "youtube", "video", "dance", "now playing"]),
             SettingsSearchEntry(title: "Scheduled runs", keywords: ["schedule", "scheduled task", "loop", "cron", "routine", "result", "claude"]),
+            SettingsSearchEntry(title: "Long commands and helpers", keywords: ["claude", "agent", "subagent", "helper", "test", "build", "command", "wait", "popcorn"]),
+            SettingsSearchEntry(title: "Rock, paper, scissors", keywords: ["friend", "game", "coins", "bet", "personality", "character", "trait"]),
             SettingsSearchEntry(title: "What it's working on", keywords: ["claude", "agent", "file", "editing", "tool", "command"]),
-            SettingsSearchEntry(title: "Answer from your pet", keywords: ["claude", "permission", "allow", "deny", "question", "agent", "approve"]),
+            SettingsSearchEntry(title: "Answer from your pet", keywords: ["claude", "permission", "allow", "deny", "question", "agent", "approve", "type", "other", "answer", "instead"]),
+            SettingsSearchEntry(title: "Touch ID to allow a risky one", keywords: ["touch id", "fingerprint", "password", "risky", "allow", "security", "rm", "sudo"]),
+            SettingsSearchEntry(title: "Wait for CI after a push", keywords: ["ci", "github", "actions", "gh", "push", "checks", "build", "workflow"]),
+            SettingsSearchEntry(title: "Talk to your pet", keywords: ["voice", "talk", "speak", "say", "microphone", "speech", "dictation", "siri", "command"]),
+            SettingsSearchEntry(title: "Meeting notes", keywords: ["meeting", "notes", "minutes", "transcript", "summary", "summarize", "record", "call", "zoom", "meet", "teams", "microphone", "claude", "codex", "antigravity", "apple intelligence"]),
+            SettingsSearchEntry(title: "Listen to", keywords: ["meeting", "microphone", "mac sound", "system audio", "screen recording", "call"]),
             SettingsSearchEntry(title: "Read questions aloud", keywords: ["voice", "speak", "speech", "aloud", "agent"]),
             SettingsSearchEntry(title: "Agent updates", keywords: ["cat", "claude", "codex", "cursor", "agent"]),
             SettingsSearchEntry(title: "Keep the Mac awake while agents work", keywords: ["sleep", "awake", "caffeinate", "agent", "claude", "codex"]),
-            SettingsSearchEntry(title: "Show beside the notch", keywords: ["cat", "live activity", "status", "notch"]),
+            SettingsSearchEntry(title: "Beside the notch", keywords: ["cat", "live activity", "status", "notch"]),
+            SettingsSearchEntry(title: "Photo of your pet", keywords: ["photo", "picture", "camera", "capture"]),
+            SettingsSearchEntry(title: "Permissions", keywords: ["permission", "privacy", "allow", "access", "accessibility", "calendar", "microphone", "screen recording", "automation", "system settings"]),
+            SettingsSearchEntry(title: "Agent hooks", keywords: ["hook", "hooks", "plugin", "setup", "install", "readme", "claude", "antigravity", "codex", "pixpaw-ask"]),
         ]
     }
 }
 
 /// The pages of Pixpaw's own under its page in Droppy's Settings.
 enum SettingsPage: String, CaseIterable, Identifiable {
-    case notes, focus, moving, ownPets, wardrobe, friend, tells, festivals
+    case wardrobe, friend, moving, ownPets
+    case ai, focus, notes, meetings, talk
+    case tells, capture, festivals
+    case permissions
+
+    /// The main page's groups, by what you're there to do.
+    static let groups: [(title: String, pages: [SettingsPage])] = [
+        ("Your pet", [.wardrobe, .friend, .moving, .ownPets]),
+        ("Working with you", [.ai, .focus, .notes, .meetings, .talk]),
+        ("Around you", [.tells, .capture, .festivals]),
+    ]
 
     var id: String { rawValue }
 
     var title: String {
         switch self {
-        case .notes: "Notes"
+        case .ai: "AI agents"
+        case .notes: "Notes and countdowns"
+        case .meetings: "Meeting notes"
+        case .talk: "Talk to your pet"
         case .focus: "Breaks and focus"
         case .moving: "Moving about"
         case .ownPets: "Your own pets"
         case .wardrobe: "Wardrobe and home"
         case .friend: "Friend"
         case .tells: "What it tells you"
+        case .capture: "Capture"
         case .festivals: "Festivals and birthday"
+        case .permissions: "Permissions"
         }
     }
 
     var subtitle: String {
         switch self {
+        case .ai: "Claude Code, Antigravity, Codex: updates, answers, usage left"
         case .notes: "Your to-do list on its sign"
-        case .focus: "Break reminders, focus sessions, Pomodoro"
+        case .meetings: "Listens to a call and sums it up with the model you pick"
+        case .talk: "Say what you'd like and it does it"
+        case .focus: "Break reminders, focus sessions, Pomodoro, lofi"
         case .moving: "Where it walks, typing along, carrying files"
         case .ownPets: "Draw your own pet and give it sounds"
         case .wardrobe: "Hats, collars and a home of its own"
         case .friend: "A second pet of any kind"
-        case .tells: "Notifications, calendar, music, agents, quiet"
+        case .tells: "Notifications, calendar, music · quiet in calls"
+        case .capture: "A photo or GIF of your pet, a whole web page"
         case .festivals: "Your birthday and festival days"
+        case .permissions: "What Droppy is allowed, and your agents' hooks"
         }
     }
 
     var symbol: String {
         switch self {
+        case .ai: "sparkles"
         case .notes: "signpost.right.fill"
+        case .meetings: "waveform.badge.mic"
+        case .talk: "mic.fill"
         case .focus: "timer"
         case .moving: "figure.walk"
         case .ownPets: "paintbrush.pointed.fill"
         case .wardrobe: "tshirt.fill"
         case .friend: "pawprint.fill"
         case .tells: "bubble.left.fill"
+        case .capture: "camera.fill"
         case .festivals: "party.popper.fill"
+        case .permissions: "lock.shield.fill"
         }
     }
 
     var color: Color {
         switch self {
+        case .ai: .indigo
         case .notes: .orange
+        case .meetings: .mint
+        case .talk: .cyan
         case .focus: .red
         case .moving: .green
         case .ownPets: .purple
         case .wardrobe: .pink
         case .friend: .teal
         case .tells: .blue
+        case .capture: .brown
         case .festivals: .yellow
+        case .permissions: .gray
+        }
+    }
+}
+
+/// The permissions Pixpaw asks Droppy for that you allow in System Settings,
+/// with what each is for.
+enum PixpawPermission: CaseIterable, Identifiable {
+    case accessibility, calendars, microphone, speech, screenAudio, appleEvents
+
+    var id: String { permission.rawValue }
+
+    var permission: DropletPermission {
+        switch self {
+        case .accessibility: .accessibility
+        case .calendars: .calendars
+        case .microphone: .microphone
+        case .speech: .speechRecognition
+        case .screenAudio: .screenCapture
+        case .appleEvents: .appleEvents
+        }
+    }
+
+    var title: String {
+        switch self {
+        case .accessibility: "Accessibility"
+        case .calendars: "Calendar"
+        case .microphone: "Microphone"
+        case .speech: "Speech recognition"
+        case .screenAudio: "Screen and system audio"
+        case .appleEvents: "Automation"
+        }
+    }
+
+    var usedFor: String {
+        switch self {
+        case .accessibility: "Mac notifications, nudges on web pages, lofi in a browser"
+        case .calendars: "Calendar events and joining a call"
+        case .microphone: "Talk to your pet, meeting notes"
+        case .speech: "Talk to your pet, meeting notes"
+        case .screenAudio: "The Mac's sound in meeting notes, whole-page capture"
+        case .appleEvents: "Pausing Spotify or Apple Music, whole-page capture"
+        }
+    }
+
+    var symbol: String {
+        switch self {
+        case .accessibility: "accessibility"
+        case .calendars: "calendar"
+        case .microphone: "mic.fill"
+        case .speech: "waveform"
+        case .screenAudio: "rectangle.dashed.badge.record"
+        case .appleEvents: "gearshape.2.fill"
         }
     }
 }
@@ -2365,6 +4324,7 @@ private struct PixpawSettings: View {
     @State private var templateKind: PetKind = .cat
     @State private var newSign = ""
     @State private var distractionText: String?
+    @State private var lofiLinkText: String?
     @State private var newCountdown = ""
     @State private var newCountdownDay = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var renamingSlot: Int?
@@ -2460,6 +4420,12 @@ private struct PixpawSettings: View {
         }
     }
 
+    private func saveLofiLink() {
+        guard let lofiLinkText else { return }
+        droplet.setLofiLink(lofiLinkText)
+        self.lofiLinkText = nil
+    }
+
     private func saveDistractions() {
         guard let distractionText else { return }
         droplet.setDistractions(distractionText)
@@ -2532,70 +4498,119 @@ private struct PixpawSettings: View {
         return calendar.monthSymbols
     }()
 
+    /// Your pet as the main page names it: "your cat", or the name you gave one you drew.
+    private var petName: String { cat.kind.isOwn ? cat.kind.title : cat.kind.title.lowercased() }
+
     private var pane: some View {
         DropletSettingsPane {
             DropletSettingsCard {
+                DropletControlRow(title: "Show your \(petName)",
+                                  infoTip: "Lets your pet out onto your desktop. Control-Option-C does the same.") {
+                    HStack(spacing: DroppySpacing.sm) {
+                        if let face = CatSprites.shared.menuImage(cat.kind, coat: cat.coat, points: 2) {
+                            Image(nsImage: face)
+                                .interpolation(.none)
+                                .accessibilityHidden(true)
+                        }
+                        Toggle("Show your \(petName)", isOn: Binding(get: { droplet.isOut }, set: { droplet.setOut($0) }))
+                            .toggleStyle(.switch)
+                            .labelsHidden()
+                    }
+                }
+                DropletGroupedPickerRow(
+                    title: "Character",
+                    subtitle: "Who lives on your desktop."
+                ) {
+                    Picker("Character", selection: Binding(get: { cat.kind }, set: { droplet.setKind($0) })) {
+                        ForEach(PetKind.alphabetical) { kind in
+                            Text(kind.title).tag(kind)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                if cat.kind.hasCoats {
+                    DropletControlRow(title: "Coat from a photo", icon: "photo",
+                                      infoTip: "Pixpaw paints the cat in your own cat's colours: fur, stripes or patches, white and eyes. Only the colours are kept, never the photo.") {
+                        HStack(spacing: DroppySpacing.sm) {
+                            if droplet.readingPhoto {
+                                ProgressView().controlSize(.small)
+                            } else if droplet.hasPhotoCoat {
+                                Circle()
+                                    .fill(Color(nsColor: CatCoat.photo.swatch))
+                                    .frame(width: 14, height: 14)
+                                    .accessibilityHidden(true)
+                                Button("Forget") { droplet.forgetPhotoCoat() }
+                                    .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                            }
+                            Button(droplet.hasPhotoCoat ? "Another photo…" : "Choose…") { droplet.coatFromPhoto() }
+                                .disabled(droplet.readingPhoto)
+                        }
+                    }
+                    if let problem = droplet.photoCoatProblem {
+                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                    }
+                    DropletToggleRow(
+                        title: "Folded ears",
+                        subtitle: "Ears folded down, like a Scottish Fold's.",
+                        isOn: Binding(get: { droplet.foldedEars }, set: { droplet.setFoldedEars($0) })
+                    )
+                }
                 DropletToggleRow(
-                    title: "Show the cat",
-                    subtitle: "Lets the cat out onto your desktop. Control-Option-C does the same.",
-                    isOn: Binding(get: { droplet.isOut }, set: { droplet.setOut($0) })
+                    title: "Sounds",
+                    subtitle: "Its own voice when it talks, a purr when you pet it, crunching while it eats. Silent while quiet.",
+                    isOn: Binding(get: { droplet.soundsOn }, set: { droplet.setSounds($0) })
+                )
+                DropletToggleRow(
+                    title: "Beside the notch",
+                    subtitle: "A row beside the notch with your pet and what it, or your AI agents, are up to.",
+                    isOn: Binding(get: { droplet.isPinned }, set: { droplet.setPinned($0) })
                 )
             }
 
-            DropletSettingsSection {
-                settingsSectionHeader("Pet")
-            } content: {
-                DropletSettingsCard {
-                    DropletGroupedPickerRow(
-                        title: "Character",
-                        subtitle: "Who lives on your desktop. More friends are on the way."
-                    ) {
-                        Picker("Character", selection: Binding(get: { cat.kind }, set: { droplet.setKind($0) })) {
-                            ForEach(PetKind.alphabetical) { kind in
-                                Text(kind.title).tag(kind)
-                            }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
+            ForEach(SettingsPage.groups, id: \.title) { group in
+                DropletSettingsSection {
+                    settingsSectionHeader(LocalizedStringKey(group.title))
+                } content: {
+                    DropletSettingsCard {
+                        ForEach(group.pages) { pageLink($0) }
                     }
-                    DropletToggleRow(
-                        title: "Sounds",
-                        subtitle: "A meow when the cat talks, a purr when you pet it, crunching while it eats. Silent while quiet.",
-                        isOn: Binding(get: { droplet.soundsOn }, set: { droplet.setSounds($0) })
-                    )
                 }
             }
 
             DropletSettingsCard {
-                ForEach(SettingsPage.allCases) { page in
-                    DropletSettingsPageLink(page.title, subtitle: subtitle(of: page), page: page.rawValue) {
-                        SettingsPageTile(symbol: page.symbol, color: page.color)
-                    }
-                }
-            }
-
-            DropletSettingsSection {
-                settingsSectionHeader("Notch")
-            } content: {
-                DropletSettingsCard {
-                    DropletToggleRow(
-                        title: "Show beside the notch",
-                        subtitle: "A row beside the notch with a little cat and what it, or your AI agents, are up to.",
-                        isOn: Binding(get: { droplet.isPinned }, set: { droplet.setPinned($0) })
-                    )
-                }
+                pageLink(.permissions)
             }
         }
     }
 
-    /// What a link to a page says under its title.
+    private func pageLink(_ page: SettingsPage) -> some View {
+        DropletSettingsPageLink(page.title, subtitle: subtitle(of: page), page: page.rawValue) {
+            SettingsPageTile(symbol: page.symbol, color: page.color)
+        }
+    }
+
+    /// What a link to a page says under its title: what's set, where there's something to say.
     private func subtitle(of page: SettingsPage) -> String {
         switch page {
         case .notes:
             let count = droplet.notes.count
             let streak = droplet.noteStreak.current >= 2 ? " · \(droplet.noteStreak.current)-day streak" : ""
-            return (count == 0 ? "Your to-do list on its sign" : count == 1 ? "1 note" : "\(count) notes") + streak
+            let countdowns = droplet.countdowns.isEmpty ? "" : " · \(droplet.countdowns.count) countdown\(droplet.countdowns.count == 1 ? "" : "s")"
+            return (count == 0 ? "Your to-do list on its sign" : count == 1 ? "1 note" : "\(count) notes") + streak + countdowns
         case .wardrobe: return "\(cat.points) ★ · hats, collars and a home of its own"
+        case .friend: return droplet.hasFriend ? "\(droplet.friendsKind.title) · \(droplet.social.friendTraits.map(\.title).joined(separator: ", "))" : "Off · a second pet of any kind"
+        case .moving: return "\(cat.roaming.title)\(droplet.typesAlong ? " · types along" : "")\(cat.chasesPointer ? " · follows the cursor" : "")"
+        case .meetings: return "\(droplet.notesSource.title) · summed up by \(droplet.notesModel.title.components(separatedBy: " (").first ?? "")"
+        case .talk: return droplet.talks ? "Control-Option-T · English" : "Off · say what you'd like and it does it"
+        case .permissions:
+            let missing = PixpawPermission.allCases.filter { droplet.permissionStatus[$0.permission] != .granted }.count
+            let allowed = PixpawPermission.allCases.count - missing
+            return missing == 0 ? "All \(allowed) allowed" : "\(missing) not allowed · \(allowed) allowed"
         default: return page.subtitle
         }
     }
@@ -2604,9 +4619,17 @@ private struct PixpawSettings: View {
     private func page(_ page: SettingsPage) -> some View {
         DropletSettingsPage {
             switch page {
+            case .ai:
+                agentsSection
+                workSection
+                scheduledSection
+                asksSection
+                usageSection
             case .notes:
                 notesSection
                 countdownsSection
+            case .meetings: meetingNotesSection
+            case .talk: talkSection
             case .focus: healthSection
             case .moving: movingSection
             case .ownPets: ownPetsSection
@@ -2615,9 +4638,12 @@ private struct PixpawSettings: View {
             case .tells:
                 speechSection
                 aroundSection
-                agentsSection
                 quietSection
+            case .capture: captureSection
             case .festivals: festivalsSection
+            case .permissions:
+                permissionsSection
+                hooksSection
             }
         }
     }
@@ -2760,10 +4786,10 @@ private struct PixpawSettings: View {
         } content: {
             DropletSettingsCard {
                 DropletGroupedPickerRow(
-                    title: "Where the cat walks",
-                    subtitle: "Bottom and on windows lets it jump onto the top edges of the windows you have open, and ride along when you move one. The bee flies anywhere; the parrot perches here and flies between perches."
+                    title: "Where it walks",
+                    subtitle: "Bottom and on windows: it jumps onto the tops of your windows and rides along when you move one. The bee flies anywhere; the parrot perches."
                 ) {
-                    Picker("Where the cat walks", selection: Binding(get: { cat.roaming }, set: { droplet.setRoaming($0) })) {
+                    Picker("Where it walks", selection: Binding(get: { cat.roaming }, set: { droplet.setRoaming($0) })) {
                         ForEach(CatRoaming.allCases) { roaming in
                             Text(roaming.title).tag(roaming)
                         }
@@ -2773,22 +4799,22 @@ private struct PixpawSettings: View {
                 }
                 DropletToggleRow(
                     title: "Follow the cursor",
-                    subtitle: "The cat runs after your pointer whenever it moves far away. Off, it just wanders.",
+                    subtitle: "Your pet runs after your pointer when it moves far away. Off, it just wanders.",
                     isOn: Binding(get: { cat.chasesPointer }, set: { droplet.setChases($0) })
                 )
                 DropletToggleRow(
                     title: "Carry files to your shelf",
-                    subtitle: "Hold a file you're dragging over your pet for a moment, then drop it: your pet runs it over to Droppy's shelf. A file dragged past it drops wherever you were taking it.",
+                    subtitle: "Hold a dragged file over your pet for a moment and drop it: your pet runs it to Droppy's shelf. Dragged past it, it goes where you were taking it.",
                     isOn: Binding(get: { droplet.carriesFiles }, set: { droplet.setCarriesFiles($0) })
                 )
                 DropletToggleRow(
                     title: "Type along",
-                    subtitle: "While you type, your pet sits at its little laptop and taps along with your keys. Only how many keys go down is counted, never which ones, and it needs no permission.",
+                    subtitle: "Your pet taps along at its laptop while you type. Only how many keys go down is counted, never which; no permission needed.",
                     isOn: Binding(get: { droplet.typesAlong }, set: { droplet.setTypesAlong($0) })
                 )
                 DropletToggleRow(
                     title: "Pounce on dragged files",
-                    subtitle: "Drag a file anywhere and the cat stalks it, crouches and pounces. Dropping still works: the cat never gets in the way.",
+                    subtitle: "Drag a file anywhere and your pet stalks it and pounces. Dropping still works: it never gets in the way.",
                     isOn: Binding(get: { cat.pouncesOnDrags }, set: { droplet.setPounces($0) })
                 )
             }
@@ -2810,6 +4836,18 @@ private struct PixpawSettings: View {
                 }
                 DropletControlRow(title: "Earned today") {
                     DropletValuePill(text: "\(cat.starDay.day == StarDay.today ? cat.starDay.stars : 0) / \(StarSource.dailyTotal)")
+                }
+                DropletStackedRow(title: "This year together", icon: "calendar",
+                                  infoTip: "Counts only (minutes focused, bugs caught, games won, notes done), kept on this Mac, for a card at the end of the year.") {
+                    HStack(spacing: DroppySpacing.sm) {
+                        Text(droplet.stats.summary ?? "Nothing counted yet")
+                            .foregroundStyle(.secondary)
+                            .frame(maxWidth: .infinity, alignment: .leading)
+                        if droplet.stats.summary != nil {
+                            Button("Clear") { droplet.clearStats() }
+                                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        }
+                    }
                 }
                 DropletGroupedPickerRow(title: "Hat") {
                     Picker("Hat", selection: Binding(get: { cat.hat }, set: { droplet.wear($0, in: .hat) })) {
@@ -2841,12 +4879,12 @@ private struct PixpawSettings: View {
                 if cat.hasHome {
                     DropletToggleRow(
                         title: "Home",
-                        subtitle: "A home of its own on the floor, after where the animal really lives (a box, a beehive, a tree, a pond…). It goes there for a nap when you choose Go home or click it; click again to call it out. Drag it to move it.",
+                        subtitle: "A home after where the animal really lives: a box, a beehive, a tree, a pond. Click it for a nap, click again to call it out; drag it to move it.",
                         isOn: Binding(get: { cat.homeOn }, set: { droplet.setHome($0) })
                     )
                 } else {
                     DropletControlRow(title: "Challenge: a home of its own", icon: "house",
-                                      infoTip: "At \(CatController.homeUnlockAt) ★ your pet gets a home after where it really lives (a beehive for the bee, a tree for the parrot, a pond for the hippo), where it goes for a nap.") {
+                                      infoTip: "At \(CatController.homeUnlockAt) ★ your pet gets a home after where it really lives (a beehive, a tree, a pond) to nap in.") {
                         DropletValuePill(text: "\(CatController.homeUnlockAt - cat.points) ★ to go")
                     }
                 }
@@ -2861,7 +4899,7 @@ private struct PixpawSettings: View {
             DropletSettingsCard {
                 DropletToggleRow(
                     title: "A second pet",
-                    subtitle: "A friend that roams with your pet, sits with it and plays tag. It never talks, and its happiness counts for your pet.",
+                    subtitle: "A friend that roams with your pet, sits with it, plays tag and rock, paper, scissors. It never talks, and its happiness counts for your pet.",
                     isOn: Binding(get: { droplet.hasFriend }, set: { droplet.setFriend($0) })
                 )
                 DropletGroupedPickerRow(title: "Friend", subtitle: "Any character, or one you drew: a dog for your cat, a rabbit for your shark.") {
@@ -2877,12 +4915,28 @@ private struct PixpawSettings: View {
                 if droplet.friendsKind.hasCoats {
                     DropletGroupedPickerRow(title: "Friend's coat") {
                         Picker("Friend's coat", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
-                            ForEach(CatCoat.allCases) { coat in
+                            ForEach(CatCoat.choices) { coat in
                                 Text(coat.title).tag(coat)
                             }
                         }
                         .pickerStyle(.menu)
                         .labelsHidden()
+                    }
+                }
+                if droplet.hasFriend {
+                    DropletControlRow(title: "Your pet is", icon: "theatermasks") {
+                        DropletValuePill(text: droplet.social.petTraits.map(\.title).joined(separator: ", "))
+                    }
+                    DropletControlRow(title: "Its friend is", icon: "theatermasks.fill") {
+                        DropletValuePill(text: droplet.social.friendTraits.map(\.title).joined(separator: ", "))
+                    }
+                    DropletControlRow(title: "Rock, paper, scissors", icon: "hand.raised.fingers.spread",
+                                      infoTip: "When both sit about they play for make-believe coins, each in its own character. Start over draws new characters and \(PetSocial.startingCoins) coins each.") {
+                        HStack(spacing: DroppySpacing.sm) {
+                            DropletValuePill(text: "\(droplet.social.petCoins) vs \(droplet.social.friendCoins) coins · \(droplet.social.petWins)–\(droplet.social.friendWins)")
+                            Button("Start over") { droplet.resetSocial() }
+                                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        }
                     }
                 }
             }
@@ -2893,7 +4947,7 @@ private struct PixpawSettings: View {
         DropletSettingsSection {
             VStack(alignment: .leading, spacing: 2) {
                 settingsSectionHeader("Speech bubble")
-                Text("The cat says it in a bubble over its head, or under the notch while it naps.")
+                Text("Your pet says it in a bubble over its head, or under the notch while it naps.")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -2916,7 +4970,7 @@ private struct PixpawSettings: View {
                 }
                 DropletToggleRow(
                     title: "Calendar events",
-                    subtitle: "Two minutes before each event, it comes over to tell you. When the event has a Zoom, Meet, Teams or other video-call link, click your pet to join (or use the Join your next video call shortcut).",
+                    subtitle: "It comes over two minutes before each event. With a Zoom, Meet or Teams link, click your pet to join.",
                     isOn: Binding(get: { droplet.tellsCalendar }, set: { droplet.setTells(calendar: $0) })
                 )
                 if droplet.tellsCalendar, !droplet.calendarAllowed {
@@ -2931,12 +4985,12 @@ private struct PixpawSettings: View {
                 )
                 DropletToggleRow(
                     title: "Busy Mac",
-                    subtitle: "When the Mac works flat out for half a minute or runs hot, your pet hurries about with a bead of sweat, and says so now and then. Only the overall load is read, never which apps.",
+                    subtitle: "When the Mac works flat out or runs hot, your pet hurries about with a bead of sweat. Only the overall load is read, never which apps.",
                     isOn: Binding(get: { droplet.tellsHeat }, set: { droplet.setTells(heat: $0) })
                 )
                 DropletToggleRow(
-                    title: "Volume and brightness",
-                    subtitle: "Says the new level when you turn the sound or the screen up or down, in one bubble that updates as you hold the key.",
+                    title: "Volume",
+                    subtitle: "Says the new level when you turn the sound up or down, in one bubble that updates as you hold the key.",
                     isOn: Binding(get: { droplet.tellsLevels }, set: { droplet.setTells(levels: $0) })
                 )
                 DropletToggleRow(
@@ -2960,13 +5014,13 @@ private struct PixpawSettings: View {
             DropletSettingsCard {
                 DropletToggleRow(
                     title: "Quiet during calls and screen sharing",
-                    subtitle: "No bubbles while a microphone or camera is in use or a screen is shared, so private messages never show up in a meeting. Volume and brightness still show.",
+                    subtitle: "No bubbles while a microphone or camera is in use or a screen is shared, so nothing private shows in a meeting.",
                     isOn: Binding(get: { droplet.quietsAutomatically }, set: { droplet.setQuietsAutomatically($0) })
                 )
                 if droplet.quietsAutomatically {
                     DropletToggleRow(
                         title: "Also quiet while mirroring",
-                        subtitle: "When the display is mirrored to a projector or a TV. Turn off if you mirror to a TV at home and want the cat to keep talking.",
+                        subtitle: "When the display is mirrored to a projector or a TV. Turn off if you mirror to a TV at home.",
                         isOn: Binding(get: { droplet.quietWhenMirroring }, set: { droplet.setQuietWhenMirroring($0) })
                     )
                 }
@@ -2991,25 +5045,9 @@ private struct PixpawSettings: View {
                 )
                 DropletToggleRow(
                     title: "Headphones",
-                    subtitle: "When AirPods or other headphones connect or disconnect. The cat wears a pair while yours are on.",
+                    subtitle: "When headphones connect or disconnect. Your pet wears a pair while yours are on.",
                     isOn: Binding(get: { droplet.tellsHeadphones }, set: { droplet.setTells(headphones: $0) })
                 )
-                DropletToggleRow(
-                    title: "Screenshots",
-                    subtitle: "Strikes a pose when you take a screenshot. Found through Spotlight, so no permission is needed.",
-                    isOn: Binding(get: { droplet.tellsScreenshots }, set: { droplet.setTells(screenshots: $0) })
-                )
-                DropletControlRow(title: "Record a GIF of your pet",
-                                  infoTip: "Five seconds of whatever it's doing, as a looping GIF where your screenshots go; it brings it to the shelf, ready to drop into a chat. Also from its menu, a shortcut you set, or droppy://droplet/pixpaw/gif in Shortcuts.") {
-                    Button("Record") { droplet.recordGIF() }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
-                        .disabled(!droplet.isOut)
-                }
-                DropletControlRow(title: "Capture a whole web page",
-                                  infoTip: "Safari, Chrome, Arc, Edge, Brave or Vivaldi, whichever is in front. Needs the browser to allow JavaScript from Apple Events (Safari: Settings → Developer; Chrome and the others: View → Developer), and Screen Recording for Droppy. Also from a shortcut you set, or droppy://droplet/pixpaw/capture in Shortcuts.") {
-                    Button("Capture") { droplet.capturePage() }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
-                }
                 DropletToggleRow(
                     title: "Good morning",
                     subtitle: "The first time it sees you on a morning, it stretches and says good morning, with your first event of the day when Calendar events is on.",
@@ -3029,11 +5067,133 @@ private struct PixpawSettings: View {
         }
     }
 
+    private var talkSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Talk to your pet")
+                Text("Press Control-Option-T, or choose Talk to me in its menu, and say what you'd like. Change the shortcut on Droppy's Shortcuts page.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Talk to your pet",
+                    subtitle: "Heard on your Mac with Apple's on-device speech recognition, only while you talk to it. Nothing is recorded or kept.",
+                    isOn: Binding(get: { droplet.talks }, set: { droplet.setTalks($0) })
+                )
+                if let problem = droplet.talkProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+                DropletStackedRow(title: "Things to say", icon: "text.bubble") {
+                    Text("Come here · feed · nap · focus for 25 minutes · stop focus · play lofi · take a photo · note buy milk · remind me to… · how much usage is left · good kitty")
+                        .foregroundStyle(.secondary)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                }
+                DropletControlRow(title: "Language", icon: "globe") {
+                    DropletValuePill(text: "English for now")
+                }
+            }
+        }
+    }
+
+    private var captureSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Capture")
+                Text("Also from your pet's menu, a shortcut on Droppy's Shortcuts page, or droppy://droplet/pixpaw/photo, gif and capture in Shortcuts.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletControlRow(title: "Photo of your pet", icon: "camera",
+                                  infoTip: "A picture of your pet where your screenshots go.") {
+                    Button("Take") { droplet.takePhoto() }
+                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .disabled(!droplet.isOut)
+                }
+                DropletControlRow(title: "GIF of your pet", icon: "film",
+                                  infoTip: "Five seconds of whatever it's doing, as a looping GIF. It brings it to the shelf, ready to drop into a chat.") {
+                    Button("Record") { droplet.recordGIF() }
+                        .buttonStyle(.bordered)
+                        .disabled(!droplet.isOut)
+                }
+                DropletControlRow(title: "A whole web page", icon: "safari",
+                                  infoTip: "Safari, Chrome, Arc, Edge, Brave or Vivaldi, in front. Turn on JavaScript from Apple Events (Safari: Settings → Developer; others: View → Developer).") {
+                    Button("Capture") { droplet.capturePage() }
+                        .buttonStyle(.bordered)
+                }
+                DropletToggleRow(
+                    title: "Pose for screenshots",
+                    subtitle: "Strikes a pose when you take a screenshot. Found through Spotlight, so no permission is needed.",
+                    isOn: Binding(get: { droplet.tellsScreenshots }, set: { droplet.setTells(screenshots: $0) })
+                )
+            }
+        }
+    }
+
+    private var permissionsSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("What Droppy is allowed")
+                Text("Pixpaw asks through Droppy, so these are Droppy's switches in System Settings → Privacy & Security.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                ForEach(PixpawPermission.allCases) { item in
+                    DropletControlRow(title: item.title, icon: item.symbol, infoTip: "For: \(item.usedFor).") {
+                        if droplet.permissionStatus[item.permission] == .granted {
+                            DropletValuePill(text: "Allowed")
+                        } else if droplet.permissionStatus[item.permission] == .unavailable {
+                            DropletValuePill(text: "Not on this Mac")
+                        } else {
+                            Button("Allow…") { droplet.requestPermission(item.permission) }
+                                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    /// The hooks that make an agent speak, and when each last did.
+    private var hooksSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Agent hooks")
+                Text("Without them your pet still follows Claude Code, Codex, Antigravity and Gemini CLI from their logs; the hooks add questions, diffs, long commands and helpers.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                ForEach([("Claude Code hooks", "Claude"), ("Antigravity plugin", "Antigravity"), ("Codex notify", "Codex"), ("pixpaw-ask hook", "pixpaw-ask")], id: \.1) { title, key in
+                    DropletControlRow(title: title, icon: "link",
+                                      infoTip: key == "pixpaw-ask" ? "Puts Claude's questions on your pet's card." : "Tells your pet when \(key) starts, works, finishes or needs you.") {
+                        if let heard = droplet.hookHeard(key) {
+                            DropletValuePill(text: "Heard " + heard.formatted(.relative(presentation: .named)))
+                        } else {
+                            Button("How to set up") { NSWorkspace.shared.open(URL(string: "https://github.com/Josakcat/pixpaw#readme")!) }
+                                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        }
+                    }
+                }
+            }
+        }
+    }
+
     private var agentsSection: some View {
         DropletSettingsSection {
             VStack(alignment: .leading, spacing: 2) {
-                settingsSectionHeader("AI agents")
-                Text("Claude Code, Antigravity, Codex, Cursor and others report through hooks that open droppy://droplet/pixpaw/agent?name=…&state=working|done|waiting|error.")
+                settingsSectionHeader("Your agents")
+                Text("Claude Code, Antigravity, Codex, Cursor and others: your pet reads their logs, or they report through hooks that open droppy://droplet/pixpaw/agent?name=…&state=working|done|waiting|error.")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -3041,18 +5201,71 @@ private struct PixpawSettings: View {
             DropletSettingsCard {
                 DropletToggleRow(
                     title: "Agent updates",
-                    subtitle: "Says when an agent starts, finishes or needs you. While one works your pet codes along at its laptop; it celebrates when it's done and comes over when it needs you.",
+                    subtitle: "Says when an agent starts, finishes or needs you, and codes along at its laptop while it works.",
                     isOn: Binding(get: { droplet.tellsAgents }, set: { droplet.setTells(agents: $0) })
                 )
                 DropletToggleRow(
+                    title: "Follow agents without hooks",
+                    subtitle: "Reads the logs Claude Code, Codex, Antigravity and Gemini CLI keep on this Mac. Keeps only tool and file names, a command's first two words and percentages, never what anyone wrote.",
+                    isOn: Binding(get: { droplet.readsAgentFiles }, set: { droplet.setReadsAgentFiles($0) })
+                )
+                DropletToggleRow(
                     title: "Keep the Mac awake while agents work",
-                    subtitle: "While Claude Code, Antigravity, Codex or another agent is working, the Mac doesn't go to sleep, so a long run can finish. The screen can still turn off. Closing a laptop's lid still puts it to sleep.",
+                    subtitle: "The Mac stays awake while an agent works, so a long run can finish. The screen still turns off, and closing the lid still sleeps.",
                     isOn: Binding(get: { droplet.awakeForAgents }, set: { droplet.setAwakeForAgents($0) })
                 )
                 .disabled(!droplet.tellsAgents)
+            }
+        }
+    }
+
+    private var workSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("While they work")
+                Text("What your agent is up to, beside your pet.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "What it's working on",
+                    subtitle: "A tag at your pet's side: “Editing App.swift”, “Running swift build”. Only a file's name and a command's first words; hidden while quiet.",
+                    isOn: Binding(get: { droplet.showsAgentTools }, set: { droplet.setShowsAgentTools($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
+                    title: "Wait for CI after a push",
+                    subtitle: droplet.hasGH
+                        ? "When your agent pushes to GitHub, your pet waits for its Actions with you: it jumps for joy when they pass, and a bug turns up when they fail, until a push makes them green. Asks GitHub's gh command every 20 seconds, signed in as you, so it goes online. Needs the hooks in the README."
+                        : "When your agent pushes to GitHub, your pet waits for its Actions with you. Needs GitHub's gh command, signed in (brew install gh, then gh auth login).",
+                    isOn: Binding(get: { droplet.watchesCI }, set: { droplet.setWatchesCI($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
+                    title: "Long commands and helpers",
+                    subtitle: "Your pet waits out long tests and builds (popcorn, cobwebs, a nap), hunts the bug a failure leaves, and a subagent works beside it at its own laptop.",
+                    isOn: Binding(get: { droplet.showsWaits }, set: { droplet.setShowsWaits($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+            }
+        }
+    }
+
+    private var scheduledSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("On a schedule")
+                Text("Claude Code scheduled tasks, /loop and Antigravity Automations that run on this Mac.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
                 DropletToggleRow(
                     title: "Scheduled runs",
-                    subtitle: "When a Claude Code scheduled task (or a /loop) or an Antigravity Automation runs, your pet says so, and when it's done it comes over with the result. Works with the Claude agent hooks and the Pixpaw plugin for Antigravity; scheduled tasks in the cloud don't run on this Mac, so it can't see those.",
+                    subtitle: "When a Claude Code scheduled task, a /loop or an Antigravity Automation runs on this Mac, your pet says so and brings the result.",
                     isOn: Binding(get: { droplet.tellsScheduled }, set: { droplet.setTellsScheduled($0) })
                 )
                 .disabled(!droplet.tellsAgents)
@@ -3062,18 +5275,110 @@ private struct PixpawSettings: View {
                     isOn: Binding(get: { droplet.scheduledOnSign }, set: { droplet.setScheduledOnSign($0) })
                 )
                 .disabled(!droplet.tellsAgents || !droplet.tellsScheduled)
-                DropletToggleRow(
-                    title: "What it's working on",
-                    subtitle: "While Claude Code or Antigravity works, a tag at your pet's side says what it's doing: “Editing CatController.swift”, “Running swift build”. Only a file's name and a command's first words, and hidden while your pet is quiet. Needs the tool hook for Claude, or the Pixpaw plugin for Antigravity (see the README).",
-                    isOn: Binding(get: { droplet.showsAgentTools }, set: { droplet.setShowsAgentTools($0) })
-                )
-                .disabled(!droplet.tellsAgents)
+            }
+        }
+    }
+
+    private var meetingNotesSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Meeting notes")
+                Text("Take meeting notes from your pet's menu (or a shortcut on Droppy's Shortcuts page): it listens to the call, turns it into words on your Mac, and when you stop, the model you pick sums it up. The notes go on Droppy's shelf and into Documents → Pixpaw Meetings; the sound is never kept. Let everyone in the call know you're taking notes.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletGroupedPickerRow(title: "Language", subtitle: "What the meeting is in. Your Mac needs it for dictation (System Settings → Keyboard → Dictation).") {
+                    Picker("Language", selection: Binding(get: { droplet.notesLanguage }, set: { droplet.setNotesLanguage($0) })) {
+                        ForEach(MeetingLanguage.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                DropletGroupedPickerRow(title: "Listen to", subtitle: droplet.notesSource.detail) {
+                    Picker("Listen to", selection: Binding(get: { droplet.notesSource }, set: { droplet.setNotesSource($0) })) {
+                        ForEach(MeetingSource.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                DropletGroupedPickerRow(title: "Summary by", subtitle: droplet.notesModel.online
+                    ? "Sends the transcript to the model's company under your own account, through its command on this Mac, and counts toward your plan."
+                    : droplet.notesModel == .apple ? "Stays on your Mac. English and some other languages, not Thai yet." : "Only the transcript, no summary.") {
+                    Picker("Summary by", selection: Binding(get: { droplet.notesModel }, set: { droplet.setNotesModel($0) })) {
+                        ForEach(NoteModel.allCases) { model in
+                            Text(model.available ? model.title : "\(model.title), not installed").tag(model)
+                                .disabled(!model.available)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                switch droplet.notesModel {
+                case .claude:
+                    DropletGroupedPickerRow(title: "Model") {
+                        Picker("Model", selection: Binding(get: { droplet.notesModelName }, set: { droplet.setNotesModelName($0) })) {
+                            ForEach(NoteModel.claude.presets, id: \.self) { Text($0.isEmpty ? "Claude's default" : $0.capitalized).tag($0) }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                case .antigravity:
+                    DropletGroupedPickerRow(title: "Model") {
+                        Picker("Model", selection: Binding(get: { droplet.notesModelName }, set: { droplet.setNotesModelName($0) })) {
+                            Text("Antigravity's default").tag("")
+                            ForEach(droplet.antigravityModels, id: \.id) { Text($0.name).tag($0.id) }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                        .onAppear { droplet.loadAntigravityModels() }
+                    }
+                case .codex:
+                    DropletControlRow(title: "Model", icon: "cpu", infoTip: "A Codex model's name, as `codex -m` takes it. Empty: your Codex default.") {
+                        TextField("Codex's default", text: Binding(get: { droplet.notesModelName }, set: { droplet.setNotesModelName($0) }))
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 180)
+                    }
+                default:
+                    EmptyView()
+                }
+                DropletControlRow(title: "Your meeting notes", icon: "folder") {
+                    Button("Open folder") { droplet.openNotesFolder() }
+                }
+                if let problem = droplet.notesProblem {
+                    Label(problem, systemImage: "exclamationmark.triangle.fill")
+                        .font(.callout)
+                        .foregroundStyle(.orange)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
+            }
+        }
+    }
+
+    private var asksSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Questions")
+                Text("When your agent asks to run something or asks you a question.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
                 DropletToggleRow(
                     title: "Answer from your pet",
-                    subtitle: "When Claude Code (not yet Antigravity) asks to run something or asks you a question, your pet comes over with the choices on a card: click one to answer. Ignore it and Claude asks you as usual. Away from the Mac (no keyboard or mouse for a minute, or the screen locked), questions go straight back to Claude, so Remote Control can ask you on your phone. Needs the pixpaw-ask hook (see the README).",
+                    subtitle: "Claude Code's questions come over on a card: click to answer, or ignore it and Claude asks as usual. While you're away they go straight back to Claude.",
                     isOn: Binding(get: { droplet.answersAsks }, set: { droplet.setAnswersAsks($0) })
                 )
                 .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
+                    title: "Touch ID to allow a risky one",
+                    subtitle: "Allowing rm -rf, a force-push, sudo or a secrets file takes your fingerprint or password, so a stray click can't let it through.",
+                    isOn: Binding(get: { droplet.touchIDForRisky }, set: { droplet.setTouchIDForRisky($0) })
+                )
+                .disabled(!droplet.tellsAgents || !droplet.answersAsks)
                 DropletToggleRow(
                     title: "Read questions aloud",
                     subtitle: "Says the question out loud as it comes over, so you hear it from across the room.",
@@ -3084,6 +5389,67 @@ private struct PixpawSettings: View {
         }
     }
 
+    /// What's left of each AI's plan: where it's shown, then a row for each
+    /// agent saying where its numbers come from.
+    private var usageSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("AI Usage left")
+                Text("What's left of each AI's five hours and week, a section for each, on the second page of your pet's widget (the gauge button at its top) and in the menu bar.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "AI Usage left in the menu bar",
+                    icon: "gauge.with.dots.needle.67percent",
+                    subtitle: "A gauge as full as your emptiest plan window, a raised hand while an agent needs you. Click it for every AI's windows and resets.",
+                    isOn: Binding(get: { droplet.showsMenuBar }, set: { droplet.setShowsMenuBar($0) })
+                )
+                let claude = AgentLook("Claude")
+                DropletToggleRow(
+                    title: "\(claude.name): ask the claude command",
+                    icon: claude.symbol,
+                    iconColor: claude.color,
+                    subtitle: "Every five minutes while Claude works, your pet asks the claude command for the plan left. No prompt is sent, nothing is billed, no hooks run.",
+                    isOn: Binding(get: { droplet.asksClaudeUsage }, set: { droplet.setAsksClaudeUsage($0) })
+                )
+                let antigravity = AgentLook("Antigravity")
+                DropletControlRow(
+                    title: antigravity.name,
+                    icon: antigravity.symbol,
+                    iconColor: antigravity.color,
+                    infoTip: "Each model group with limits of its own gets a line under Antigravity. The Pixpaw plugin asks agy for /usage when a turn ends."
+                ) {
+                    sourceText("From the Pixpaw plugin")
+                }
+                let codex = AgentLook("Codex")
+                DropletControlRow(
+                    title: codex.name,
+                    icon: codex.symbol,
+                    iconColor: codex.color,
+                    infoTip: "Codex writes what's left of its plan into its own log as it works; your pet reads it there with Follow agents without hooks on."
+                ) {
+                    sourceText(droplet.readsAgentFiles ? "From its own log" : "Turn on Follow agents without hooks")
+                }
+                DropletControlRow(
+                    title: "Other agents",
+                    icon: "cpu",
+                    infoTip: "Any other agent's hook can send “5h 77% · week 59% left” when a turn ends, and it gets a section of its own."
+                ) {
+                    sourceText("From their hooks")
+                }
+            }
+        }
+    }
+
+    private func sourceText(_ text: String) -> some View {
+        Text(text)
+            .font(.callout)
+            .foregroundStyle(.secondary)
+    }
+
     private var healthSection: some View {
         DropletSettingsSection {
             settingsSectionHeader("Health")
@@ -3091,7 +5457,7 @@ private struct PixpawSettings: View {
             DropletSettingsCard {
                 DropletToggleRow(
                     title: "Break reminders",
-                    subtitle: "Your pet comes over to remind you. Stretch with me: it stretches along for 20 seconds; click it afterwards for a star. Times count while you're at the Mac, and five minutes away counts as a stretch and a rest for your eyes. Never during a call or a focus session.",
+                    subtitle: "Your pet comes over to remind you, and stretches along with you. Time counts only while you're at the Mac; never during a call or focus.",
                     isOn: Binding(get: { droplet.healthOn }, set: { droplet.setHealth(on: $0) })
                 )
                 ForEach(droplet.reminders) { reminder in
@@ -3114,7 +5480,7 @@ private struct PixpawSettings: View {
                 }
                 DropletGroupedPickerRow(
                     title: "Focus session",
-                    subtitle: "Start one from the timer on the shelf or by holding your pet. It sits by you without a sound, keeps the time left over its head and beside the notch, and comes over when it's time for a break."
+                    subtitle: "Start one from the shelf timer or your pet's menu. It sits by you quietly with the time left over its head, and comes over at break time."
                 ) {
                     Picker("Focus session", selection: Binding(get: { droplet.focusMinutes }, set: { droplet.setFocusMinutes($0) })) {
                         ForEach([15, 25, 45, 50], id: \.self) { minutes in
@@ -3126,12 +5492,40 @@ private struct PixpawSettings: View {
                 }
                 DropletToggleRow(
                     title: "Pomodoro",
-                    subtitle: "Four focus sessions in a row, with a 5-minute break after each and 15 minutes off after the fourth. Each break starts with a stretch together.",
+                    subtitle: "Four focus sessions with 5-minute breaks, and 15 minutes off after the fourth. Each break starts with a stretch.",
                     isOn: Binding(get: { droplet.pomodoroOn }, set: { droplet.setPomodoro($0) })
+                )
+                DropletGroupedPickerRow(
+                    title: "Lofi",
+                    subtitle: "Play lofi from your pet's menu or a shortcut, in your browser, Spotify or Apple Music. Your pet puts its headphones on and studies along."
+                ) {
+                    Picker("Lofi", selection: Binding(get: { droplet.lofiSource }, set: { droplet.setLofiSource($0) })) {
+                        ForEach(LofiSource.allCases) { source in
+                            Text(source.title).tag(source)
+                        }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                if droplet.lofiSource == .own {
+                    DropletControlRow(title: "Your lofi link", icon: "link", infoTip: "A web page, or a spotify: or music: link.") {
+                        TextField("Your lofi link", text: Binding(get: { lofiLinkText ?? droplet.lofiLink }, set: { lofiLinkText = $0 }),
+                                  prompt: Text("https://…"))
+                            .labelsHidden()
+                            .textFieldStyle(.roundedBorder)
+                            .frame(width: 260)
+                            .onSubmit { saveLofiLink() }
+                            .onDisappear { saveLofiLink() }
+                    }
+                }
+                DropletToggleRow(
+                    title: "Lofi with each focus session",
+                    subtitle: "A focus session starts lofi, and a break or the end pauses it. Pausing asks once for Automation (Spotify, Music) or needs Accessibility (a browser).",
+                    isOn: Binding(get: { droplet.lofiWithFocus }, set: { droplet.setLofiWithFocus($0) })
                 )
                 DropletToggleRow(
                     title: "Nudge me back to work",
-                    subtitle: "During a focus session, after two minutes in an app or on a page with one of these words in its name, your pet comes over to ask. Only the app in front and its window title are read, while focusing, and nothing is kept. Pages need Accessibility for Droppy.",
+                    subtitle: "Two minutes in an app or page with one of these words in its name, and your pet comes over. Only the front window's title is read, while focusing; nothing is kept.",
                     isOn: Binding(get: { droplet.nudgesOn }, set: { droplet.setNudges($0) })
                 )
                 if droplet.nudgesOn {
@@ -3211,6 +5605,12 @@ private struct PixpawSettings: View {
 /// roam?mode=anywhere|floor|windows.
 extension PixpawDroplet: DropletURLHandling {
     public func handle(_ request: DropletURLRequest) {
+        if request.path.lowercased() == "agent", let name = request.query["name"] {
+            let name = String(name.trimmingCharacters(in: .whitespacesAndNewlines).prefix(24))
+            hookHeardAt[name] = Date()
+            heardHook(name)
+        }
+        if request.path.lowercased() == "ask" { heardHook("pixpaw-ask") }
         switch request.path.lowercased() {
         case "show": setOut(true)
         case "hide": setOut(false)
@@ -3219,6 +5619,13 @@ extension PixpawDroplet: DropletURLHandling {
         case "feed": feed()
         case "photo": takePhoto()
         case "gif": recordGIF()
+        case "lofi": playLofi()
+        case "listen", "talk": talkToPet()
+        case "meeting":
+            // meeting?start, meeting?stop, or meeting to start or stop.
+            if request.query["stop"] != nil { if takingNotes { toggleMeetingNotes() } }
+            else if request.query["start"] != nil { if !takingNotes { toggleMeetingNotes() } }
+            else { toggleMeetingNotes() }
         case "focus":
             // focus?minutes=25, or focus?stop
             if request.query["stop"] != nil { stopFocus() } else { startFocus(minutes: request.query["minutes"].flatMap(Int.init).map { min(180, max(1, $0)) }) }
@@ -3233,6 +5640,7 @@ extension PixpawDroplet: DropletURLHandling {
             // play?toy=yarn|teaser|laser|ball|mouse|frisbee|…|stop
             switch request.query["toy"]?.lowercased() {
             case "stop": cat?.stopPlaying()
+            case "hands": cat?.challengeFriend()
             case "ball": cat?.play(PetGame.fetch)
             case let name?: cat?.play(PetGame.allCases.first { $0.rawValue.lowercased() == name } ?? .yarn)
             case nil: cat?.play(PetGame.yarn)
@@ -3244,10 +5652,15 @@ extension PixpawDroplet: DropletURLHandling {
         case "quiet":
             setQuietByHand(["1", "on", "true"].contains(request.query["on"]?.lowercased() ?? "1"))
         case "agent" where request.query["state"]?.lowercased() == "tool":
-            agentTool(name: request.query["name"] ?? "", tool: request.query["tool"] ?? "", target: request.query["target"])
+            agentTool(name: request.query["name"] ?? "", tool: request.query["tool"] ?? "", target: request.query["target"], id: request.query["id"],
+                      ports: request.query["ports"], ci: request.query["ci"])
+        case "agent" where request.query["state"]?.lowercased() == "tool-done":
+            agentToolDone(name: request.query["name"] ?? "", tool: request.query["tool"] ?? "", id: request.query["id"], outcome: request.query["outcome"]?.lowercased())
+        case "agent" where request.query["state"]?.lowercased() == "helper":
+            helperEvent(name: request.query["name"] ?? "", id: request.query["id"], event: request.query["event"]?.lowercased())
         case "agent":
             agentEvent(name: request.query["name"] ?? "", state: request.query["state"] ?? "", text: request.query["text"], usage: request.query["usage"],
-                       task: request.query["task"], result: request.query["result"])
+                       task: request.query["task"], result: request.query["result"], diff: request.query["diff"])
         case "join":
             joinNextMeeting()
         case "capture":
@@ -3280,6 +5693,37 @@ extension PixpawDroplet: DropletURLHandling {
 
 // MARK: - Agent status
 
+/// A command an agent is running, by the hook's id for the call.
+struct RunningCommand {
+    let id: String
+    let agent: String
+    /// Its program and first word, e.g. "npm test".
+    let label: String
+    let since: Date
+
+    /// Past this, the pet sits down to wait on it.
+    static let waitsAfter: TimeInterval = 20
+    /// A command or errand never heard of again is let go after this.
+    static let forgottenAfter: TimeInterval = 2 * 3600
+
+    /// Tools that test, build or check code: when one fails, a bug turns up
+    /// however quickly it failed.
+    static func checksWork(_ label: String) -> Bool {
+        let program = label.split(separator: " ").first.map { String($0).lowercased() } ?? ""
+        return ["npm", "npx", "yarn", "pnpm", "bun", "deno", "make", "cargo", "go", "swift", "xcodebuild", "gradle", "gradlew",
+                "mvn", "pytest", "jest", "vitest", "tsc", "eslint", "ruff", "mypy", "rspec", "dotnet", "flutter", "dart", "droppykit"]
+            .contains(program.replacingOccurrences(of: "./", with: ""))
+    }
+
+    /// "40s", "4 min", "1 h 5 min".
+    static func length(_ seconds: TimeInterval) -> String {
+        let s = Int(seconds)
+        if s < 60 { return "\(s / 10 * 10)s" }
+        if s < 3600 { return "\(s / 60) min" }
+        return "\(s / 3600) h \(s % 3600 / 60) min"
+    }
+}
+
 struct AgentStatus: Equatable {
     enum State: String {
         case working, done, waiting, error
@@ -3297,4 +5741,6 @@ struct AgentStatus: Equatable {
     var name: String
     var state: State
     var at: Date
+    /// What the turn changed, when it's done: "3 files · +84 −12".
+    var diff: String? = nil
 }
