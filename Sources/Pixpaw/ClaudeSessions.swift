@@ -13,9 +13,12 @@
 import Darwin
 import Foundation
 
-@MainActor
-final class ClaudeSessions {
+/// Polled only on PixpawDroplet's agent-files queue, never the main thread.
+final class ClaudeSessions: @unchecked Sendable {
     private var logs: [String: AgentLog] = [:]
+    /// The last read of each session, so the quiet after a tool's answer can
+    /// end a turn without reading the file again.
+    private var reads: [String: Read] = [:]
     private var looked = false
     static let sessionsFolder = AgentFiles.home.appendingPathComponent(".claude/sessions", isDirectory: true)
     static let projectsFolder = AgentFiles.home.appendingPathComponent(".claude/projects", isDirectory: true)
@@ -35,17 +38,26 @@ final class ClaudeSessions {
             let first = logs[id] == nil
             guard var log = logs[id] ?? Self.transcript(id: id, folder: folder).map({ AgentLog(file: $0) }),
                   let (size, modified) = AgentFiles.size(of: log.file) else { continue }
-            // Unchanged, only the quiet after a tool's answer can end a turn.
-            guard first || size != log.size || modified != log.modified || log.busy == true else { continue }
+            // Unchanged, only the quiet after a tool's answer can end a turn:
+            // worked out from the last read, the file left alone.
+            if !first, size == log.size, modified == log.modified {
+                if log.busy == true, let last = reads[id] {
+                    events += log.update(calls: [], results: [], busy: last.busy(quietFor: now.timeIntervalSince(modified)), first: false, quietStart: quietStart)
+                    logs[id] = log
+                }
+                continue
+            }
             log.size = size
             log.modified = modified
             guard let lines = AgentFiles.readTail(log.file, size: size) else { continue }
             let read = Self.read(lines)
+            reads[id] = read
             events += log.update(calls: read.order.map { ($0.id, $0.name, $0.target) }, results: read.results.map { ($0.id, $0.failed) },
                                  busy: read.busy(quietFor: now.timeIntervalSince(modified)), first: first, quietStart: quietStart)
             logs[id] = log
         }
         logs = logs.filter { alive.contains($0.key) }
+        reads = reads.filter { alive.contains($0.key) }
         return events
     }
 

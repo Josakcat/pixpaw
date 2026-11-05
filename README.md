@@ -46,10 +46,10 @@ your desktop and talks to you. A Droplet for
   listens to the call (your microphone, the Mac's sound, or both: your
   choice), turns it into words on your Mac in Thai or English, and when you
   stop, the model you pick sums it up: Apple Intelligence on the Mac, or
-  Claude, Codex or Antigravity through their own command, with the model of
+  Claude through its own command with its tools off, with the model of
   your choice. Summary, decisions, action items and the whole transcript land
   on Droppy's shelf and in Documents → Pixpaw Meetings. The sound is never
-  kept; with Claude, Codex or Antigravity the transcript goes to that company.
+  kept; with Claude the transcript goes to Anthropic.
   Let everyone in the call know. Settings → Meeting notes.
 - Or your own cat: choose a photo of it and Pixpaw paints the cat in its
   colours (fur, stripes or patches, white, eyes), read on your Mac and only
@@ -83,7 +83,7 @@ your desktop and talks to you. A Droplet for
   breaks in between, and it nudges you back if you wander off to YouTube.
 - Lofi: Play lofi puts on Lofi Girl's radio on YouTube, her playlist in
   Spotify or Apple Music, or a link of your own, and your pet studies along in
-  its headphones. It can start with each focus session and pause for breaks.
+  its headphones. It can start with each focus session and, in Spotify or Music, pause for breaks.
 
 **Little extras**
 - Happiness stars (petting, meals, play, catches, stretches; up to 30 a day)
@@ -143,14 +143,14 @@ The cat says when a coding agent starts, finishes or needs you.
 **Without any hooks.** Claude Code (in the terminal and the Claude app), Codex,
 Antigravity and Gemini CLI keep a log of each turn on this Mac (`~/.claude/projects`,
 `~/.codex/sessions`, `~/.gemini/antigravity*/brain`, `~/.gemini/tmp/*/chats`). With *Follow agents
-without hooks* on (Settings → AI agents, on by default), the pet reads the
-end of it every two seconds: a turn starting and done, the tool in use, how a
+without hooks* on (Settings → AI agents; off until you turn it on), the pet reads the
+end of it every two seconds (ten while it's hidden), off the main thread: a turn starting and done, the tool in use, how a
 command went, helpers, and for Codex the plan left with its reset times. Only a
 tool's name, a file's name, a command's first two words and percentages are
 kept. The hooks below add what the logs don't have: answering questions from
 the pet, what a turn changed and dev servers; while an agent's hooks speak,
 its log keeps quiet. Claude's usage left comes without the status line too:
-with *Claude Code: ask the claude command* on (Settings → AI agents), the pet asks the `claude`
+with *Claude Code: ask the claude command* on (Settings → AI agents; off until you turn it on), the pet asks the `claude`
 command (a `get_usage` request: no prompt, nothing billed, no settings or
 hooks loaded) every five minutes while Claude is at work.
 
@@ -273,7 +273,7 @@ also has a field for your own words: your answer to a question, like Claude's
 `come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|stop` (`play?toy=hands`: rock, paper, scissors with its friend), `wear?hat=…&collar=…`,
 `quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
 `note?text=…`, `join` (your next video call), `countdown?title=…&date=2026-12-24`,
-`capture` (the whole page in your browser), `talk` (listen for what you say), `meeting` (`?start`, `?stop`, or neither to start or stop meeting notes), `gif` (five seconds of your pet as a GIF), `lofi` (beats to study to, from where you chose), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `agent?name=…&state=tool-done&tool=Bash&outcome=ok|failed` and `agent?name=…&state=helper&event=start|done&id=…` (used by the hooks for long commands and helpers), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
+`capture` (the whole page in your browser), `meeting` (stops meeting notes; starting them, like Talk to me and lofi, takes a click in Pixpaw), `gif` (five seconds of your pet as a GIF), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `agent?name=…&state=tool-done&tool=Bash&outcome=ok|failed` and `agent?name=…&state=helper&event=start|done&id=…` (used by the hooks for long commands and helpers), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
 
 ## Art

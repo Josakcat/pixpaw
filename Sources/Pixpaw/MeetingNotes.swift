@@ -7,8 +7,8 @@
 //  the Mac's own sound (ScreenCaptureKit, audio only), each turned into
 //  words on the Mac by Apple's speech recognition, in Thai or English. The
 //  sound is never kept. When you stop, the model you picked sums it up
-//  (Apple's own on the Mac, or Claude, Codex or Antigravity through their
-//  commands, signed in as you), and the notes are saved as a Markdown file
+//  (Apple's own on the Mac, or Claude through its command with its tools
+//  off, signed in as you), and the notes are saved as a Markdown file
 //  and put on Droppy's shelf.
 //
 
@@ -26,7 +26,9 @@ struct MeetingLine: Equatable {
 
 /// Who sums the meeting up.
 enum NoteModel: String, CaseIterable, Identifiable {
-    case apple, claude, codex, antigravity, none
+    // Codex and Antigravity are left out: neither can be run with its tools
+    // off, and a summary must not be able to act on what was said in a call.
+    case apple, claude, none
 
     var id: String { rawValue }
 
@@ -34,8 +36,6 @@ enum NoteModel: String, CaseIterable, Identifiable {
         switch self {
         case .apple: "Apple Intelligence (on this Mac)"
         case .claude: "Claude (claude command)"
-        case .codex: "Codex (codex command)"
-        case .antigravity: "Antigravity (agy command)"
         case .none: "None, just the transcript"
         }
     }
@@ -45,8 +45,6 @@ enum NoteModel: String, CaseIterable, Identifiable {
         let name: String
         switch self {
         case .claude: name = "claude"
-        case .codex: name = "codex"
-        case .antigravity: name = "agy"
         case .apple, .none: return nil
         }
         let home = FileManager.default.homeDirectoryForCurrentUser.path
@@ -122,7 +120,7 @@ enum MeetingProblem: LocalizedError {
         case .notOnDevice(let language): "Your Mac can't turn \(language) speech into words on its own yet. Add \(language) under System Settings → Keyboard → Dictation."
         case .noMicrophone: "The microphone isn't available."
         case .noMacSound: "Droppy needs Screen Recording to hear the Mac's sound: System Settings → Privacy & Security → Screen & System Audio Recording."
-        case .appleNoLanguage(let language): "Apple's model doesn't write \(language) yet. Pick Claude, Codex or Antigravity for the summary."
+        case .appleNoLanguage(let language): "Apple's model doesn't write \(language) yet. Pick Claude for the summary."
         case .noCommand(let name): "The \(name) command isn't installed."
         case .modelFailed(let why): "The summary didn't come back: \(why)"
         }
@@ -420,7 +418,7 @@ enum MeetingNotes {
         case .apple:
             guard #available(macOS 26, *) else { throw MeetingProblem.noCommand(model.title) }
             return try await apple(transcript, language: language)
-        case .claude, .codex, .antigravity:
+        case .claude:
             guard let command = model.command else { throw MeetingProblem.noCommand(model.title) }
             let prompt = prompt(transcript, language: language)
             return try await Task.detached(priority: .utility) {
@@ -458,28 +456,18 @@ enum MeetingNotes {
             .replacingOccurrences(of: "Below is the transcript of a meeting", with: "Below are notes on each part of a meeting")).content
     }
 
-    /// The model's command, run in an empty folder with no tools: it reads
-    /// the prompt and answers, and nothing else.
+    /// Claude's command, run in an empty folder with no tools (`--tools ""`)
+    /// and no settings, hooks or MCP servers: it reads the prompt and
+    /// answers, and nothing else.
     private nonisolated static func run(_ which: NoteModel, command: URL, model: String, prompt: String) throws -> String {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pixpaw-notes-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
-        let answerFile = folder.appendingPathComponent("answer.md")
-        var arguments: [String]
-        var input: String? = prompt
-        switch which {
-        case .claude:
-            arguments = ["-p", "--tools", "", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"]
-        case .codex:
-            arguments = ["exec", "--skip-git-repo-check", "--ephemeral", "--sandbox", "read-only", "-o", answerFile.path]
-        default:
-            arguments = ["-p", prompt, "--mode", "plan", "--print-timeout", "600s"]
-            input = nil
-        }
-        if !model.isEmpty { arguments += which == .codex ? ["-m", model] : ["--model", model] }
-        if which == .codex { arguments.append("-") }
+        var arguments = ["-p", "--tools", "", "--no-session-persistence", "--setting-sources", "", "--strict-mcp-config"]
+        let input: String? = prompt
+        if !model.isEmpty { arguments += ["--model", model] }
 
-        // droppykit-lint: allow process: the AI command the user picked for meeting notes (Claude, Codex or Antigravity), given the transcript to summarize with no tools in an empty temporary folder, only after a meeting they recorded, off the main thread and ended after 15 minutes
+        // droppykit-lint: allow process: the user's own claude command, chosen by them for meeting notes, given the transcript to summarize with its tools off (--tools "", no settings, hooks or MCP) in an empty temporary folder, only after a meeting they recorded, off the main thread and ended after 15 minutes
         let process = Process()
         process.executableURL = command
         process.arguments = arguments
@@ -503,12 +491,11 @@ enum MeetingNotes {
         let data = output.fileHandleForReading.readDataToEndOfFile()
         process.waitUntilExit()
         var answer = String(decoding: data, as: UTF8.self)
-        if which == .codex { answer = (try? String(contentsOf: answerFile, encoding: .utf8)) ?? "" }
         answer = answer.trimmingCharacters(in: .whitespacesAndNewlines)
         guard process.terminationStatus == 0, !answer.isEmpty else {
             let errors = said.text
             if errors.range(of: #"(?i)refresh token|not logged in|log ?in again|unauthori[sz]ed|authenticat"#, options: .regularExpression) != nil {
-                throw MeetingProblem.modelFailed("its command isn't signed in. Sign in again (for Codex, codex login) and try once more.")
+                throw MeetingProblem.modelFailed("its command isn't signed in. Sign in again and try once more.")
             }
             let why = errors.split(separator: "\n").last.map(String.init) ?? "it stopped (\(process.terminationStatus))"
             throw MeetingProblem.modelFailed(String(why.prefix(160)))

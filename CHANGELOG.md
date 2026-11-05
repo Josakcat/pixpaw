@@ -2,6 +2,21 @@
 
 ## [Unreleased]
 
+## [1.10.1] - 2026-11-05
+
+Changes asked for in the Droppy Store review, because Pixpaw runs inside Droppy.
+
+### Changed
+- Meeting notes, Talk to me and lofi start only from a click, a shortcut or your pet's menu. A link (`droppy://droplet/pixpaw/…`) can only stop meeting notes now, so no web page or app can start listening.
+- Follow agents without hooks and Claude Code: ask the claude command are off until you turn them on in Settings → AI agents.
+- Meeting summaries are written by Apple Intelligence or Claude. Codex and Antigravity are no longer offered: neither can be run with its tools off, and a summary shouldn't be able to act on what was said in a call. Claude runs with its tools off.
+- Lofi pauses for breaks in Spotify and Music only. In a browser your pet leaves it playing instead of pressing the play/pause key.
+
+### Fixed
+- Your agents' logs are read off the main thread, every 10 seconds while your pet is hidden, and the folders are searched again only every 20 seconds or when a new session appears, so Droppy stays smooth.
+- Asking the claude command for your usage reads its answer line by line, and stops when Pixpaw is turned off.
+- Helpers walking home and a bug being caught no longer stay behind when Pixpaw is turned off.
+
 ## [1.10.0] - 2026-11-05
 
 ### Added

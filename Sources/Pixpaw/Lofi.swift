@@ -86,24 +86,23 @@ enum Lofi {
         }
     }
 
-    /// Picks up again where it was paused.
-    static func resume(_ source: LofiSource) async {
-        if let player = source.player, NSRunningApplication.runningApplications(withBundleIdentifier: player.bundleID).first != nil {
-            _ = await tell(player.name, id: player.bundleID, "play")
-        } else {
-            pressPlayPause()
-        }
+    /// Whether it can be paused and picked up again: only in Spotify or
+    /// Music, told to. A browser is left alone (no fake key presses).
+    static func canPause(_ source: LofiSource) -> Bool {
+        guard let player = source.player else { return false }
+        return NSRunningApplication.runningApplications(withBundleIdentifier: player.bundleID).first != nil
     }
 
-    /// Pauses it for a break: the player is told to pause; in a browser,
-    /// the play/pause key does it, so it is only pressed while something
-    /// is playing.
-    static func pause(_ source: LofiSource, somethingPlaying: Bool) async {
-        if let player = source.player, NSRunningApplication.runningApplications(withBundleIdentifier: player.bundleID).first != nil {
-            _ = await tell(player.name, id: player.bundleID, "pause")
-        } else if somethingPlaying {
-            pressPlayPause()
-        }
+    /// Picks up again where it was paused.
+    static func resume(_ source: LofiSource) async {
+        guard canPause(source), let player = source.player else { return }
+        _ = await tell(player.name, id: player.bundleID, "play")
+    }
+
+    /// Pauses it for a break.
+    static func pause(_ source: LofiSource) async {
+        guard canPause(source), let player = source.player else { return }
+        _ = await tell(player.name, id: player.bundleID, "pause")
     }
 
     private static func installed(_ bundleID: String) -> Bool {
@@ -127,17 +126,5 @@ enum Lofi {
             NSAppleScript(source: source)?.executeAndReturnError(&error)
             return error == nil
         }) ?? false
-    }
-
-    /// The keyboard's play/pause key, which goes to whatever is playing,
-    /// a video in a browser included.
-    private static func pressPlayPause() {
-        let key = 16 // NX_KEYTYPE_PLAY
-        for down in [true, false] {
-            let flags = NSEvent.ModifierFlags(rawValue: down ? 0xA00 : 0xB00)
-            let data = (key << 16) | ((down ? 0xA : 0xB) << 8)
-            NSEvent.otherEvent(with: .systemDefined, location: .zero, modifierFlags: flags, timestamp: 0, windowNumber: 0,
-                               context: nil, subtype: 8, data1: data, data2: -1)?.cgEvent?.post(tap: .cghidEventTap)
-        }
     }
 }

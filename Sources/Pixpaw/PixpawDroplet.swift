@@ -223,6 +223,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var helpers: [String: HelperPet] = [:]
     /// Bugs from failed tests and builds, by the command ("npm test").
     private var bugs: [String: PixelBug] = [:]
+    /// Bugs the pet is on its way to catch, out of `bugs` until gone.
+    private var catching: [PixelBug] = []
     /// Plan usage already warned about, by agent and window ("Claude 5h"),
     /// with how low it was: once at 10% left, once more at 3%.
     private var usageWarned: [String: Int] = [:]
@@ -231,18 +233,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var planPace = PlanPace()
     /// Without the hooks: what Claude Code, Codex and Antigravity's own logs
     /// say (AgentFiles.swift).
-    @Published private(set) var readsAgentFiles = true
+    @Published private(set) var readsAgentFiles = false
     private let claudeFiles = ClaudeSessions()
     private let codexFiles = CodexRollouts()
     private let antigravityFiles = AntigravityBrains()
     private let geminiFiles = GeminiChats()
     private var filesReadAt = Date.distantPast
+    private var filesReading = false
+    private static let filesQueue = DispatchQueue(label: "app.pixpaw.agent-files", qos: .utility)
     /// When each agent's hook last spoke: while they do, the logs keep quiet.
     private var hookHeardAt: [String: Date] = [:]
     /// What the logs said, held a moment for a hook saying the same.
     private var fileEvents: [(at: Date, agent: String, event: AgentFileEvent)] = []
     /// Asking the `claude` command for the plan left.
-    @Published private(set) var asksClaudeUsage = true
+    @Published private(set) var asksClaudeUsage = false
     private var claudeUsageAskedAt = Date.distantPast
     private var claudeUsageTask: Task<Void, Never>?
     /// Codex's plan as its log has it, with when each window resets.
@@ -308,7 +312,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var notesLanguage = MeetingLanguage.likely
     @Published private(set) var notesSource = MeetingSource.both
     /// Antigravity's models, once asked (`agy models`).
-    @Published private(set) var antigravityModels: [(id: String, name: String)] = []
     private var focusTimer: Timer?
     private var health: ReminderCoach?
 
@@ -484,8 +487,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         showsWaits = prefs.value(forKey: Key.showsWaits, default: true)
         watchesCI = prefs.value(forKey: Key.watchesCI, default: false)
         showsMenuBar = prefs.value(forKey: Key.menuBarUsage, default: true)
-        readsAgentFiles = prefs.value(forKey: Key.agentFiles, default: true)
-        asksClaudeUsage = prefs.value(forKey: Key.asksClaudeUsage, default: true)
+        // Both off until you turn them on: they read your agents' logs and run your claude command.
+        readsAgentFiles = prefs.value(forKey: Key.agentFiles, default: false)
+        asksClaudeUsage = prefs.value(forKey: Key.asksClaudeUsage, default: false)
         lofiSource = LofiSource(rawValue: prefs.value(forKey: Key.lofiSource, default: LofiSource.youtube.rawValue)) ?? .youtube
         lofiLink = prefs.value(forKey: Key.lofiLink, default: "")
         lofiWithFocus = prefs.value(forKey: Key.lofiWithFocus, default: false)
@@ -631,6 +635,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         gif = nil
         claudeUsageTask?.cancel()
         claudeUsageTask = nil
+        ClaudeUsage.stop()
         festivalCheck?.invalidate()
         focusTimer?.invalidate()
         focusTimer = nil
@@ -820,7 +825,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         notesModelName = ""
         host?.preferences.setValue(model.rawValue, forKey: Key.notesModel)
         host?.preferences.setValue("", forKey: Key.notesModelName)
-        if model == .antigravity { loadAntigravityModels() }
     }
 
     func setNotesModelName(_ name: String) {
@@ -841,32 +845,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func openNotesFolder() {
         try? FileManager.default.createDirectory(at: MeetingNotes.folder, withIntermediateDirectories: true)
         host?.workspace.open(MeetingNotes.folder)
-    }
-
-    /// `agy models`, for the model picker.
-    func loadAntigravityModels() {
-        guard antigravityModels.isEmpty, let agy = NoteModel.antigravity.command else { return }
-        Task { [weak self] in
-            let listed = await Task.detached(priority: .utility) { () -> [(id: String, name: String)] in
-                // droppykit-lint: allow process: `agy models` (read-only) from the user's own Antigravity CLI, only to fill the meeting-notes model picker once they pick Antigravity, off the main thread and ended after 20 seconds
-                let process = Process()
-                process.executableURL = agy
-                process.arguments = ["models"]
-                process.currentDirectoryURL = FileManager.default.temporaryDirectory
-                let output = Pipe()
-                process.standardOutput = output
-                process.standardError = FileHandle.nullDevice
-                guard (try? process.run()) != nil else { return [] }
-                DispatchQueue.global().asyncAfter(deadline: .now() + 20) { if process.isRunning { process.terminate() } }
-                let text = String(decoding: output.fileHandleForReading.readDataToEndOfFile(), as: UTF8.self)
-                process.waitUntilExit()
-                return text.split(separator: "\n").compactMap { line in
-                    let parts = line.split(separator: "\t", maxSplits: 1).map { $0.trimmingCharacters(in: .whitespaces) }
-                    return parts.count == 2 && !parts[0].contains(" ") ? (parts[0], parts[1]) : nil
-                }
-            }.value
-            self?.antigravityModels = listed
-        }
     }
 
     /// Starts listening to the meeting, or stops and writes it up.
@@ -2218,9 +2196,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// Paused from its menu; Play lofi picks it up again.
     func pauseLofi() {
+        let source = lofiSource
+        // In a browser there's nothing to tell: say so rather than press a key.
+        guard Lofi.canPause(source) else { cat?.say(CatLine(text: "Pause it where it's playing", symbol: "pause.circle")); return }
         lofiPausedAt = Date()
-        let source = lofiSource, playing = music?.othersPlaying ?? false
-        Task { await Lofi.pause(source, somethingPlaying: playing) }
+        Task { await Lofi.pause(source) }
     }
 
     /// For the pet's menu: how long a session is, or what's left of one.
@@ -2231,10 +2211,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// A break, or the end of focus: pauses lofi it started for the session.
     private func pauseLofiForBreak() {
-        guard lofiForFocus, lofiStartedAt != nil, !lofiPaused, cat?.musicPlaying == true else { return }
+        guard lofiForFocus, lofiStartedAt != nil, !lofiPaused, cat?.musicPlaying == true, Lofi.canPause(lofiSource) else { return }
         lofiPausedAt = Date()
-        let source = lofiSource, playing = music?.othersPlaying ?? false
-        Task { await Lofi.pause(source, somethingPlaying: playing) }
+        let source = lofiSource
+        Task { await Lofi.pause(source) }
     }
 
     /// Whether what's playing is lofi: a song that says so, or the music the
@@ -2364,7 +2344,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func catchBug(_ bug: PixelBug) {
         bugs[bug.key] = nil
         bug.freeze()
-        // Held here, not in `bugs`, until it is caught and gone.
+        // Held in `catching`, not `bugs`, until it is caught and gone, so
+        // deactivate() can still close it.
+        catching.append(bug)
         let caught = { [weak self] in
             guard !bug.caught else { return }
             bug.squash()
@@ -2373,12 +2355,18 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             self?.cat?.say(CatWords.bugCaught(bug.key))
         }
         cat?.catchBug(at: bug.spot, then: caught)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { caught() }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in
+            caught()
+            // Squashed, its panel closes 0.8 s later; then it's let go.
+            DispatchQueue.main.asyncAfter(deadline: .now() + 1) { self?.catching.removeAll { $0 === bug } }
+        }
     }
 
     private func clearBugs() {
         bugs.values.forEach { $0.remove() }
         bugs = [:]
+        catching.forEach { $0.remove() }
+        catching = []
     }
 
     // MARK: Usage running low
@@ -2499,11 +2487,24 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func readAgentFiles() {
         let now = Date()
         guard readsAgentFiles, tellsAgents, host?.environment.isHarness == false else { return }
-        if now.timeIntervalSince(filesReadAt) >= 2 {
+        // Every 2 s while your pet is out, every 10 s while it's hidden; read
+        // off the main thread, one look at a time.
+        if !filesReading, now.timeIntervalSince(filesReadAt) >= (isOut ? 2 : 10) {
             filesReadAt = now
-            for (agent, events) in [("Claude", claudeFiles.poll(now: now)), ("Codex", codexFiles.poll(now: now)),
-                                    ("Antigravity", antigravityFiles.poll(now: now)), ("Gemini", geminiFiles.poll(now: now))] {
-                fileEvents += events.map { (now, agent, $0) }
+            filesReading = true
+            let (claude, codex, antigravity, gemini) = (claudeFiles, codexFiles, antigravityFiles, geminiFiles)
+            Self.filesQueue.async {
+                let found = [("Claude", claude.poll(now: now)), ("Codex", codex.poll(now: now)),
+                             ("Antigravity", antigravity.poll(now: now)), ("Gemini", gemini.poll(now: now))]
+                DispatchQueue.main.async { [weak self] in
+                    MainActor.assumeIsolated {
+                        guard let self else { return }
+                        self.filesReading = false
+                        // Turned off while it looked: drop what it found.
+                        guard self.readsAgentFiles else { return }
+                        for (agent, events) in found { self.fileEvents += events.map { (now, agent, $0) } }
+                    }
+                }
             }
         }
         while let first = fileEvents.first, now.timeIntervalSince(first.at) >= 3 {
@@ -2568,10 +2569,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         guard let id, helpers[id] == nil else { return }
         // Errands that never came back.
-        for (key, old) in helpers where Date().timeIntervalSince(old.since) > RunningCommand.forgottenAfter {
-            old.leave()
-            helpers[key] = nil
-        }
+        // Kept in `helpers` while they walk off (onGone drops them), so
+        // deactivate() can still stop them.
+        for old in helpers.values where Date().timeIntervalSince(old.since) > RunningCommand.forgottenAfter { old.leave() }
         guard helpers.count < 4, let helper = HelperPet(id: id, agent: name, beside: cat, index: helpers.count) else { return }
         helper.onGone = { [weak self] in self?.helpers[id] = nil }
         helpers[id] = helper
@@ -4141,7 +4141,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Touch ID to allow a risky one", keywords: ["touch id", "fingerprint", "password", "risky", "allow", "security", "rm", "sudo"]),
             SettingsSearchEntry(title: "Wait for CI after a push", keywords: ["ci", "github", "actions", "gh", "push", "checks", "build", "workflow"]),
             SettingsSearchEntry(title: "Talk to your pet", keywords: ["voice", "talk", "speak", "say", "microphone", "speech", "dictation", "siri", "command"]),
-            SettingsSearchEntry(title: "Meeting notes", keywords: ["meeting", "notes", "minutes", "transcript", "summary", "summarize", "record", "call", "zoom", "meet", "teams", "microphone", "claude", "codex", "antigravity", "apple intelligence"]),
+            SettingsSearchEntry(title: "Meeting notes", keywords: ["meeting", "notes", "minutes", "transcript", "summary", "summarize", "record", "call", "zoom", "meet", "teams", "microphone", "claude", "apple intelligence"]),
             SettingsSearchEntry(title: "Listen to", keywords: ["meeting", "microphone", "mac sound", "system audio", "screen recording", "call"]),
             SettingsSearchEntry(title: "Read questions aloud", keywords: ["voice", "speak", "speech", "aloud", "agent"]),
             SettingsSearchEntry(title: "Agent updates", keywords: ["cat", "claude", "codex", "cursor", "agent"]),
@@ -5324,22 +5324,6 @@ private struct PixpawSettings: View {
                         .pickerStyle(.menu)
                         .labelsHidden()
                     }
-                case .antigravity:
-                    DropletGroupedPickerRow(title: "Model") {
-                        Picker("Model", selection: Binding(get: { droplet.notesModelName }, set: { droplet.setNotesModelName($0) })) {
-                            Text("Antigravity's default").tag("")
-                            ForEach(droplet.antigravityModels, id: \.id) { Text($0.name).tag($0.id) }
-                        }
-                        .pickerStyle(.menu)
-                        .labelsHidden()
-                        .onAppear { droplet.loadAntigravityModels() }
-                    }
-                case .codex:
-                    DropletControlRow(title: "Model", icon: "cpu", infoTip: "A Codex model's name, as `codex -m` takes it. Empty: your Codex default.") {
-                        TextField("Codex's default", text: Binding(get: { droplet.notesModelName }, set: { droplet.setNotesModelName($0) }))
-                            .textFieldStyle(.roundedBorder)
-                            .frame(width: 180)
-                    }
                 default:
                     EmptyView()
                 }
@@ -5619,13 +5603,11 @@ extension PixpawDroplet: DropletURLHandling {
         case "feed": feed()
         case "photo": takePhoto()
         case "gif": recordGIF()
-        case "lofi": playLofi()
-        case "listen", "talk": talkToPet()
         case "meeting":
-            // meeting?start, meeting?stop, or meeting to start or stop.
-            if request.query["stop"] != nil { if takingNotes { toggleMeetingNotes() } }
-            else if request.query["start"] != nil { if !takingNotes { toggleMeetingNotes() } }
-            else { toggleMeetingNotes() }
+            // Any app or web page can open a URL, so a URL may only stop meeting
+            // notes. Starting them (or Talk to me, or lofi) takes a click, a
+            // shortcut or the menu in Pixpaw.
+            if takingNotes { toggleMeetingNotes() }
         case "focus":
             // focus?minutes=25, or focus?stop
             if request.query["stop"] != nil { stopFocus() } else { startFocus(minutes: request.query["minutes"].flatMap(Int.init).map { min(180, max(1, $0)) }) }

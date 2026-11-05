@@ -79,6 +79,25 @@ enum AgentFiles {
 
 /// One log being followed: how far it was read, whether its agent was
 /// busy, and the tool calls already told and still out.
+/// Which logs to follow. Finding them stats every candidate (hundreds, in a
+/// busy ~/.gemini), so that is done only every 20 seconds or when a root
+/// folder changes (a new session); in between only the found ones are read.
+struct LogFinder {
+    private var found: [URL] = []
+    private var at = Date.distantPast
+    private var stamps: [Date?] = []
+
+    mutating func logs(now: Date, roots: [URL], find: (Date) -> [URL]) -> [URL] {
+        let current = roots.map { AgentFiles.size(of: $0)?.modified }
+        if now.timeIntervalSince(at) >= 20 || current != stamps {
+            found = find(now)
+            at = now
+            stamps = current
+        }
+        return found
+    }
+}
+
 struct AgentLog {
     var file: URL
     var size: UInt64 = 0
@@ -127,8 +146,9 @@ struct AgentLog {
 /// Codex keeps each session in `~/.codex/sessions/YYYY/MM/DD/rollout-….jsonl`:
 /// `task_started` and `task_complete` around a turn, its tool calls and
 /// their output, and `token_count` with the plan's rate limits.
-@MainActor
-final class CodexRollouts {
+/// Polled only on PixpawDroplet's agent-files queue, never the main thread.
+final class CodexRollouts: @unchecked Sendable {
+    private var finder = LogFinder()
     private var logs: [String: AgentLog] = [:]
     private var looked = false
     static let folder = AgentFiles.home.appendingPathComponent(".codex/sessions", isDirectory: true)
@@ -140,7 +160,7 @@ final class CodexRollouts {
         looked = true
         var events: [AgentFileEvent] = []
         var seen: Set<String> = []
-        for file in Self.recentLogs(now: now) {
+        for file in finder.logs(now: now, roots: Self.watchedRoots(now: now), find: Self.recentLogs) {
             let key = file.path
             seen.insert(key)
             guard let (size, modified) = AgentFiles.size(of: file) else { continue }
@@ -160,6 +180,14 @@ final class CodexRollouts {
         }
         logs = logs.filter { seen.contains($0.key) }
         return events
+    }
+
+    /// Today's folder: a new session is a new file in it.
+    private static func watchedRoots(now: Date) -> [URL] {
+        var calendar = Calendar(identifier: .gregorian)
+        calendar.timeZone = .current
+        let day = calendar.dateComponents([.year, .month, .day], from: now)
+        return [folder.appendingPathComponent(String(format: "%04d/%02d/%02d", day.year ?? 0, day.month ?? 0, day.day ?? 0), isDirectory: true)]
     }
 
     /// Today's and yesterday's folders, written to lately.
@@ -290,8 +318,9 @@ extension ISO8601DateFormatter {
 /// `~/.gemini/antigravity*/brain/<id>/.system_generated/logs/transcript.jsonl`,
 /// a step per line: what you asked, its plan with the tools it calls, each
 /// tool's result, and its answer.
-@MainActor
-final class AntigravityBrains {
+/// Polled only on PixpawDroplet's agent-files queue, never the main thread.
+final class AntigravityBrains: @unchecked Sendable {
+    private var finder = LogFinder()
     private var logs: [String: AgentLog] = [:]
     private var looked = false
     static let roots = ["antigravity", "antigravity-cli", "antigravity-ide"].map {
@@ -304,7 +333,7 @@ final class AntigravityBrains {
         looked = true
         var events: [AgentFileEvent] = []
         var seen: Set<String> = []
-        for file in Self.recentLogs(now: now) {
+        for file in finder.logs(now: now, roots: Self.watchedRoots(now: now), find: Self.recentLogs) {
             let key = file.path
             seen.insert(key)
             guard let (size, modified) = AgentFiles.size(of: file) else { continue }
@@ -321,6 +350,8 @@ final class AntigravityBrains {
         logs = logs.filter { seen.contains($0.key) }
         return events
     }
+
+    private static func watchedRoots(now: Date) -> [URL] { roots }
 
     private static func recentLogs(now: Date) -> [URL] {
         var found: [URL] = []
@@ -405,8 +436,9 @@ final class AntigravityBrains {
 /// them (written again as each call's status changes), and errors. Its
 /// final answer, a reply with no tool calls once its tokens are counted,
 /// ends the turn.
-@MainActor
-final class GeminiChats {
+/// Polled only on PixpawDroplet's agent-files queue, never the main thread.
+final class GeminiChats: @unchecked Sendable {
+    private var finder = LogFinder()
     private var logs: [String: AgentLog] = [:]
     private var looked = false
     static let root = AgentFiles.home.appendingPathComponent(".gemini/tmp", isDirectory: true)
@@ -417,7 +449,7 @@ final class GeminiChats {
         looked = true
         var events: [AgentFileEvent] = []
         var seen: Set<String> = []
-        for file in Self.recentLogs(now: now) {
+        for file in finder.logs(now: now, roots: Self.watchedRoots(now: now), find: Self.recentLogs) {
             let key = file.path
             seen.insert(key)
             guard let (size, modified) = AgentFiles.size(of: file) else { continue }
@@ -434,6 +466,8 @@ final class GeminiChats {
         logs = logs.filter { seen.contains($0.key) }
         return events
     }
+
+    private static func watchedRoots(now: Date) -> [URL] { [root] }
 
     private static func recentLogs(now: Date) -> [URL] {
         var found: [URL] = []

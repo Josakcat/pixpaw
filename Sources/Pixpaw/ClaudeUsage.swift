@@ -47,7 +47,9 @@ enum ClaudeUsage {
         process.standardOutput = output
         process.standardError = FileHandle.nullDevice
         do { try process.run() } catch { return nil }
+        running.set(process)
         defer {
+            running.set(nil)
             try? input.fileHandleForWriting.close()
             if process.isRunning { process.terminate() }
         }
@@ -61,20 +63,31 @@ enum ClaudeUsage {
         let deadline = Date().addingTimeInterval(timeout)
         reader.readabilityHandler = { handle in received.add(handle.availableData) }
         defer { reader.readabilityHandler = nil }
-        while Date() < deadline {
+        while Date() < deadline, process.isRunning || !received.isEnded {
             Thread.sleep(forTimeInterval: 0.1)
-            let (lines, finished) = received.lines()
-            for line in lines {
-                guard let message = (try? JSONSerialization.jsonObject(with: Data(line))) as? [String: Any],
-                      message["type"] as? String == "control_response",
-                      let response = message["response"] as? [String: Any],
-                      response["request_id"] as? String == id else { continue }
-                return (response["response"] as? [String: Any])?["rate_limits"] as? [String: Any]
+            // Only the lines new since the last look, each parsed once, in a
+            // pool of its own so nothing piles up over twenty seconds.
+            let found: [String: Any]?? = autoreleasepool {
+                let (lines, finished) = received.takeLines()
+                for line in lines {
+                    guard let message = (try? JSONSerialization.jsonObject(with: line)) as? [String: Any],
+                          message["type"] as? String == "control_response",
+                          let response = message["response"] as? [String: Any],
+                          response["request_id"] as? String == id else { continue }
+                    return .some((response["response"] as? [String: Any])?["rate_limits"] as? [String: Any])
+                }
+                return finished ? .some(nil) : nil
             }
-            if finished { break }
+            if let found { return found }
         }
         return nil
     }
+
+    /// The command while it runs, so `stop()` can end it.
+    private static let running = Running()
+
+    /// Ends a request still running (from deactivate()).
+    static func stop() { running.terminate() }
 
     /// `{"five_hour": {"utilization": 59, "resets_at": "2026-10-28T08:20:00+00:00"}, "seven_day": {…}}`,
     /// saved as the status line saves it.
@@ -110,9 +123,39 @@ private final class Received: @unchecked Sendable {
         if chunk.isEmpty { ended = true } else { data.append(chunk) }
     }
 
-    func lines() -> ([Data.SubSequence], Bool) {
+    var isEnded: Bool {
         lock.lock()
         defer { lock.unlock() }
-        return (data.split(separator: UInt8(ascii: "\n")), ended)
+        return ended
+    }
+
+    /// The whole lines printed since the last call, taken out; a part line
+    /// waits for the rest.
+    func takeLines() -> ([Data], Bool) {
+        lock.lock()
+        defer { lock.unlock() }
+        guard let last = data.lastIndex(of: UInt8(ascii: "\n")) else { return ([], ended) }
+        let whole = data[data.startIndex...last]
+        let lines = whole.split(separator: UInt8(ascii: "\n")).map { Data($0) }
+        data = Data(data[data.index(after: last)...])
+        return (lines, ended)
+    }
+}
+
+/// The running `claude` process, shared with deactivate().
+private final class Running: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+
+    func set(_ new: Process?) {
+        lock.lock()
+        defer { lock.unlock() }
+        process = new
+    }
+
+    func terminate() {
+        lock.lock()
+        defer { lock.unlock() }
+        if process?.isRunning == true { process?.terminate() }
     }
 }
