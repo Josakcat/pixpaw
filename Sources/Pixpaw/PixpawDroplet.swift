@@ -99,6 +99,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let showsWaits = "agentWaits"
         static let watchesCI = "watchesCI"
         static let menuBarUsage = "menuBarUsage"
+        static let usesDroppyTools = "usesDroppyTools"
+        static let toldDroppyTools = "toldDroppyTools"
+        static let cardOpening = "cardOpening"
+        static let cardLook = "cardLook"
+        static let cardGlass = "cardGlass"
         static let agentFiles = "agentFiles"
         static let asksClaudeUsage = "asksClaudeUsage"
         /// The pets' characters, coins and score at rock, paper, scissors.
@@ -240,6 +245,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private let geminiFiles = GeminiChats()
     private var filesReadAt = Date.distantPast
     private var filesReading = false
+    /// Droppy's own tools, which the pet runs instead of doing the same itself.
+    let tools = DroppyTools()
+    @Published private(set) var usesDroppyTools = true
+    /// The pet's card: how it opens, how it looks, how much glass.
+    @Published private(set) var cardOpening = PetCardOpening.hold
+    @Published private(set) var cardLook = PetCardLook.droppy
+    @Published private(set) var cardGlass = 0.5
+    @Published private(set) var droppyToolsFound: [DroppyTool] = []
+    /// While Droppy's Pomodoro runs: the pet just sits at its laptop this long.
+    private var droppyFocusTimer: Timer?
     private static let filesQueue = DispatchQueue(label: "app.pixpaw.agent-files", qos: .utility)
     /// When each agent's hook last spoke: while they do, the logs keep quiet.
     private var hookHeardAt: [String: Date] = [:]
@@ -368,6 +383,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     public func activate(host: DropletHost) throws {
         self.host = host
+        usesDroppyTools = host.preferences.value(forKey: Key.usesDroppyTools, default: true)
+        cardOpening = PetCardOpening(rawValue: host.preferences.value(forKey: Key.cardOpening, default: "hold")) ?? .hold
+        cardLook = PetCardLook(rawValue: host.preferences.value(forKey: Key.cardLook, default: "droppy")) ?? .droppy
+        cardGlass = host.preferences.value(forKey: Key.cardGlass, default: 0.5)
+        tools.changed = { [weak self] in self?.droppyToolsChanged() }
+        tools.start(host.launcher)
+        droppyToolsFound = DroppyTool.allCases.filter(tools.has)
+        DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.tellDroppyToolsOnce() }
         let prefs = host.preferences
         ownPets = prefs.value(forKey: Key.ownPets, as: [OwnPet].self) ?? []
         OwnPets.soundFolder = host.environment.containerDirectory.appendingPathComponent("Own pet sounds", isDirectory: true)
@@ -408,7 +431,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.homeOn = prefs.value(forKey: Key.homeOn, default: true)
         cat.onPersist = { [weak self] in self?.persist() }
         cat.onPhoto = { [weak self] in self?.takePhoto() }
-        cat.onCapturePage = { [weak self] in self?.capturePage() }
+        cat.onCapturePage = { [weak self] in self?.captureByHand() }
+        cat.droppyTools = { [weak self] in self?.droppyMenuTools ?? [] }
+        cat.onDroppyTool = { [weak self] tool in self?.runDroppyTool(tool) }
+        cat.droppyFocusing = { [weak self] in self?.droppyFocusing ?? false }
+        cat.cardStyle = { [weak self] in (self?.cardLook ?? .droppy, self?.cardGlass ?? 0.5) }
+        cat.cardOpensOnClick = { [weak self] in self?.cardOpening == .click }
         cat.onRecordGIF = { [weak self] in self?.recordGIF() }
         cat.onLofi = { [weak self] in self?.playLofi() }
         cat.onPauseLofi = { [weak self] in self?.pauseLofi() }
@@ -624,6 +652,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     public func deactivate() {
+        PetCard.shared.close()
         stopCIWatches()
         listener.stop()
         meetingTimer?.invalidate()
@@ -636,6 +665,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         claudeUsageTask?.cancel()
         claudeUsageTask = nil
         ClaudeUsage.stop()
+        tools.stop()
+        droppyFocusTimer?.invalidate()
+        droppyFocusTimer = nil
         festivalCheck?.invalidate()
         focusTimer?.invalidate()
         focusTimer = nil
@@ -803,8 +835,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         case .stretch: cat.stretchWithMe()
         case .photo: takePhoto()
         case .gif: recordGIF()
-        case .join: joinNextMeeting()
-        case let .focus(minutes): startFocus(minutes: minutes)
+        case .join: joinByHand()
+        case .droppy(.captureScrolling): captureByHand()
+        case let .droppy(tool):
+            if usesDroppy(tool) { runDroppyTool(tool) }
+            else { cat.say(CatLine(text: usesDroppyTools ? "Droppy doesn't have \(tool.title.lowercased()) here" : "Turn on Use Droppy's own tools first", symbol: tool.symbol)) }
+        case let .focus(minutes): focusByHand(minutes: minutes)
         case .stopFocus: stopFocus()
         case .lofi: playLofi()
         case .pauseLofi: pauseLofi()
@@ -845,6 +881,104 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func openNotesFolder() {
         try? FileManager.default.createDirectory(at: MeetingNotes.folder, withIntermediateDirectories: true)
         host?.workspace.open(MeetingNotes.folder)
+    }
+
+    // MARK: Droppy's tools
+
+    /// Whether to ask Droppy for this rather than do it ourselves.
+    func usesDroppy(_ tool: DroppyTool) -> Bool { usesDroppyTools && tools.has(tool) }
+
+    /// The tools Droppy has, while the pet uses them, for its menu.
+    var droppyMenuTools: [DroppyTool] { usesDroppyTools ? droppyToolsFound : [] }
+
+    /// Runs one of Droppy's tools for you, from a click, a shortcut or your
+    /// words; the pet says how it went.
+    @discardableResult
+    func runDroppyTool(_ tool: DroppyTool, said: String? = nil) -> Bool {
+        if !isOut { setOut(true) }
+        if let why = tools.run(tool) {
+            cat?.say(CatLine(text: String(why.prefix(120)), symbol: "exclamationmark.triangle.fill"))
+            return false
+        }
+        cat?.say(CatLine(text: said ?? "On it: \(tool.title)", symbol: tool.symbol, seconds: said == nil ? nil : 6))
+        return true
+    }
+
+    /// Once, after an update: what the pet leaves to Droppy now, so nothing
+    /// seems to have gone missing.
+    private func tellDroppyToolsOnce() {
+        guard usesDroppyTools, tools.isAvailable, isOut, droppyAnnouncesMeetings || droppyShowsUsage,
+              host?.preferences.value(forKey: Key.toldDroppyTools, default: false) == false else { return }
+        host?.preferences.setValue(true, forKey: Key.toldDroppyTools)
+        cat?.say(CatLine(text: "Droppy shows your meetings and agents now, so I'll leave those to it", symbol: "drop.fill", seconds: 8))
+    }
+
+    /// Droppy's Agents has its own gauge and lock screen, so the pet's step aside.
+    var droppyShowsUsage: Bool { usesDroppyTools && tools.isOn("agents") }
+
+    /// The pet sitting at its laptop while Droppy's Pomodoro runs.
+    var droppyFocusing: Bool { droppyFocusTimer != nil }
+
+    func setCardOpening(_ opening: PetCardOpening) {
+        cardOpening = opening
+        host?.preferences.setValue(opening.rawValue, forKey: Key.cardOpening)
+    }
+
+    func setCardLook(_ look: PetCardLook) {
+        cardLook = look
+        host?.preferences.setValue(look.rawValue, forKey: Key.cardLook)
+    }
+
+    func setCardGlass(_ level: Double) {
+        cardGlass = level
+        host?.preferences.setValue(level, forKey: Key.cardGlass)
+    }
+
+    func setUsesDroppyTools(_ on: Bool) {
+        usesDroppyTools = on
+        host?.preferences.setValue(on, forKey: Key.usesDroppyTools)
+        droppyToolsChanged()
+    }
+
+    /// A tool came or went, or the switch moved: what the pet hides follows.
+    private func droppyToolsChanged() {
+        droppyToolsFound = DroppyTool.allCases.filter(tools.has)
+        refreshAlerts()
+        publishLockScreen()
+        tellDroppyToolsOnce()
+    }
+
+    /// Droppy shows meetings itself, so the pet doesn't announce them too.
+    var droppyAnnouncesMeetings: Bool { usesDroppyTools && (tools.isOn("meetings") || tools.isOn("calendar")) }
+
+    /// Focus from your menu, shortcut or words: Droppy's Pomodoro when there
+    /// is one, the pet sitting at its laptop meanwhile (it can't tell when
+    /// Droppy's timer ends), else the pet's own session.
+    func focusByHand(minutes: Int? = nil) {
+        guard usesDroppy(.pomodoro), runDroppyTool(.pomodoro, said: "Pomodoro's on in Droppy. Pause or stop it there.") else {
+            return startFocus(minutes: minutes)
+        }
+        cat?.focusing = true
+        droppyFocusTimer?.invalidate()
+        droppyFocusTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval((minutes ?? focusMinutes) * 60), repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.endDroppyFocus() }
+        }
+    }
+
+    private func endDroppyFocus() {
+        droppyFocusTimer?.invalidate()
+        droppyFocusTimer = nil
+        cat?.focusing = false
+    }
+
+    /// Join the next meeting: through Droppy when it has meetings.
+    func joinByHand() {
+        if usesDroppy(.joinMeeting) { runDroppyTool(.joinMeeting) } else { joinNextMeeting() }
+    }
+
+    /// The whole page: Droppy's scrolling capture when it has one.
+    func captureByHand() {
+        if usesDroppy(.captureScrolling) { runDroppyTool(.captureScrolling) } else { capturePage() }
     }
 
     /// Starts listening to the meeting, or stops and writes it up.
@@ -1452,7 +1586,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// The timer on the shelf and in its menu: starts a session, stops one,
     /// or skips a Pomodoro break.
     func toggleFocus() {
-        if breakEndsAt != nil { endBreak() } else if focusEndsAt == nil { startFocus() } else { stopFocus() }
+        if droppyFocusTimer != nil {
+            endDroppyFocus()
+            cat?.say(CatLine(text: "Droppy's Pomodoro keeps going until you stop it there", symbol: "timer", seconds: 6))
+            return
+        }
+        if breakEndsAt != nil { endBreak() } else if focusEndsAt == nil { focusByHand() } else { stopFocus() }
     }
 
     /// A focus session: the pet sits by you without a sound, the time left
@@ -1949,7 +2088,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         } else {
             music?.stop()
         }
-        if out, tellsCalendar, calendarAllowed {
+        if out, tellsCalendar, calendarAllowed, !droppyAnnouncesMeetings {
             if calendar == nil {
                 calendar = CalendarWatcher(onLine: say, onMeeting: { [weak self] meeting in self?.offerJoin(meeting) })
             }
@@ -2174,7 +2313,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if lofiPaused {
             lofiPausedAt = nil
             lofiStartedAt = Date()
-            Task { await Lofi.resume(source) }
+            if Lofi.canPause(source) { Task { await Lofi.resume(source) } } else if usesDroppy(.playPause) { _ = tools.run(.playPause) }
             return
         }
         // Still playing from before: nothing to open again.
@@ -2197,8 +2336,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Paused from its menu; Play lofi picks it up again.
     func pauseLofi() {
         let source = lofiSource
-        // In a browser there's nothing to tell: say so rather than press a key.
-        guard Lofi.canPause(source) else { cat?.say(CatLine(text: "Pause it where it's playing", symbol: "pause.circle")); return }
+        if !Lofi.canPause(source) {
+            // In a browser: Droppy's own play/pause, only while something plays.
+            guard usesDroppy(.playPause), cat?.musicPlaying == true else {
+                cat?.say(CatLine(text: "Pause it where it's playing", symbol: "pause.circle"))
+                return
+            }
+            lofiPausedAt = Date()
+            if tools.run(.playPause) == nil { cat?.say(CatLine(text: "Paused", symbol: "pause.fill")) }
+            return
+        }
         lofiPausedAt = Date()
         Task { await Lofi.pause(source) }
     }
@@ -2211,10 +2358,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// A break, or the end of focus: pauses lofi it started for the session.
     private func pauseLofiForBreak() {
-        guard lofiForFocus, lofiStartedAt != nil, !lofiPaused, cat?.musicPlaying == true, Lofi.canPause(lofiSource) else { return }
+        guard lofiForFocus, lofiStartedAt != nil, !lofiPaused, cat?.musicPlaying == true,
+              Lofi.canPause(lofiSource) || usesDroppy(.playPause) else { return }
         lofiPausedAt = Date()
         let source = lofiSource
-        Task { await Lofi.pause(source) }
+        if Lofi.canPause(source) { Task { await Lofi.pause(source) } } else { _ = tools.run(.playPause) }
     }
 
     /// Whether what's playing is lofi: a song that says so, or the music the
@@ -2967,6 +3115,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             // GIF, focus, lofi, a note) does the same as from your pet's.
             friend.onPhoto = cat.onPhoto
             friend.onCapturePage = cat.onCapturePage
+            friend.droppyTools = cat.droppyTools
+            friend.onDroppyTool = cat.onDroppyTool
+            friend.droppyFocusing = cat.droppyFocusing
+            friend.cardStyle = cat.cardStyle
+            friend.cardOpensOnClick = cat.cardOpensOnClick
             friend.onRecordGIF = cat.onRecordGIF
             friend.onFocus = cat.onFocus
             friend.focusLabel = cat.focusLabel
@@ -3069,6 +3222,8 @@ extension PixpawDroplet: LockScreenStatusProviding {
     }
 
     private func lockScreenEntry() -> LockScreenStatusEntry? {
+        // Droppy's lock screen says it already while the pet uses Droppy's tools.
+        if usesDroppyTools, tools.isAvailable { return nil }
         let now = Date()
         let mine = tellsAgents ? agents.values.sorted { $0.name < $1.name } : []
         if let waiting = mine.first(where: { $0.state == .waiting }) {
@@ -3115,7 +3270,8 @@ extension PixpawDroplet: MenuBarExtraProviding {
     /// A gauge in the menu bar: how much is left of each agent's plan, and
     /// what your agents are up to. Turned off in Settings, it goes away.
     public func makeMenuBarExtra() -> MenuBarExtraDescriptor? {
-        guard showsMenuBar else { return nil }
+        // Droppy's Agents has a gauge of its own while the pet uses Droppy's tools.
+        guard showsMenuBar, !(usesDroppyTools && tools.isOn("agents")) else { return nil }
         return MenuBarExtraDescriptor(title: "Pixpaw: AI Usage left", systemImage: menuBarSymbol) { [self] in
             AnyView(PixpawMenuBarMenu(droplet: self))
         }
@@ -4107,7 +4263,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Break reminders", keywords: ["cat", "health", "stretch", "water", "eyes", "break", "reminder", "custom", "pill", "exercise"]),
             SettingsSearchEntry(title: "Sounds", keywords: ["cat", "meow", "purr", "sound", "mute"]),
             SettingsSearchEntry(title: "Your own pets", keywords: ["draw", "design", "custom", "own", "sprite", "pixel", "png", "aseprite", "piskel", "template", "import"]),
-            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal", "coat", "colour", "color", "photo", "picture", "my cat", "fold", "folded", "ears", "scottish"]),
+            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "pig", "piggy", "hog", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal", "coat", "colour", "color", "photo", "picture", "my cat", "fold", "folded", "ears", "scottish"]),
             SettingsSearchEntry(title: "Where it walks", keywords: ["cat", "roam", "windows", "bottom", "screen"]),
             SettingsSearchEntry(title: "Notes", keywords: ["sign", "note", "todo", "to-do", "task", "list", "reminder", "board", "placard", "streak"]),
             SettingsSearchEntry(title: "Countdowns", keywords: ["countdown", "days", "until", "trip", "deadline", "launch", "date"]),
@@ -4572,6 +4728,9 @@ private struct PixpawSettings: View {
                 )
             }
 
+            droppyToolsSection
+            petCardSection
+
             ForEach(SettingsPage.groups, id: \.title) { group in
                 DropletSettingsSection {
                     settingsSectionHeader(LocalizedStringKey(group.title))
@@ -4644,6 +4803,60 @@ private struct PixpawSettings: View {
             case .permissions:
                 permissionsSection
                 hooksSection
+            }
+        }
+    }
+
+    /// The pet's card: how it opens and how much glass it has.
+    private var petCardSection: some View {
+        DropletSettingsSection {
+            settingsSectionHeader("Your pet's card")
+        } content: {
+            DropletSettingsCard {
+                DropletGroupedPickerRow(title: "Open it", subtitle: "Holding leaves a click for petting; with a click, you pet it by stroking it with the pointer. A right-click always gives the plain menu.") {
+                    Picker("Open it", selection: Binding(get: { droplet.cardOpening }, set: { droplet.setCardOpening($0) })) {
+                        ForEach(PetCardOpening.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                DropletGroupedPickerRow(title: "Look", subtitle: "Droppy's theme follows Settings, Theming; or a glass of its own.") {
+                    Picker("Look", selection: Binding(get: { droplet.cardLook }, set: { droplet.setCardLook($0) })) {
+                        ForEach(PetCardLook.allCases) { Text($0.title).tag($0) }
+                    }
+                    .pickerStyle(.menu)
+                    .labelsHidden()
+                }
+                PetCardPreview(look: droplet.cardLook, level: droplet.cardGlass)
+                    .padding(.horizontal, DroppySpacing.md)
+                    .padding(.vertical, DroppySpacing.sm)
+                if droplet.cardLook != .droppy, droplet.cardLook != .solid {
+                    DropletSliderRow(title: "Glass level", value: "\(Int((droplet.cardGlass * 100).rounded()))%",
+                                     binding: Binding(get: { droplet.cardGlass }, set: { droplet.setCardGlass($0) }), range: 0...1, step: 0.05)
+                }
+            }
+        }
+    }
+
+    /// Droppy's own tools, run by the pet instead of its own copies.
+    private var droppyToolsSection: some View {
+        DropletSettingsSection {
+            VStack(alignment: .leading, spacing: 2) {
+                settingsSectionHeader("Droppy's own tools")
+                Text(droplet.tools.isAvailable
+                     ? "Here: \(droplet.droppyToolsFound.isEmpty ? "none yet" : droplet.droppyToolsFound.map { $0.title.lowercased() }.joined(separator: ", "))."
+                     : "This Droppy doesn't let droplets run its tools, so your pet uses its own.")
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+            }
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Use Droppy's own tools",
+                    subtitle: "Your pet runs Droppy's version of a tool instead of its own.",
+                    isOn: Binding(get: { droplet.usesDroppyTools }, set: { droplet.setUsesDroppyTools($0) })
+                )
+                .disabled(!droplet.tools.isAvailable)
             }
         }
     }
@@ -4970,7 +5183,8 @@ private struct PixpawSettings: View {
                 }
                 DropletToggleRow(
                     title: "Calendar events",
-                    subtitle: "It comes over two minutes before each event. With a Zoom, Meet or Teams link, click your pet to join.",
+                    subtitle: droplet.droppyAnnouncesMeetings ? "Droppy shows your meetings instead, while Use Droppy's own tools is on."
+                        : "It comes over two minutes before each event. With a Zoom, Meet or Teams link, click your pet to join.",
                     isOn: Binding(get: { droplet.tellsCalendar }, set: { droplet.setTells(calendar: $0) })
                 )
                 if droplet.tellsCalendar, !droplet.calendarAllowed {
@@ -5071,7 +5285,7 @@ private struct PixpawSettings: View {
         DropletSettingsSection {
             VStack(alignment: .leading, spacing: 2) {
                 settingsSectionHeader("Talk to your pet")
-                Text("Press Control-Option-T, or choose Talk to me in its menu, and say what you'd like. Change the shortcut on Droppy's Shortcuts page.")
+                Text("Press Control-Option-T, or choose Talk to me in its menu, and say what you'd like: \"come here\", \"focus for 25 minutes\", \"note buy milk\", and Droppy's own tools: \"open my notes\", \"my tasks\", \"show my clipboard\", \"my meetings\", \"capture the page\", \"next song\". Change the shortcut on Droppy's Shortcuts page.")
                     .font(.body)
                     .foregroundStyle(.secondary)
             }
@@ -5388,7 +5602,8 @@ private struct PixpawSettings: View {
                 DropletToggleRow(
                     title: "AI Usage left in the menu bar",
                     icon: "gauge.with.dots.needle.67percent",
-                    subtitle: "A gauge as full as your emptiest plan window, a raised hand while an agent needs you. Click it for every AI's windows and resets.",
+                    subtitle: droplet.droppyShowsUsage ? "Droppy's Agents shows this instead, while Use Droppy's own tools is on."
+                        : "A gauge as full as your emptiest plan window, a raised hand while an agent needs you. Click it for every AI's windows and resets.",
                     isOn: Binding(get: { droplet.showsMenuBar }, set: { droplet.setShowsMenuBar($0) })
                 )
                 let claude = AgentLook("Claude")

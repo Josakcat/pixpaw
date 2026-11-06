@@ -2,20 +2,44 @@
 
 ## [Unreleased]
 
-## [1.10.1] - 2026-11-05
+## [1.11.0] - 2026-11-06
 
-Changes asked for in the Droppy Store review, because Pixpaw runs inside Droppy.
+Everything new since 1.10.2:
+
+### Added
+- 🧰 Your pet runs Droppy's own tools. Where Droppy already has something, your pet asks Droppy instead of doing the same itself: its menu's Droppy section opens Droppy's Notes, Tasks, Clipboard and Agents; say "open my notes", "my tasks", "show my clipboard", "capture the page" or "next song" to Talk to me; Focus starts Droppy's Pomodoro droplet when you have it; joining the next meeting and the scrolling capture go through Droppy; and lofi in a browser pauses for breaks again. While Droppy shows them itself, the pet's meeting reminders, AI usage gauge and lock screen line step aside. Settings → Use Droppy's own tools.
+- 🃏 Your pet's card. Hold on your pet (or click it, your choice) and a card opens over it: how it's doing, six big buttons for Feed, Play, Nap, Focus, Lofi and a note, Talk to me in its corner, and rows that open beside it as you point at them. Pick its look: Droppy's theme, clear, tinted or frosted glass with a glass level, or solid, with a preview in Settings. A right-click still gives the plain menu.
+- 🐷 A pig: pink, a curly tail, an oink, a watermelon to roll, and a mud wallow at 500 stars.
 
 ### Changed
-- Meeting notes, Talk to me and lofi start only from a click, a shortcut or your pet's menu. A link (`droppy://droplet/pixpaw/…`) can only stop meeting notes now, so no web page or app can start listening.
-- Follow agents without hooks and Claude Code: ask the claude command are off until you turn them on in Settings → AI agents.
-- Meeting summaries are written by Apple Intelligence or Claude. Codex and Antigravity are no longer offered: neither can be run with its tools off, and a summary shouldn't be able to act on what was said in a call. Claude runs with its tools off.
-- Lofi pauses for breaks in Spotify and Music only. In a browser your pet leaves it playing instead of pressing the play/pause key.
+- 🗂️ The plain menu, regrouped: Ask me, Care, Work and Meetings.
+
+## [1.10.2] - 2026-11-06
 
 ### Fixed
-- Your agents' logs are read off the main thread, every 10 seconds while your pet is hidden, and the folders are searched again only every 20 seconds or when a new session appears, so Droppy stays smooth.
-- Asking the claude command for your usage reads its answer line by line, and stops when Pixpaw is turned off.
-- Helpers walking home and a bug being caught no longer stay behind when Pixpaw is turned off.
+
+- Pixpaw's sounds no longer freeze Droppy while your speakers or AirPods wake up.
+
+## [1.10.1] - 2026-11-05
+
+Everything new since 1.9.3:
+
+### Added
+- 🎙️ Talk to your pet: press Control-Option-T (or Talk to me in its menu) and say "come here", "focus for 25 minutes", "play lofi" or "note buy milk". Heard on your Mac only while you talk; nothing is recorded or kept.
+- 📝 Meeting notes: choose Take meeting notes and your pet listens to the call (your microphone, the Mac's sound, or both), writes it out in English or Thai, and when you stop, Apple Intelligence or Claude sums it up: summary, decisions and to-dos, on the shelf and in Documents → Pixpaw Meetings.
+- 🎵 Lofi: beats to study to from Lofi Girl on YouTube, Spotify, Apple Music or a link of your own, starting with a focus session and paused for breaks in Spotify and Music.
+- 📸 Your own cat, from a photo: pick one and your pet takes on its fur, stripes, white and eyes. Only the colours are kept.
+- 🔒 On Droppy's lock screen: an agent that needs you, the focus clock or a long command. 📊 An AI Usage gauge in the menu bar.
+- 🤖 For your coding agents: Touch ID before you allow a risky command, CI watched after a push, a bug to catch when tests fail, helpers for subagents, long commands timed, what a turn changed, and your app's localhost link when it starts.
+- 👀 Follow Claude Code, Codex, Antigravity and Gemini CLI without hooks, and Claude's usage without the status line: turn them on in Settings → AI agents.
+- 🐾 Walks on DockDoor Pro's Dock, in front of the icons.
+- ✊ Characters for your pet and its friend, rock, paper, scissors for make-believe coins, and your year together.
+
+### Changed
+- 🧭 A tidier menu (Care, Play, Work, Meetings) and Settings grouped by what you're there to do.
+
+### Fixed
+- 🛠️ Rock, paper, scissors, the second pet's menu and wardrobe, Antigravity's limits and the shelf widget's line.
 
 ## [1.10.0] - 2026-11-05
 

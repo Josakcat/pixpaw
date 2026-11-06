@@ -195,6 +195,14 @@ final class CatController: ObservableObject {
     var onPhoto: (() -> Void)?
     /// Capture the whole page in Safari.
     var onCapturePage: (() -> Void)?
+    /// Droppy's own tools the pet runs for you, and running one.
+    var droppyTools: (() -> [DroppyTool])?
+    var onDroppyTool: ((DroppyTool) -> Void)?
+    /// How the card looks, and whether a click (not a hold) opens it.
+    var cardStyle: (() -> (look: PetCardLook, level: Double))?
+    var cardOpensOnClick: (() -> Bool)?
+    /// Sitting at its laptop while Droppy's Pomodoro runs: no Stop here.
+    var droppyFocusing: (() -> Bool)?
     /// Record a GIF of it.
     var onRecordGIF: (() -> Void)?
     var onLofi: (() -> Void)?
@@ -642,6 +650,9 @@ final class CatController: ObservableObject {
         case .giraffe where mood == .eating: return "Bending down to eat"
         case .hippo where mood == .walking: return "Waddling about"
         case .hippo where mood == .happy: return "Big happy yawn"
+        case .pig where mood == .walking: return "Trotting about"
+        case .pig where mood == .happy: return "Happy snorts"
+        case .pig where mood == .eating: return "Snuffling its food"
         case .rabbit where mood == .walking: return "Hopping about"
         case .rabbit where mood == .happy: return "Doing a binky"
         case .rabbit where mood == .grooming: return "Washing its ears"
@@ -719,6 +730,8 @@ final class CatController: ObservableObject {
         switch kind {
         case .giraffe where mood == .walking: return "Strolling"
         case .hippo where mood == .walking: return "Waddling"
+        case .pig where mood == .walking: return "Trotting"
+        case .pig where mood == .happy: return "Oink!"
         case .rabbit where mood == .walking: return "Hopping"
         case .rabbit where mood == .happy: return "Binky!"
         case .shark where mood == .sitting: return "Floating"
@@ -2964,6 +2977,9 @@ final class CatController: ObservableObject {
             finishStretch()
             animate()
             place()
+        } else if cardOpensOnClick?() == true {
+            // Petting stays a stroke with the pointer; a click is the card.
+            catView?.toggleCard()
         } else {
             petted()
             animate()
@@ -3298,6 +3314,91 @@ final class CatView: NSView {
         pressTimer = nil
         guard let controller else { return }
         MainActor.assumeIsolated { controller.cancelPress() }
+        openCard()
+    }
+
+    /// A click, while the card opens on a click: open it, or close it.
+    func toggleCard() {
+        MainActor.assumeIsolated {
+            // The click that closed it (a click elsewhere) doesn't reopen it.
+            if PetCard.shared.isOpen || PetCard.shared.justClosed { PetCard.shared.close() } else { openCard() }
+        }
+    }
+
+    private func openCard() {
+        guard let controller, let menu = makeMenu() else { return }
+        // The card, over the pet; the same items, the same actions.
+        let (name, status, stars) = MainActor.assumeIsolated {
+            (controller.kind.title, controller.isAsleep ? "Asleep" : controller.isHungry ? "Hungry" : controller.focusing ? "Focusing" : "Doing fine",
+             controller.wardrobeStars)
+        }
+        guard let frame = window?.frame else { _ = menu.popUp(positioning: nil, at: CGPoint(x: bounds.midX, y: bounds.maxY - 4), in: self); return }
+        MainActor.assumeIsolated {
+            let style = controller.cardStyle?() ?? (look: PetCardLook.droppy, level: 0.5)
+            PetCard.shared.show(cardModel(from: menu, name: name, status: status, stars: stars), over: frame, target: self,
+                                talk: #selector(talk), look: style.look, level: style.level)
+        }
+    }
+
+    /// A right-click: the plain menu, as before.
+    override func rightMouseDown(with event: NSEvent) {
+        pressTimer?.invalidate()
+        pressTimer = nil
+        MainActor.assumeIsolated { controller?.cancelPress() }
+        _ = makeMenu()?.popUp(positioning: nil, at: CGPoint(x: bounds.midX, y: bounds.maxY - 4), in: self)
+    }
+
+    /// The card's model, read off the menu: what can't wait first, six
+    /// tiles for what you do most, rows for the rest.
+    private func cardModel(from menu: NSMenu, name: String, status: String, stars: Int) -> PetCardModel {
+        var urgent: [NSMenuItem] = [], sections: [String: [NSMenuItem]] = [:], loose: [NSMenuItem] = []
+        var section: String?
+        var pastSections = false
+        for item in menu.items {
+            if item.isSectionHeader { section = item.title; continue }
+            if item.isSeparatorItem { if section != nil { pastSections = true }; continue }
+            if pastSections { loose.append(item) } else if let section { sections[section, default: []].append(item) } else { urgent.append(item) }
+        }
+        func card(_ item: NSMenuItem) -> PetCardItem {
+            PetCardItem(title: item.title, symbol: item.identifier?.rawValue, action: item.action,
+                        represented: item.representedObject as? String, badge: item.badge?.stringValue,
+                        enabled: item.isEnabled, checked: item.state == .on, children: item.submenu.map(PetCardItem.items(of:)))
+        }
+        let all = sections.values.flatMap { $0 }
+        let tileActions: [Selector] = [#selector(feed), #selector(nap), #selector(wake), #selector(focus), #selector(lofi), #selector(pauseLofi), #selector(askSign)]
+        var tiles = all.filter { $0.action.map(tileActions.contains) ?? false }
+        if let play = all.first(where: { $0.title == "Play" && $0.submenu != nil }) { tiles.insert(play, at: min(1, tiles.count)) }
+        // Feed, Play, Nap, Focus, Lofi, Note, in that order.
+        let order: [Selector] = [#selector(feed), #selector(nap), #selector(wake), #selector(focus), #selector(lofi), #selector(pauseLofi), #selector(askSign)]
+        tiles.sort { a, b in
+            let ia = a.submenu != nil ? 1 : (order.firstIndex { $0 == a.action }.map { $0 * 2 } ?? 99)
+            let ib = b.submenu != nil ? 1 : (order.firstIndex { $0 == b.action }.map { $0 * 2 } ?? 99)
+            return ia < ib
+        }
+        var rows: [NSMenuItem] = []
+        if let droppy = sections["Ask me"]?.first(where: { $0.submenu != nil }) { rows.append(droppy) }
+        if let meetings = sections["Meetings"], !meetings.isEmpty {
+            let inner = NSMenu()
+            inner.autoenablesItems = false
+            meetings.forEach { $0.menu?.removeItem($0); inner.addItem($0) }
+            let entry = NSMenuItem(title: "Meetings", action: nil, keyEquivalent: "")
+            entry.identifier = NSUserInterfaceItemIdentifier("video")
+            entry.submenu = inner
+            rows.append(entry)
+        }
+        // The rest of Care and Work: a treat, stretching, the note done.
+        let used = Set(tiles.map(ObjectIdentifier.init))
+        rows += (sections["Care"] ?? []).filter { !used.contains(ObjectIdentifier($0)) && $0.submenu == nil }
+        rows += (sections["Work"] ?? []).filter { !used.contains(ObjectIdentifier($0)) }
+        rows += loose
+        return PetCardModel(name: name, status: status, stars: stars,
+                            canTalk: sections["Ask me"]?.contains { $0.action == #selector(talk) } ?? false,
+                            urgent: urgent.map(card), tiles: tiles.map(card), rows: rows.map(card))
+    }
+
+    /// The pet's menu, as it is right now.
+    private func makeMenu() -> NSMenu? {
+        guard let controller else { return nil }
         let menu = NSMenu()
         menu.autoenablesItems = false
         // `badge`: what the item is at now, on its right ("25 min", "Hungry").
@@ -3305,12 +3406,14 @@ final class CatView: NSView {
             let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
             item.target = self
             item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            item.identifier = NSUserInterfaceItemIdentifier(symbol)
             if let badge, !badge.isEmpty { item.badge = NSMenuItemBadge(string: badge) }
             return item
         }
         func submenu(_ title: String, _ symbol: String, badge: String? = nil, _ items: [NSMenuItem]) -> NSMenuItem {
             let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
             entry.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+            entry.identifier = NSUserInterfaceItemIdentifier(symbol)
             if let badge { entry.badge = NSMenuItemBadge(string: badge) }
             let inner = NSMenu()
             inner.autoenablesItems = false
@@ -3325,7 +3428,8 @@ final class CatView: NSView {
              note: controller.signIsNote, friend: controller.buddy != nil, games: controller.kind.actsLike.games,
              playing: controller.toyKind != nil || controller.fetching, server: controller.localServer?(),
              failedCI: controller.failedCI?(), talks: controller.canTalk?() ?? false,
-             notes: controller.notesLabel?(), notesKept: controller.hasNotes?() ?? false, takesNotes: controller.onNotes != nil)
+             notes: controller.notesLabel?(), notesKept: controller.hasNotes?() ?? false, takesNotes: controller.onNotes != nil,
+             droppy: controller.droppyTools?() ?? [], droppyFocus: controller.droppyFocusing?() ?? false)
         }
 
         // What can't wait comes first, together: the app your agent just
@@ -3341,14 +3445,25 @@ final class CatView: NSView {
         }
         if !menu.items.isEmpty { menu.addItem(.separator()) }
 
+        // Ask me: talking to it, and Droppy's own tools it runs for you.
+        let droppy = DroppyTool.inMenu.filter(state.droppy.contains)
+        if state.talks || !droppy.isEmpty {
+            menu.addItem(.sectionHeader(title: "Ask me"))
+            if state.talks { menu.addItem(item("Talk to me", "mic.fill", #selector(talk))) }
+            if !droppy.isEmpty {
+                menu.addItem(submenu("Droppy", "drop.fill", droppy.map { tool in
+                    let entry = item(tool.title, tool.symbol, #selector(droppyTool(_:)))
+                    entry.representedObject = tool.rawValue
+                    return entry
+                }))
+            }
+        }
+
         menu.addItem(.sectionHeader(title: "Care"))
-        if state.talks { menu.addItem(item("Talk to me", "mic.fill", #selector(talk))) }
         menu.addItem(item("Feed", "fork.knife", #selector(feed), badge: state.hungry ? "Hungry" : nil))
         menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
         menu.addItem(state.asleep ? item("Wake up", "sun.max", #selector(wake))
                      : state.home ? item("Go home for a nap", "house.fill", #selector(nap)) : item("Nap", "moon.zzz", #selector(nap)))
-
-        menu.addItem(.sectionHeader(title: "Play"))
         // Only the games this one plays, its own toy first.
         var toys: [NSMenuItem] = state.games.map { game in
             let entry = item(game.title, game.symbol, #selector(playGame(_:)))
@@ -3364,12 +3479,20 @@ final class CatView: NSView {
             toys.append(item("Stop playing", "stop.circle", #selector(stopPlaying)))
         }
         menu.addItem(submenu("Play", "gamecontroller", toys))
-        menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
 
+        // Work: focus and its breaks, lofi, the note on its sign.
         menu.addItem(.sectionHeader(title: "Work"))
-        menu.addItem(state.focusing ? item("Stop focus", "stop.circle", #selector(focus), badge: state.focus)
+        if state.droppyFocus {
+            // Droppy keeps the time: only Droppy can stop its Pomodoro.
+            let entry = item("Focusing with Droppy", "timer", #selector(focus))
+            entry.isEnabled = false
+            menu.addItem(entry)
+        } else {
+            menu.addItem(state.focusing ? item("Stop focus", "stop.circle", #selector(focus), badge: state.focus)
                      : state.onBreak ? item("Skip the break", "forward.end", #selector(focus), badge: state.focus)
                      : item("Focus", "timer", #selector(focus), badge: state.focus))
+        }
+        menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
         menu.addItem(state.lofiOn ? item("Pause lofi", "pause.circle", #selector(pauseLofi))
                      : item("Play lofi", "headphones", #selector(lofi), badge: state.lofi))
         menu.addItem(item("Add a note…", "signpost.right", #selector(askSign)))
@@ -3377,18 +3500,37 @@ final class CatView: NSView {
             menu.addItem(item("Done with this note", "checkmark.circle", #selector(dropSign)))
         }
 
+        // Meetings: joining one (Droppy's, unless one is offered up top),
+        // today's list, and the pet's notes of one.
+        var meetings: [NSMenuItem] = []
+        if state.meeting == nil, state.droppy.contains(.joinMeeting) {
+            let entry = item("Join the next meeting", "video", #selector(droppyTool(_:)))
+            entry.representedObject = DroppyTool.joinMeeting.rawValue
+            meetings.append(entry)
+        }
+        if state.droppy.contains(.todaysMeetings) {
+            let entry = item("Today's meetings", "calendar", #selector(droppyTool(_:)))
+            entry.representedObject = DroppyTool.todaysMeetings.rawValue
+            meetings.append(entry)
+        }
         if state.takesNotes {
-            menu.addItem(.sectionHeader(title: "Meetings"))
-            menu.addItem(state.notes != nil ? item("Stop meeting notes", "stop.circle.fill", #selector(meetingNotes), badge: state.notes)
-                         : item("Take meeting notes", "waveform.badge.mic", #selector(meetingNotes)))
+            meetings.append(state.notes != nil ? item("Stop meeting notes", "stop.circle.fill", #selector(meetingNotes), badge: state.notes)
+                            : item("Take meeting notes", "waveform.badge.mic", #selector(meetingNotes)))
             if state.notesKept, state.notes == nil {
-                menu.addItem(item("Open the last meeting notes", "doc.text", #selector(openNotes)))
+                meetings.append(item("Open the last meeting notes", "doc.text", #selector(openNotes)))
             }
+        }
+        if !meetings.isEmpty {
+            menu.addItem(.sectionHeader(title: "Meetings"))
+            meetings.forEach(menu.addItem)
         }
 
         menu.addItem(.separator())
         var captures = [item("Photo", "camera.fill", #selector(photo)), item("GIF", "film", #selector(recordGIF))]
-        if PageCapture.browserIsOpen {
+        if state.droppy.contains(.captureScrolling) {
+            // Droppy's: you pick the window or area, and it scrolls it.
+            captures.append(item("Scrolling capture", "camera.viewfinder", #selector(capturePage)))
+        } else if PageCapture.browserIsOpen {
             captures.append(item("Whole page", "camera.viewfinder", #selector(capturePage)))
         }
         menu.addItem(submenu("Capture", "camera", captures))
@@ -3421,8 +3563,9 @@ final class CatView: NSView {
             if slot == .hat, collars { clothes.addItem(.separator()) }
         }
         wardrobe.submenu = clothes
+        wardrobe.identifier = NSUserInterfaceItemIdentifier("tshirt")
         menu.addItem(wardrobe)
-        menu.popUp(positioning: nil, at: CGPoint(x: bounds.midX, y: bounds.maxY - 4), in: self)
+        return menu
     }
 
     @objc private func feed() { MainActor.assumeIsolated { controller?.feed() } }
@@ -3436,6 +3579,10 @@ final class CatView: NSView {
     @objc private func pauseLofi() { MainActor.assumeIsolated { controller?.onPauseLofi?() } }
     @objc private func playHands() { MainActor.assumeIsolated { controller?.challengeFriend() } }
     @objc private func capturePage() { MainActor.assumeIsolated { controller?.onCapturePage?() } }
+    @objc private func droppyTool(_ sender: NSMenuItem) {
+        guard let tool = (sender.representedObject as? String).flatMap(DroppyTool.init(rawValue:)) else { return }
+        MainActor.assumeIsolated { controller?.onDroppyTool?(tool) }
+    }
     @objc private func joinMeeting() { MainActor.assumeIsolated { controller?.joinMeeting() } }
     @objc private func openServer() { MainActor.assumeIsolated { controller?.onOpenServer?() } }
     @objc private func meetingNotes() { MainActor.assumeIsolated { controller?.onNotes?() } }

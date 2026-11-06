@@ -13,12 +13,18 @@ your desktop and talks to you. A Droplet for
 - Walks the bottom edge, the whole screen, or hops onto the tops of your
   windows, and rides along when you drag one. Movement follows the display's
   refresh, so it glides.
+- Droppy's assistant: where Droppy already has a tool (Notes, Tasks, Clipboard,
+  meetings, scrolling capture, play/pause, the Pomodoro droplet), your pet runs
+  Droppy's instead of its own copy, from its menu or your words.
 - Uses DockDoor Pro's Dock? It walks on the icons, in front of it (needs
   Accessibility to find the bar).
 - Grooms, purrs when petted, pounces on files you drag, and dangles like a
   real cat when you pick it up.
-- Hold it for half a second for its menu: Feed, Nap, Play (a yarn ball, a
-  feather teaser or a laser pointer it never quite catches) and Wardrobe.
+- Hold it for half a second (or click it, in Settings) for its card: how it's
+  doing, Feed, Play, Nap, Focus, Lofi and a note as big buttons, Talk to me,
+  and rows (Droppy, Meetings, Capture, Wardrobe) that open beside it as you
+  point. Its look is Droppy's theme or a glass of your own. A right-click
+  gives the plain menu.
 - Says good morning the first time it sees you each morning, with your first event of the day.
 - Celebrates your birthday with confetti and a party hat.
 - From midnight to 5 am it wears a nightcap and, once a night, tells you it's late.
@@ -37,7 +43,7 @@ your desktop and talks to you. A Droplet for
 - Plays fetch: it runs after a tennis ball and brings it back, and now and then play-fights its friend in a cartoon cloud of dust. Each animal has its own games in the Play menu and a toy of its own: a toy mouse, a frisbee, a carrot, a watermelon… (a cat won't fetch; a dog will).
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
   between perches), a shark (swims through the air), a dinosaur, a dog, a
-  hamster, a chicken, a giraffe, a hippo or a rabbit, each with its own sounds. Switch from the portrait on the shelf or in Settings.
+  hamster, a chicken, a giraffe, a hippo, a rabbit or a pig, each with its own sounds. Switch from the portrait on the shelf or in Settings.
 - Talk to it: press Control-Option-T (or Talk to me in its menu) and say
   "come here", "feed", "focus for 25 minutes", "play lofi", "note buy milk" or
   "how much usage is left". Heard with Apple's on-device speech recognition,
@@ -107,9 +113,12 @@ your desktop and talks to you. A Droplet for
 | ![Playtime, their way](Assets/Screenshot-16.png) | ![Share it as a GIF](Assets/Screenshot-17.png) |
 | ![What it's working on](Assets/Screenshot-18.png) | ![Talk to it](Assets/Screenshot-19.png) |
 | ![Safer with your agents](Assets/Screenshot-20.png) | ![Walks on your Dock](Assets/Screenshot-21.png) |
+| ![Your pet's card](Assets/Screenshot-22.png) | ![Droppy's assistant](Assets/Screenshot-23.png) |
+| ![A pig](Assets/Screenshot-24.png) | |
 
-Everything runs on your Mac. Notification text is shown and forgotten;
-nothing is stored or sent anywhere.
+Everything runs on your Mac unless you choose Claude for meeting summaries
+(the transcript goes to Anthropic) or CI after a push (your `gh` command asks
+GitHub). Notification text is shown and forgotten; nothing else is sent anywhere.
 
 ## Updates
 

@@ -50,7 +50,7 @@ enum CatCoat: String, CaseIterable, Identifiable, Codable {
 /// Every character has the cat's frames, so the same moods drive them all.
 /// `own1` to `own5` are the pets you drew yourself (see OwnPets.swift).
 enum PetKind: String, CaseIterable, Identifiable, Codable {
-    case cat, bee, parrot, dino, dog, hamster, chicken, giraffe, hippo, rabbit, shark
+    case cat, bee, parrot, dino, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig
     case own1, own2, own3, own4, own5
 
     var id: String { rawValue }
@@ -69,6 +69,7 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
         case .hippo: "Hippo"
         case .rabbit: "Rabbit"
         case .shark: "Shark"
+        case .pig: "Pig"
         }
     }
 
@@ -109,6 +110,7 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
         case .giraffe: [.leaves, .teaser, .yarn]
         case .hippo: [.watermelon, .yarn, .fetch]
         case .shark: [.fish, .fetch, .laser]
+        case .pig: [.watermelon, .carrot, .yarn]
         case .own1, .own2, .own3, .own4, .own5: [.yarn, .teaser, .laser]
         }
     }

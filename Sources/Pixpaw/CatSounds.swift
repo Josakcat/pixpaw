@@ -6,12 +6,17 @@
 //  (two pitches), purr and chew, and the other characters' calls: the bee's
 //  buzz, the parrot's squawk, the dinosaur's rawr, the dog's bark, the
 //  hamster's squeak, the chicken's bawk, the giraffe's hum, the hippo's
-//  honk, the rabbit's thump and the shark's chomp. Made from sine waves and noise in
+//  honk, the rabbit's thump, the shark's chomp and the pig's oink. Made from sine waves and noise in
 //  code, so there are no sound files to license or ship. Pets you draw
 //  yourself can bring sounds of their own (OwnPets.swift).
 //
+//  What to play is decided here, on the main actor; the playing happens on
+//  SoundOutput's own queue, because starting a sound waits for the audio
+//  device to start.
+//
 
 import AppKit
+import AVFoundation
 
 @MainActor
 final class CatSounds {
@@ -21,19 +26,19 @@ final class CatSounds {
 
     /// Off in Settings, or while the cat is keeping quiet.
     var isEnabled = true
-    private static let sampleRate = 22_050.0
+    private nonisolated static let sampleRate = 22_050.0
     private static let volume: Float = 0.35
 
     /// One character's sounds, made once.
     private struct Voice {
-        var calls: [NSSound]
-        var content: NSSound?
-        var chew: NSSound?
+        var calls: [SoundClip]
+        var content: SoundClip?
+        var chew: SoundClip?
     }
 
     private var voices: [PetKind: Voice] = [:]
     private var lastMeow = Date.distantPast
-    private lazy var hiss = NSSound(data: Self.wav(Self.hissSamples()))
+    private lazy var hiss = Self.clip(Self.hissSamples())
 
     private init() {}
 
@@ -42,23 +47,19 @@ final class CatSounds {
     func play(_ sound: Sound, voice kind: PetKind = .cat) {
         guard isEnabled else { return }
         let voice = prepare(kind)
+        let clip: SoundClip?
         switch sound {
         case .meow:
             // A call every few seconds at most; a chatty pet is charming once.
             guard Date().timeIntervalSince(lastMeow) > 4 else { return }
             lastMeow = Date()
-            voice.calls.randomElement().map(start)
-        case .purr: voice.content.map(start)
-        case .chew: voice.chew.map(start)
+            clip = voice.calls.randomElement()
+        case .purr: clip = voice.content
+        case .chew: clip = voice.chew
         // A warning: a dog barks it, everyone else hisses.
-        case .hiss: (kind.actsLike == .dog ? voice.calls.first : hiss).map(start)
+        case .hiss: clip = kind.actsLike == .dog ? voice.calls.first : hiss
         }
-    }
-
-    private func start(_ sound: NSSound) {
-        sound.stop()
-        sound.volume = Self.volume
-        sound.play()
+        if let clip { SoundOutput.shared.play(clip, volume: Self.volume) }
     }
 
     /// Drops the voices of the pets you drew, after their sounds changed.
@@ -68,16 +69,20 @@ final class CatSounds {
 
     /// Plays one of a pet's own sounds, to try it.
     func preview(_ url: URL) {
-        NSSound(contentsOf: url, byReference: false).map(start)
+        SoundOutput.shared.preview(url, volume: Self.volume)
     }
 
     private func prepare(_ kind: PetKind) -> Voice {
         guard kind.isOwn else { return builtIn(kind) }
         if let made = voices[kind] { return made }
         // A pet you drew speaks in its own sounds, and in the voice of the
-        // character it acts like for the ones it hasn't got.
+        // character it acts like for the ones it hasn't got. Each is a WAV
+        // Pixpaw wrote when you brought it in, read whole, as before.
+        func own(_ sound: OwnSound) -> SoundClip? {
+            guard let url = OwnPets.sound(sound, of: kind), let data = try? Data(contentsOf: url) else { return nil }
+            return SoundClip(data)
+        }
         var voice = builtIn(kind.actsLike)
-        let own = { (sound: OwnSound) in OwnPets.sound(sound, of: kind).flatMap { NSSound(contentsOf: $0, byReference: false) } }
         if let call = own(.call) { voice.calls = [call] }
         if let happy = own(.happy) { voice.content = happy }
         if let eating = own(.eating) { voice.chew = eating }
@@ -87,42 +92,45 @@ final class CatSounds {
 
     private func builtIn(_ kind: PetKind) -> Voice {
         if let made = voices[kind] { return made }
-        let sound = { (samples: [Float]) in NSSound(data: Self.wav(samples)) }
+        let sound = Self.clip
         let voice: Voice
         switch kind {
         case .cat, .own1, .own2, .own3, .own4, .own5:
-            voice = Voice(calls: [Self.meow(pitch: 1), Self.meow(pitch: 1.18)].compactMap(sound),
+            voice = Voice(calls: [Self.meow(pitch: 1), Self.meow(pitch: 1.18)].map(sound),
                           content: sound(Self.purrSamples()), chew: sound(Self.chewSamples()))
         case .bee:
-            voice = Voice(calls: [Self.buzz(pitch: 1), Self.buzz(pitch: 1.2)].compactMap(sound),
+            voice = Voice(calls: [Self.buzz(pitch: 1), Self.buzz(pitch: 1.2)].map(sound),
                           content: sound(Self.humSamples()), chew: sound(Self.chewSamples()))
         case .parrot:
-            voice = Voice(calls: [Self.squawk(pitch: 1), Self.squawk(pitch: 1.15)].compactMap(sound),
+            voice = Voice(calls: [Self.squawk(pitch: 1), Self.squawk(pitch: 1.15)].map(sound),
                           content: sound(Self.chirpSamples()), chew: sound(Self.chewSamples()))
         case .dino:
-            voice = Voice(calls: [Self.rawr(pitch: 1), Self.rawr(pitch: 1.2)].compactMap(sound),
+            voice = Voice(calls: [Self.rawr(pitch: 1), Self.rawr(pitch: 1.2)].map(sound),
                           content: sound(Self.purrSamples()), chew: sound(Self.chewSamples()))
         case .dog:
-            voice = Voice(calls: [Self.bark(pitch: 1, times: 2), Self.bark(pitch: 1.15, times: 1)].compactMap(sound),
+            voice = Voice(calls: [Self.bark(pitch: 1, times: 2), Self.bark(pitch: 1.15, times: 1)].map(sound),
                           content: sound(Self.pantSamples()), chew: sound(Self.chewSamples()))
         case .hamster:
-            voice = Voice(calls: [Self.squeak(pitch: 1, times: 1), Self.squeak(pitch: 1.12, times: 2)].compactMap(sound),
+            voice = Voice(calls: [Self.squeak(pitch: 1, times: 1), Self.squeak(pitch: 1.12, times: 2)].map(sound),
                           content: sound(Self.chitterSamples()), chew: sound(Self.chewSamples()))
         case .chicken:
-            voice = Voice(calls: [Self.bawk(pitch: 1), Self.bawk(pitch: 1.12)].compactMap(sound),
+            voice = Voice(calls: [Self.bawk(pitch: 1), Self.bawk(pitch: 1.12)].map(sound),
                           content: sound(Self.cluckSamples()), chew: sound(Self.chewSamples()))
         case .giraffe:
-            voice = Voice(calls: [Self.lowHum(pitch: 1), Self.lowHum(pitch: 1.15)].compactMap(sound),
+            voice = Voice(calls: [Self.lowHum(pitch: 1), Self.lowHum(pitch: 1.15)].map(sound),
                           content: sound(Self.humSamples()), chew: sound(Self.chewSamples()))
         case .hippo:
-            voice = Voice(calls: [Self.honk(pitch: 1, times: 2), Self.honk(pitch: 0.9, times: 3)].compactMap(sound),
+            voice = Voice(calls: [Self.honk(pitch: 1, times: 2), Self.honk(pitch: 0.9, times: 3)].map(sound),
                           content: sound(Self.bubbles(pitch: 0.6)), chew: sound(Self.chewSamples()))
         case .rabbit:
-            voice = Voice(calls: [Self.thump(times: 2), Self.squeak(pitch: 1.3, times: 1)].compactMap(sound),
+            voice = Voice(calls: [Self.thump(times: 2), Self.squeak(pitch: 1.3, times: 1)].map(sound),
                           content: sound(Self.chitterSamples()), chew: sound(Self.chewSamples()))
         case .shark:
-            voice = Voice(calls: [Self.chomp(times: 2), Self.chomp(times: 1)].compactMap(sound),
+            voice = Voice(calls: [Self.chomp(times: 2), Self.chomp(times: 1)].map(sound),
                           content: sound(Self.bubbles(pitch: 1)), chew: sound(Self.chewSamples()))
+        case .pig:
+            voice = Voice(calls: [Self.oink(pitch: 1, times: 2), Self.oink(pitch: 1.12, times: 1)].map(sound),
+                          content: sound(Self.oink(pitch: 0.85, times: 3)), chew: sound(Self.chewSamples()))
         }
         voices[kind] = voice
         return voice
@@ -451,7 +459,6 @@ final class CatSounds {
         return samples
     }
 
-    /// 16-bit mono PCM in a WAV container, which NSSound plays directly.
     /// "Mmmm": the low hum giraffes make at night, a soft warm tone that
     /// slides down a little.
     private static func lowHum(pitch: Double) -> [Float] {
@@ -488,6 +495,30 @@ final class CatSounds {
                 noise = noise * 0.8 + Double.random(in: -1...1) * 0.2
                 let envelope = min(1, t / 0.015) * pow(1 - p, 1.2)
                 samples[from + j] = Float((value + noise * 0.4) * envelope * 0.4)
+            }
+        }
+        return samples
+    }
+
+    /// Oink: a short nasal grunt, falling in pitch, rough with breath.
+    private static func oink(pitch: Double, times: Int) -> [Float] {
+        let length = 0.2, gap = 0.12
+        let count = Int((Double(times) * (length + gap)) * sampleRate)
+        var samples = [Float](repeating: 0, count: count)
+        for n in 0..<times {
+            let from = Int(Double(n) * (length + gap) * sampleRate)
+            var phase = 0.0
+            var noise = 0.0
+            for j in 0..<Int(length * sampleRate) where from + j < count {
+                let t = Double(j) / sampleRate
+                let p = t / length
+                phase += 2 * .pi * (290 - 110 * p) * pitch / sampleRate
+                var value = 0.0
+                for k in 1...6 { value += sin(phase * Double(k)) * (k >= 2 && k <= 4 ? 1 : 0.4) / Double(k) }
+                noise = noise * 0.6 + Double.random(in: -1...1) * 0.4
+                let rough = 0.7 + 0.3 * sin(2 * .pi * 38 * t)
+                let envelope = min(1, t / 0.01) * pow(1 - p, 1.4)
+                samples[from + j] = Float((value * rough + noise * 0.5) * envelope * 0.4)
             }
         }
         return samples
@@ -545,7 +576,13 @@ final class CatSounds {
         return samples
     }
 
-    private static func wav(_ samples: [Float]) -> Data {
+    /// One of the voices, made from its samples.
+    private nonisolated static func clip(_ samples: [Float]) -> SoundClip {
+        SoundClip(wav(samples))
+    }
+
+    /// 16-bit mono PCM in a WAV container, which AVAudioPlayer plays directly.
+    private nonisolated static func wav(_ samples: [Float]) -> Data {
         var data = Data()
         func append<T: FixedWidthInteger>(_ value: T) {
             var little = value.littleEndian
@@ -561,5 +598,72 @@ final class CatSounds {
             append(Int16(max(-1, min(1, sample)) * Float(Int16.max)))
         }
         return data
+    }
+}
+
+/// One of the pets' sounds: its WAV bytes, made or read once, and the player
+/// that plays it. A class, so a sound starts over on its own player, as the
+/// NSSound it replaces did, rather than playing over itself.
+final class SoundClip: @unchecked Sendable {
+    let data: Data
+    /// Made and touched only on SoundOutput's queue.
+    fileprivate var player: AVAudioPlayer?
+
+    init(_ data: Data) {
+        self.data = data
+    }
+}
+
+/// Plays the pets' sounds on a serial queue of their own, never on the main
+/// thread. Starting a sound starts the audio device and waits for it, and
+/// AirPods, AirPlay or a sleeping display's speakers can take many seconds to
+/// wake: NSSound's play() on the main thread once held all of Droppy up for
+/// 14 seconds. AVAudioPlayer has no main-thread requirement; each player is
+/// made, started and let go on this one queue.
+final class SoundOutput: @unchecked Sendable {
+    static let shared = SoundOutput()
+
+    private let queue = DispatchQueue(label: "app.pixpaw.sounds", qos: .userInitiated)
+    /// The players that are playing, held until they finish, since a player
+    /// that is let go stops. Touched only on the queue.
+    private var playing: [AVAudioPlayer] = []
+    /// A sound still waiting this long for a slow device is dropped, not
+    /// played late: it belonged to a moment that has passed.
+    private static let waitsAtMost: UInt64 = 1_000_000_000
+
+    private init() {}
+
+    /// Plays a sound from the start, cutting off the same sound if it is
+    /// still playing.
+    func play(_ clip: SoundClip, volume: Float) {
+        let asked = DispatchTime.now().uptimeNanoseconds
+        queue.async { [self] in
+            guard Self.isOnTime(asked) else { return }
+            if clip.player == nil { clip.player = try? AVAudioPlayer(data: clip.data) }
+            guard let player = clip.player else { return }
+            player.currentTime = 0
+            start(player, volume: volume)
+        }
+    }
+
+    /// Plays a sound file once, alongside anything already playing.
+    func preview(_ url: URL, volume: Float) {
+        let asked = DispatchTime.now().uptimeNanoseconds
+        queue.async { [self] in
+            guard Self.isOnTime(asked), let data = try? Data(contentsOf: url),
+                  let player = try? AVAudioPlayer(data: data) else { return }
+            start(player, volume: volume)
+        }
+    }
+
+    private func start(_ player: AVAudioPlayer, volume: Float) {
+        playing.removeAll { !$0.isPlaying }
+        player.volume = volume
+        player.play()
+        if !playing.contains(where: { $0 === player }) { playing.append(player) }
+    }
+
+    private static func isOnTime(_ asked: UInt64) -> Bool {
+        DispatchTime.now().uptimeNanoseconds - asked < waitsAtMost
     }
 }

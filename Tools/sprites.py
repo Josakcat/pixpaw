@@ -414,6 +414,8 @@ KIND_COLORS = {
     "hippo": dict(o="2b2436", f="a196bd", s="857aa3", w="d6cde6", p="f4a3b6", e="1a1520"),
     "rabbit": dict(o="3b2a24", f="c79a6b", s="a8784b", w="f7efe4", p="f3a3b3", e="1d1412"),
     "shark": dict(o="1c2b3b", f="7a96b4", s="5b7795", w="eef3f8", p="f08ca3", e="0f1418"),
+    # Drawn from the hippo: pink, a snout round the nostrils, a curly tail.
+    "pig": dict(o="4a2a33", f="f7b3c2", s="e8909f", w="ffdbe3", p="e0718b", e="2a1418"),
 }
 
 
@@ -498,7 +500,7 @@ BEE_FRAMES, PARROT_FRAMES, DINO_FRAMES, DOG_FRAMES, HAMSTER_FRAMES, CHICKEN_FRAM
 # Homes, unlocked at 500 stars: Art/homes.png, one 34 x 26 cell per
 # character in HOME_ORDER, each after where the animal really lives: a box
 # for the cat, a beehive, a tree to roost in, a cave, a kennel, a cage, a
-# coop, an acacia, a pond, a hutch, a reef. A doorway (d) is dark while the
+# coop, an acacia, a pond, a hutch, a reef, a mud wallow. A doorway (d) is dark while the
 # home is empty and open while its pet sleeps inside.
 HOME_W, HOME_H = 34, 26
 # Where the pet sleeps: the left column of its frame, how many rows above
@@ -508,9 +510,9 @@ HOME_W, HOME_H = 34, 26
 HOME_SPOTS = {
     "cat": (7, 0, True), "bee": (7, 4, True), "parrot": (2, 10, False), "dino": (7, 0, True),
     "dog": (7, 0, True), "hamster": (4, 4, True), "chicken": (7, 0, True), "giraffe": (2, 0, False),
-    "hippo": (7, 4, True), "rabbit": (3, 5, True), "shark": (7, 0, True),
+    "hippo": (7, 4, True), "rabbit": (3, 5, True), "shark": (7, 0, True), "pig": (7, 4, True),
 }
-HOME_ORDER = ["cat", "bee", "parrot", "dino", "dog", "hamster", "chicken", "giraffe", "hippo", "rabbit", "shark"]
+HOME_ORDER = ["cat", "bee", "parrot", "dino", "dog", "hamster", "chicken", "giraffe", "hippo", "rabbit", "shark", "pig"]
 HOME_COLORS = dict(o="2a1e1a", d="2e2226", r="c94f45", R="9c3a33", w="f3e3c4", W="d9c29c", k="a0693d", K="6e4526",
                    g="6fb05a", G="4a8a3c", y="f5c542", Y="d79a25", b="6aa8d8", B="3f78a8", p="f2a2b5", P="d97f95",
                    s="a7a9b0", S="7d808a", n="fff2b0", t="5fb3a8", T="3f8a80", c="d9a96b", C="b9854a", m="8a6a4a",
@@ -580,7 +582,8 @@ _HATS = {
               "eat1": (15.5, 7), "eat2": (15.5, 7), "crouch1": (15.5, 7), "crouch2": (15.5, 7), "held1": (15.5, 6), "held2": (15.5, 6)},
 }
 # Off while asleep, and while the head is down in the bowl where it would be lost.
-_NO_PHONES = {"giraffe": ("sleep", "eat"), "hippo": ("sleep",), "rabbit": ("sleep", "eat"), "shark": ("sleep",)}
+_HATS["pig"] = _HATS["hippo"]  # the same head, where the pig was drawn from
+_NO_PHONES = {"giraffe": ("sleep", "eat"), "hippo": ("sleep",), "rabbit": ("sleep", "eat"), "shark": ("sleep",), "pig": ("sleep",)}
 KIND_ANCHORS = {
     "bee": {f: (14.5, 6 + _bee_dy(f), None, None) for f in BEE_FRAMES},
     "parrot": {f: (*_parrot_head(f), None, None) for f in PARROT_FRAMES},

@@ -1028,6 +1028,82 @@ canvas(Int(W), Int(H), "Screenshot-21.png") { ctx in
     label("Automatic when DockDoor Pro is running", at: CGPoint(x: W / 2, y: floorY + 20), size: 28, weight: .semibold, color: rgb(0xFFE08A), centered: true)
 }
 
+func roundRect(_ r: CGRect, _ radius: CGFloat, _ color: NSColor) {
+    color.setFill(); NSBezierPath(roundedRect: r, xRadius: radius, yRadius: radius).fill()
+}
+func text(_ s: String, _ p: CGPoint, _ size: CGFloat, _ weight: NSFont.Weight = .regular, _ color: NSColor = .white) {
+    (s as NSString).draw(at: p, withAttributes: [.font: NSFont.systemFont(ofSize: size, weight: weight), .foregroundColor: color])
+}
+/// A dark panel with rows, a symbol and a title each; `lit` is the row under the pointer.
+func menuPanel(_ rect: CGRect, _ title: String?, _ rows: [(String, String)], lit: Int? = nil, chevrons: Bool = false) {
+    roundRect(rect, 18, rgb(0x16161C, 0.92))
+    var y = rect.minY + 16
+    if let title { text(title, CGPoint(x: rect.minX + 22, y: y), 15, .semibold, rgb(0xFFFFFF, 0.55)); y += 36 }
+    for (i, row) in rows.enumerated() {
+        if i == lit { roundRect(CGRect(x: rect.minX + 10, y: y - 6, width: rect.width - 20, height: 40), 10, rgb(0x4A6CF7, 0.85)) }
+        symbol(row.1, in: CGRect(x: rect.minX + 26, y: y + 3, width: 22, height: 22))
+        text(row.0, CGPoint(x: rect.minX + 62, y: y + 1), 19)
+        if chevrons { symbol("chevron.right", in: CGRect(x: rect.maxX - 34, y: y + 6, width: 12, height: 14), color: rgb(0xFFFFFF, 0.4)) }
+        y += 46
+    }
+}
+
+// 22. The pet's card, with a submenu opened beside it.
+canvas(Int(W), Int(H), "Screenshot-22.png") { ctx in
+    desktop(ctx, W, H, title: "Your pet's card", subtitle: "Hold on your pet: six big buttons, and the rest opens beside it as you point.")
+    let card = CGRect(x: 260, y: 250, width: 400, height: 470)
+    roundRect(card, 28, rgb(0x16161C, 0.92))
+    text("Mochi", CGPoint(x: card.minX + 26, y: card.minY + 24), 26, .semibold)
+    text("Hungry · 185 ★", CGPoint(x: card.minX + 26, y: card.minY + 60), 17, .regular, rgb(0xFFFFFF, 0.6))
+    roundRect(CGRect(x: card.maxX - 70, y: card.minY + 28, width: 44, height: 44), 22, rgb(0xFFFFFF, 0.14))
+    symbol("mic.fill", in: CGRect(x: card.maxX - 59, y: card.minY + 39, width: 22, height: 22))
+    let tiles = [("Feed", "fork.knife"), ("Play", "gamecontroller"), ("Nap", "moon.zzz"), ("Focus", "timer"), ("Lofi", "headphones"), ("Note", "signpost.right")]
+    for (i, t) in tiles.enumerated() {
+        let r = CGRect(x: card.minX + 26 + CGFloat(i % 3) * 120, y: card.minY + 108 + CGFloat(i / 3) * 96, width: 110, height: 86)
+        roundRect(r, 14, rgb(0xFFFFFF, 0.10))
+        symbol(t.1, in: CGRect(x: r.midX - 15, y: r.minY + 15, width: 30, height: 30))
+        label(t.0, at: CGPoint(x: r.midX, y: r.minY + 52), size: 17, weight: .medium, centered: true)
+    }
+    let rows = [("Droppy", "drop.fill"), ("Meetings", "video"), ("Capture", "camera"), ("Wardrobe", "tshirt")]
+    for (i, row) in rows.enumerated() {
+        let y = card.minY + 316 + CGFloat(i) * 38
+        if i == 0 { roundRect(CGRect(x: card.minX + 14, y: y - 4, width: card.width - 28, height: 34), 9, rgb(0xFFFFFF, 0.12)) }
+        symbol(row.1, in: CGRect(x: card.minX + 28, y: y + 3, width: 20, height: 20), color: rgb(0xFFFFFF, 0.7))
+        text(row.0, CGPoint(x: card.minX + 62, y: y + 1), 18)
+        symbol("chevron.right", in: CGRect(x: card.maxX - 40, y: y + 6, width: 12, height: 14), color: rgb(0xFFFFFF, 0.4))
+    }
+    menuPanel(CGRect(x: card.maxX + 10, y: card.minY + 300, width: 290, height: 206), nil,
+              [("Notes", "note.text"), ("Tasks", "checklist"), ("Clipboard", "doc.on.clipboard"), ("Agents", "sparkles")], lit: 0)
+    cat(ctx, "happy", coat: "orange", collar: "bellCollar", feet: CGPoint(x: card.midX - 80, y: floorY), px: 8)
+    label("Or click it, your choice · Droppy's theme or glass", at: CGPoint(x: 1240, y: 820), size: 24, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
+// 23. Droppy's assistant: ask, and it runs Droppy's own tools.
+canvas(Int(W), Int(H), "Screenshot-23.png") { ctx in
+    desktop(ctx, W, H, title: "Droppy's assistant", subtitle: "Where Droppy already has a tool, your pet runs Droppy's for you.")
+    let pet = CGPoint(x: 220, y: floorY)
+    cat(ctx, "sit", coat: "gray", collar: "redCollar", feet: pet, px: 9)
+    toolTag(ctx, "“open my notes”", symbol: "waveform", at: CGPoint(x: pet.x + 190, y: floorY), scale: 2)
+    bubble(ctx, "On it: Notes", symbol: "note.text", tip: CGPoint(x: pet.x + 14.5 * 9, y: pet.y - 22 * 9))
+    menuPanel(CGRect(x: 820, y: 260, width: 340, height: 260), "Droppy",
+              [("Notes", "note.text"), ("Tasks", "checklist"), ("Clipboard", "doc.on.clipboard"), ("Agents", "sparkles")], lit: 0)
+    for (i, line) in ["Focus → Droppy's Pomodoro", "Join the next meeting", "Scrolling capture", "“next song”"].enumerated() {
+        text(line, CGPoint(x: 1200, y: 290 + CGFloat(i) * 52), 22, .medium, rgb(0xFFFFFF, 0.85))
+    }
+    label("Talk to me, its menu or its card", at: CGPoint(x: 990, y: 820), size: 26, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
+// 24. A pig.
+canvas(Int(W), Int(H), "Screenshot-24.png") { ctx in
+    desktop(ctx, W, H, title: "A pig", subtitle: "Pink, a curly tail and an oink, with a mud wallow of its own at 500 stars.")
+    let pig = CGPoint(x: 260, y: floorY)
+    pet(ctx, "pig", "happy", feet: pig, px: 10)
+    bubble(ctx, "Oink oink! I'm up.", symbol: "sun.max", tip: CGPoint(x: pig.x + 14.5 * 10, y: pig.y - 22 * 10))
+    pet(ctx, "pig", "walk2", feet: CGPoint(x: 700, y: floorY), px: 8)
+    home(ctx, "pig", at: CGPoint(x: 1120, y: floorY - 26 * 8), px: 8)
+    label("Watermelon, carrot or yarn to play with", at: CGPoint(x: 800, y: floorY + 20), size: 26, weight: .semibold, color: rgb(0xFFE08A), centered: true)
+}
+
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in
     ctx.setFillColor(rgb(0x4446F4).cgColor)

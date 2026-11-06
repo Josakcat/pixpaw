@@ -17,6 +17,8 @@ import Speech
 /// What you can ask your pet out loud.
 enum PetCommand: Equatable {
     case come, feed, treat, nap, stretch, photo, gif, join
+    /// One of Droppy's own tools (DroppyTools.swift).
+    case droppy(DroppyTool)
     case focus(minutes: Int?)
     case stopFocus
     case lofi, pauseLofi
@@ -29,7 +31,7 @@ enum PetCommand: Equatable {
     /// Words it listens out for, so they're heard right.
     static let words = ["come here", "feed", "treat", "nap", "stretch", "take a photo", "record a GIF", "join the call",
                         "focus", "stop focus", "play lofi", "pause lofi", "play", "fetch", "note", "remind me to",
-                        "usage left", "be quiet", "good kitty"]
+                        "usage left", "be quiet", "good kitty", "my notes", "new note", "tasks", "clipboard", "meetings today", "capture the page", "agents", "next song", "previous song", "pause the song"]
 
     /// The first thing it knows in what was said, or nil.
     static func parse(_ said: String) -> PetCommand? {
@@ -46,6 +48,18 @@ enum PetCommand: Equatable {
         func has(_ words: String...) -> Bool {
             words.contains { text.range(of: "\\b\(NSRegularExpression.escapedPattern(for: $0))\\b", options: .regularExpression) != nil }
         }
+        // Droppy's own tools: what Droppy already has, the pet asks it for.
+        if has("new note") { return .droppy(.newNote) }
+        if has("my notes", "show notes", "open notes", "the notes") { return .droppy(.notes) }
+        if has("tasks", "my tasks", "to-do list", "todo list") { return .droppy(.tasks) }
+        if has("clipboard") { return .droppy(.clipboard) }
+        if has("meetings today", "today's meetings", "my meetings") { return .droppy(.todaysMeetings) }
+        if has("capture the page", "capture this page", "whole page", "scrolling capture") { return .droppy(.captureScrolling) }
+        if has("agents", "my agents") { return .droppy(.agents) }
+        // Whatever is playing, through Droppy (lofi keeps its own words below).
+        if has("next song", "next track", "skip this song", "skip the song") { return .droppy(.nextTrack) }
+        if has("previous song", "previous track", "last song", "go back a song") { return .droppy(.previousTrack) }
+        if has("pause the song", "play the song", "resume the song") { return .droppy(.playPause) }
         if has("stop focus", "end focus", "stop the focus", "done focusing") { return .stopFocus }
         if has("focus", "pomodoro") {
             let minutes = text.firstMatch(of: #/(\d{1,3})\s*(min|minute)/#).flatMap { Int($0.1) }

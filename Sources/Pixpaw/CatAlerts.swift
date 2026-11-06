@@ -182,6 +182,7 @@ enum CatWords {
         case .hippo: "Honk! I'm up."
         case .rabbit: "Thump thump! I'm up."
         case .shark: "Chomp! I'm up."
+        case .pig: "Oink oink! I'm up."
         }
     }
     @MainActor static func purr(_ kind: PetKind) -> String {
@@ -198,6 +199,7 @@ enum CatWords {
         case .hippo: "Blub blub…"
         case .rabbit: "*happy binky*"
         case .shark: "Blub… nice."
+        case .pig: "*happy snort*"
         }
     }
 
