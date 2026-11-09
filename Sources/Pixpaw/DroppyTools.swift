@@ -74,10 +74,23 @@ enum DroppyTool: String, CaseIterable {
     static let inMenu: [DroppyTool] = [.notes, .tasks, .clipboard, .agents]
 }
 
+/// How running one of Droppy's items went.
+enum DroppyRun: Equatable {
+    case done
+    /// Droppy would show it only inside its own launcher, which the pet can't.
+    case opensInside
+    case failed(String)
+}
+
 @MainActor
 final class DroppyTools {
     /// The launcher item for each tool this Droppy has.
     private(set) var found: [DroppyTool: String] = [:]
+    /// Launcher items that answered presentDetail: shown only inside
+    /// Droppy's own launcher, so never offered again this run.
+    private var opensInside: Set<String> = []
+    /// Each found tool's launcher kind: a surface opens inside the launcher.
+    private var kinds: [DroppyTool: DropletLauncherItem.Kind] = [:]
     /// Droppy's own features that are switched on (it offers "Turn Off <name>").
     private var switchedOn: Set<String> = []
     private var launcher: (any DropletLauncherService)?
@@ -104,35 +117,76 @@ final class DroppyTools {
         watch = nil
         launcher = nil
         found = [:]
+        kinds = [:]
+        opensInside = []
         switchedOn = []
     }
 
     func has(_ tool: DroppyTool) -> Bool { found[tool] != nil }
+
+    /// Has it, and running it does something the pet can see through: not
+    /// a surface (Droppy answers those with presentDetail, a view only its
+    /// own launcher can show; Agents is one, the Agents droplet's widget).
+    func runsHere(_ tool: DroppyTool) -> Bool {
+        guard let id = found[tool] else { return false }
+        return kinds[tool] != .surface && !opensInside.contains(id)
+    }
+
+    /// Everything in Droppy's catalog, for the "What can I do?" box.
+    var catalog: [DropletLauncherItem] {
+        guard let launcher else { return [] }
+        return launcher.catalog.filter { !opensInside.contains($0.id) }
+    }
+
+    /// Droppy's search, only ever for text being typed in the box. Nothing
+    /// is kept: the answer goes straight to the box.
+    func search(_ query: String) async -> [DropletLauncherItem] {
+        guard let launcher else { return [] }
+        return await launcher.search(query).filter { !opensInside.contains($0.id) }
+    }
+
+    /// Runs a launcher item's main action, from your own Return in the box.
+    func perform(itemID: String, query: String) -> DroppyRun {
+        guard let launcher else { return .failed("Droppy can't run things for me here.") }
+        switch launcher.perform(itemID: itemID, actionID: nil, query: query) {
+        case .failed(let why): return .failed(why)
+        case .presentDetail:
+            opensInside.insert(itemID)
+            return .opensInside
+        case .dismiss, .stay: return .done
+        @unknown default: return .done
+        }
+    }
 
     /// Whether Droppy's own feature by this name is on, e.g. "Meetings".
     func isOn(_ feature: String) -> Bool { switchedOn.contains(feature.lowercased()) }
 
     /// Runs it. Nil when Droppy took it, else a sentence saying why not.
     func run(_ tool: DroppyTool) -> String? {
-        guard let launcher, let id = found[tool] else { return "Droppy doesn't have \(tool.title.lowercased()) here." }
-        switch launcher.perform(itemID: id, actionID: nil, query: "") {
+        guard let id = found[tool] else { return "Droppy doesn't have \(tool.title.lowercased()) here." }
+        switch perform(itemID: id, query: "") {
+        case .done: return nil
+        case .opensInside: return "Droppy shows \(tool.title.lowercased()) only in its own launcher."
         case .failed(let why): return why
-        default: return nil
         }
     }
 
     private func read(_ items: [DropletLauncherItem]) {
         // Only commands and surfaces, whose main action is safe to run.
         let usable = items.filter { ($0.kind == .command || $0.kind == .surface) && $0.primaryAction?.isDestructive != true }
-        var byName: [String: String] = [:]
+        var byName: [String: DropletLauncherItem] = [:]
         for item in usable {
             let name = item.title.lowercased()
             if name.hasPrefix("turn off ") || name.hasPrefix("remove ") { continue }
-            if byName[name] == nil { byName[name] = item.id }
+            if byName[name] == nil { byName[name] = item }
         }
         found = [:]
+        kinds = [:]
         for tool in DroppyTool.allCases {
-            if let id = tool.names.lazy.compactMap({ byName[$0] }).first { found[tool] = id }
+            if let item = tool.names.lazy.compactMap({ byName[$0] }).first {
+                found[tool] = item.id
+                kinds[tool] = item.kind
+            }
         }
         switchedOn = Set(items.compactMap { item in
             let name = item.title.lowercased()

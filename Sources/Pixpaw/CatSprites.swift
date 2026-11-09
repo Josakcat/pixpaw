@@ -190,100 +190,6 @@ enum CatFrame: String, CaseIterable {
 
 }
 
-/// Things the cat can wear, unlocked with happiness points.
-enum CatAccessory: String, CaseIterable, Identifiable, Codable {
-    case redCollar, partyHat, bow, bellCollar, witchHat, santaHat, crown
-
-    enum Slot { case hat, collar }
-
-    var id: String { rawValue }
-
-    var slot: Slot { self == .redCollar || self == .bellCollar ? .collar : .hat }
-
-    var title: String {
-        switch self {
-        case .redCollar: "Red collar"
-        case .partyHat: "Party hat"
-        case .bow: "Bow"
-        case .bellCollar: "Bell collar"
-        case .witchHat: "Witch hat"
-        case .santaHat: "Santa hat"
-        case .crown: "Crown"
-        }
-    }
-
-    /// Happiness points that unlock it.
-    var unlockAt: Int {
-        switch self {
-        case .redCollar: 10
-        case .partyHat: 25
-        case .bow: 45
-        case .bellCollar: 70
-        case .witchHat: 100
-        case .santaHat: 150
-        case .crown: 220
-        }
-    }
-
-    static func unlocked(at points: Int) -> [CatAccessory] { allCases.filter { $0.unlockAt <= points } }
-    static func next(after points: Int) -> CatAccessory? { allCases.filter { $0.unlockAt > points }.min { $0.unlockAt < $1.unlockAt } }
-}
-
-/// Where happiness points come from, what each is worth, and how many times
-/// a day it counts, so stars take days of real care rather than a minute of
-/// clicking.
-enum StarSource: String, Codable {
-    case pet, meal, hungryMeal, play, catchFile, treat, gift, stretch, note
-
-    static let dailyTotal = 30
-    /// Petting again this soon after the last counted pet earns nothing.
-    static let petCooldown: TimeInterval = 10
-
-    var amount: Int {
-        switch self {
-        case .pet: 1
-        case .meal: 3
-        case .hungryMeal: 5
-        case .play: 5
-        case .catchFile: 2
-        case .treat: 2
-        case .gift: 3
-        case .stretch: 2
-        case .note: 2
-        }
-    }
-
-    /// Meals share one daily count whether or not the cat was hungry.
-    var counter: String { self == .hungryMeal ? StarSource.meal.rawValue : rawValue }
-
-    var dailyLimit: Int {
-        switch self {
-        case .pet: 10
-        case .meal, .hungryMeal: 3
-        case .play: 3
-        case .catchFile: 5
-        case .treat: 3
-        case .gift: 1
-        case .stretch: 5
-        case .note: 5
-        }
-    }
-}
-
-/// Today's tally, reset at local midnight.
-struct StarDay: Codable, Equatable {
-    var day: String
-    var stars = 0
-    var counts: [String: Int] = [:]
-    var announcedCap = false
-
-    static var today: String {
-        // Gregorian, so switching the Mac's calendar never resets the day.
-        let parts = Calendar(identifier: .gregorian).dateComponents([.year, .month, .day], from: Date())
-        return "\(parts.year ?? 0)-\(parts.month ?? 0)-\(parts.day ?? 0)"
-    }
-}
-
 enum CatEffect: String {
     case heart, zzz, fish, note, code, sweat, ghost, bowl, bowlEmpty, treat, krathong, skyLantern, redLantern, giftFlower, giftBone, giftBall, giftFeather, yarn1, yarn2, teaser, laser, dizzy1, dizzy2, dizzy3
 }
@@ -297,6 +203,27 @@ final class CatSprites {
     static var catSize: CGSize { CGSize(width: CGFloat(CatArt.width) * scale, height: CGFloat(CatArt.height) * scale) }
 
     private var cache: [String: CGImage] = [:]
+    /// Where each frame's eyes are, found once from its pixels.
+    private var eyeCache: [String: [EyeBox]] = [:]
+
+    /// A frame's eyes. A pose that closes them (a blink, a happy squint,
+    /// grooming) borrows the sitting frame's, moved with the head, so glasses
+    /// don't flicker off with every blink.
+    private func eyes(_ art: String, kind: PetKind) -> [EyeBox] {
+        if let hit = eyeCache[art] { return hit }
+        let eye: Character = kind == .parrot ? "K" : "e"
+        var found = CatArt.frames[art].map { WardrobeArt.eyes(in: $0, eye: eye) } ?? []
+        let sit = kind.artKey(.sit)
+        if WardrobeArt.borrowsSitEyes(art), art != sit, let rows = CatArt.frames[sit],
+           let here = CatArt.anchors[art], let there = CatArt.anchors[sit] {
+            // Moved with the head, as far as its hat spot moved.
+            found = WardrobeArt.eyes(in: rows, eye: eye).map {
+                WardrobeArt.moved($0, x: Int((here.0 - there.0).rounded()), y: here.1 - there.1)
+            }
+        }
+        eyeCache[art] = found
+        return found
+    }
 
     /// Folded ears, like a Scottish Fold's, on every cat.
     var foldedEars = false {
@@ -317,12 +244,14 @@ final class CatSprites {
     /// grows upward when a hat rises above the art; the feet stay on the
     /// bottom row. `swing` pushes the legs that many art pixels sideways;
     /// `laptop` puts one in front of it, under its head, while it works.
-    func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil,
+    func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil, glasses: CatAccessory? = nil,
                headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0, laptop: Bool = false) -> CGImage? {
         let art = kind.artKey(frame)
         // No headphones are drawn for a pet you drew, so it keeps its hat on.
         let hat = headphones && !kind.isOwn ? nil : costume ?? hat?.rawValue
-        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(headphones).\(swing).\(laptop)"
+        // Glasses only where they are drawn: a built-in pet, eyes in view.
+        let glasses = kind.isOwn ? nil : glasses
+        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(glasses?.rawValue ?? "-").\(headphones).\(swing).\(laptop)"
         if let hit = cache[key] { return hit }
         let folded = foldedEars && kind == .cat
         guard let rows = (CatArt.frames[art] ?? OwnPets.frames[art]).map({ folded ? Self.fold($0) : $0 })
@@ -334,10 +263,27 @@ final class CatSprites {
 
         // Accessory pixels laid over the art, in art coordinates (y may be negative).
         var overlay: [(x: Int, y: Int, rgb: UInt32)] = []
+        let darkFur = palette["f"].map(WardrobeArt.isDark) ?? false
+        // Glasses first, so a hat brim wins where they meet.
+        if let glasses, !WardrobeArt.hidesGlasses(art) {
+            for pixel in WardrobeArt.glasses(glasses, eyes: eyes(art, kind: kind), darkFur: darkFur) {
+                if let rgb = CatArt.accessoryColors[pixel.colour], pixel.x >= 0, pixel.x < width {
+                    overlay.append((pixel.x, pixel.y, rgb))
+                }
+            }
+        }
+        // The headset goes where headphones go, not on top of the head.
+        if hat == CatAccessory.headset.rawValue, let (view, left, top) = CatArt.headphonesAt[art], let phones = CatArt.headphones[view] {
+            for pixel in WardrobeArt.headset(phones, left: left, top: top, darkFur: darkFur) {
+                if let rgb = CatArt.accessoryColors[pixel.colour], pixel.x >= 0, pixel.x < width {
+                    overlay.append((pixel.x, pixel.y, rgb))
+                }
+            }
+        }
         if let anchor {
             for (item, isHat, centre, row) in [(hat, true, anchor.0, anchor.1), (collar?.rawValue, false, anchor.2, anchor.3)] {
                 guard let item, row >= 0, let art = CatArt.accessories[item] else { continue }
-                let left = Int((centre - Double(art[0].count) / 2).rounded())
+                let left = Int((centre - Double(art[0].count) / 2).rounded()) + (CatArt.accessoryShift[item] ?? 0)
                 let top = isHat ? row - art.count + 1 - (CatArt.accessoryLift[item] ?? 0) : row
                 for (y, line) in art.enumerated() {
                     for (x, char) in line.enumerated() {

@@ -2,7 +2,8 @@
 // screenshots in Assets/.
 //
 //   cp Tools/store-art.swift /tmp/main.swift   (top-level code needs the name main.swift)
-//   swiftc -O Sources/Pixpaw/CatSprites.generated.swift /tmp/main.swift -o /tmp/store-art
+//   swiftc -O Sources/Pixpaw/CatSprites.generated.swift Sources/Pixpaw/Wardrobe.swift Sources/Pixpaw/Stats.swift \
+//       /tmp/main.swift -o /tmp/store-art
 //   /tmp/store-art Assets
 import AppKit
 import UniformTypeIdentifiers
@@ -1103,6 +1104,50 @@ canvas(Int(W), Int(H), "Screenshot-24.png") { ctx in
     home(ctx, "pig", at: CGPoint(x: 1120, y: floorY - 26 * 8), px: 8)
     label("Watermelon, carrot or yarn to play with", at: CGPoint(x: 800, y: floorY + 20), size: 26, weight: .semibold, color: rgb(0xFFE08A), centered: true)
 }
+
+/// Any character's frame wearing things, the way the app lays them over the
+/// art: glasses found from its eyes (WardrobeArt), the headset on the
+/// headphones' spot, a hat or collar from its anchors.
+func worn(_ ctx: CGContext, _ kind: String, _ frame: String, coat: String = "orange", wearing: [CatAccessory],
+          feet: CGPoint, px: CGFloat) {
+    let key = kind == "cat" ? frame : "\(kind).\(frame)"
+    guard let rows = CatArt.frames[key], let palette = CatArt.coats[kind == "cat" ? coat : kind] else { return }
+    let width = rows[0].count
+    var overlay: [(Int, Int, UInt32)] = []
+    let darkFur = palette["f"].map(WardrobeArt.isDark) ?? false
+    for item in wearing {
+        switch item.slot {
+        case .face:
+            let eyes = WardrobeArt.eyes(in: rows, eye: kind == "parrot" ? "K" : "e")
+            for p in WardrobeArt.glasses(item, eyes: eyes, darkFur: darkFur) {
+                if let c = CatArt.accessoryColors[p.colour] { overlay.append((p.x, p.y, c)) }
+            }
+        case .hat where item == .headset:
+            guard let (view, left, top) = CatArt.headphonesAt[key], let phones = CatArt.headphones[view] else { continue }
+            for p in WardrobeArt.headset(phones, left: left, top: top, darkFur: darkFur) {
+                if let c = CatArt.accessoryColors[p.colour] { overlay.append((p.x, p.y, c)) }
+            }
+        case .hat, .collar:
+            guard let anchor = CatArt.anchors[key], let art = CatArt.accessories[item.rawValue] else { continue }
+            let isHat = item.slot == .hat
+            let (centre, row) = isHat ? (anchor.0, anchor.1) : (anchor.2, anchor.3)
+            guard row >= 0 else { continue }
+            let left = Int((centre - Double(art[0].count) / 2).rounded()) + (CatArt.accessoryShift[item.rawValue] ?? 0)
+            let top = isHat ? row - art.count + 1 - (CatArt.accessoryLift[item.rawValue] ?? 0) : row
+            for (y, line) in art.enumerated() {
+                for (x, ch) in line.enumerated() { if let c = CatArt.accessoryColors[ch] { overlay.append((left + x, top + y, c)) } }
+            }
+        }
+    }
+    let h = CGFloat(rows.count)
+    sprite(ctx, rows, palette: palette, at: CGPoint(x: feet.x, y: feet.y - h * px), px: px)
+    for (x, y, c) in overlay where x >= 0 && x < width {
+        ctx.setFillColor(rgb(c).cgColor)
+        ctx.fill(CGRect(x: feet.x + CGFloat(x) * px, y: feet.y - (h - CGFloat(y)) * px, width: px, height: px))
+    }
+}
+
+// 25–30 are real captures from Droppy (Jordy, !252: drawn art can't stand in for the UI); not drawn here.
 
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in

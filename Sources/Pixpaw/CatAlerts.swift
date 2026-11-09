@@ -136,6 +136,7 @@ enum CatWords {
     static func carrying(_ count: Int) -> CatLine {
         CatLine(text: count == 1 ? "Taking it to your shelf!" : "Taking all \(count) to your shelf!", symbol: "tray.and.arrow.down.fill", seconds: 3)
     }
+    static let gotScreenshot = CatLine(text: "Got it!", symbol: "camera.fill", seconds: 2)
     static let shelved = CatLine(text: "On your shelf!", symbol: "checkmark.circle.fill", seconds: 2)
     static let noShelf = CatLine(text: "I couldn't reach your shelf.", symbol: "exclamationmark.triangle.fill", seconds: 3)
     /// Back with the ball, and a cat asked to fetch.
@@ -369,15 +370,19 @@ final class DownloadsWatcher {
     private var known: Set<String> = []
     private var running = false
     private let onLine: (CatLine) -> Void
+    /// The file itself, for the card's Right now buttons.
+    private let onFile: (URL) -> Void
+    private let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
 
-    init(onLine: @escaping (CatLine) -> Void) {
+    init(onLine: @escaping (CatLine) -> Void, onFile: @escaping (URL) -> Void) {
         self.onLine = onLine
+        self.onFile = onFile
     }
 
     func start() {
         guard !running else { return }
         running = true
-        let folder = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask)[0]
+        let folder = self.folder
         let queue = self.queue
         queue.async { [weak self] in
             let fd = open(folder.path, O_EVTONLY)
@@ -412,6 +417,7 @@ final class DownloadsWatcher {
         // A burst (unzipping, a sync) is not a download; name one at most.
         guard fresh.count <= 3, let name = fresh.sorted().first else { return }
         onLine(CatLine(text: CatWords.downloaded(Self.shortened(name)), symbol: "arrow.down.circle.fill"))
+        onFile(folder.appendingPathComponent(name))
     }
 
     nonisolated private static func finishedFiles(in folder: URL) -> Set<String> {
@@ -812,15 +818,25 @@ final class PlaybackWatcher {
 
 /// New screenshots, from Spotlight, which marks every one macOS saves,
 /// wherever it saves them. No permission needed; a screenshot copied only to
-/// the clipboard leaves no file, so it goes unnoticed.
+/// the clipboard leaves no file, so it goes unnoticed. Spotlight's answers
+/// arrive on a queue of their own; only the new files' paths reach the main
+/// thread.
 @MainActor
 final class ScreenshotWatcher {
     private var query: NSMetadataQuery?
     private var observer: NSObjectProtocol?
+    private let queue: OperationQueue = {
+        let queue = OperationQueue()
+        queue.maxConcurrentOperationCount = 1
+        queue.qualityOfService = .utility
+        return queue
+    }()
     private var lastShot = Date.distantPast
-    private let onShot: () -> Void
+    /// The new files, and whether they start a new burst (more than ten
+    /// seconds after the last one).
+    private let onShot: (_ files: [URL], _ newBurst: Bool) -> Void
 
-    init(onShot: @escaping () -> Void) {
+    init(onShot: @escaping (_ files: [URL], _ newBurst: Bool) -> Void) {
         self.onShot = onShot
     }
 
@@ -830,27 +846,37 @@ final class ScreenshotWatcher {
         // Only ones taken from now on.
         query.predicate = NSPredicate(format: "kMDItemIsScreenCapture == 1 AND kMDItemContentCreationDate > %@", Date() as NSDate)
         query.searchScopes = [NSMetadataQueryUserHomeScope]
-        observer = NotificationCenter.default.addObserver(forName: .NSMetadataQueryDidUpdate, object: query, queue: .main) { [weak self] note in
-            let added = (note.userInfo?[NSMetadataQueryUpdateAddedItemsKey] as? [Any])?.isEmpty == false
-            guard added else { return }
-            MainActor.assumeIsolated { self?.shot() }
+        query.operationQueue = queue
+        observer = NotificationCenter.default.addObserver(forName: .NSMetadataQueryDidUpdate, object: query, queue: queue) { [weak self] note in
+            let added = note.userInfo?[NSMetadataQueryUpdateAddedItemsKey] as? [NSMetadataItem] ?? []
+            guard !added.isEmpty else { return }
+            let paths = added.compactMap { $0.value(forAttribute: NSMetadataItemPathKey) as? String }
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated { self?.shot(paths.map { URL(fileURLWithPath: $0) }) }
+            }
         }
-        query.start()
+        nonisolated(unsafe) let started = query
+        queue.addOperation { started.start() }
         self.query = query
     }
 
     func stop() {
-        query?.stop()
+        if let query {
+            nonisolated(unsafe) let stopping = query
+            queue.addOperation { stopping.stop() }
+        }
         query = nil
         if let observer { NotificationCenter.default.removeObserver(observer) }
         observer = nil
     }
 
-    private func shot() {
+    private func shot(_ files: [URL]) {
+        // Stopped while the answer was on its way.
+        guard query != nil else { return }
         // A burst of them is one photo shoot.
-        guard Date().timeIntervalSince(lastShot) > 10 else { return }
+        let newBurst = Date().timeIntervalSince(lastShot) > 10
         lastShot = Date()
-        onShot()
+        onShot(files, newBurst)
     }
 }
 

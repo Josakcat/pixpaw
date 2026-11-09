@@ -4198,6 +4198,46 @@ enum CatArt {
             "rrrrr",
             "..y..",
         ],
+        "flowerCrown": [
+            ".t.y.t.",
+            "nnnnnnn",
+        ],
+        "beanie": [
+            "..w..",
+            ".bbb.",
+            "bbbbb",
+            "BBBBB",
+        ],
+        "acornCap": [
+            "..A..",
+            ".AaA.",
+            "AaAaA",
+        ],
+        "sprout": [
+            "nn.nn",
+            ".nNn.",
+            "..N..",
+        ],
+        "pencil": [
+            "...t",
+            "..y.",
+            ".y..",
+            "k...",
+        ],
+        "workTie": [
+            "kkkkk",
+            "..b..",
+            ".bbb.",
+            ".bBb.",
+            "..b..",
+        ],
+        "nameBadge": [
+            "BBBBBBB",
+            ".B...B.",
+            "..www..",
+            "..wkw..",
+            "..www..",
+        ],
     ]
 
     static let accessoryColors: [Character: UInt32] = [
@@ -4212,11 +4252,21 @@ enum CatArt {
         "l": 0x7fd1ff,
         "g": 0xc9cdd6,
         "G": 0x9196a3,
+        "n": 0x5aa838,
+        "N": 0x2f7d2c,
+        "B": 0x2b4a8c,
+        "A": 0x8a5a2b,
+        "a": 0xc8661e,
     ]
 
     static let accessoryLift: [String: Int] = [
         "crown": 1,
         "bow": 1,
+        "pencil": -1,
+    ]
+
+    static let accessoryShift: [String: Int] = [
+        "pencil": 3,
     ]
 
     static let headphones: [String: [String]] = [

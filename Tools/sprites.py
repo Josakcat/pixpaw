@@ -321,6 +321,52 @@ ACCESSORIES = {
     ],
     "redCollar": ["rrrrr"],
     "bellCollar": ["rrrrr", "..y.."],
+    # The Wardrobe's later things. Hats: a ring of flowers on a green band,
+    # a knit beanie with a pompom, an acorn's cap (for the small ones), a
+    # sprout for a week of care, and a pencil tucked behind the ear, tip
+    # down, beside the head rather than on it.
+    "flowerCrown": [
+        ".t.y.t.",
+        "nnnnnnn",
+    ],
+    "beanie": [
+        "..w..",
+        ".bbb.",
+        "bbbbb",
+        "BBBBB",
+    ],
+    "acornCap": [
+        "..A..",
+        ".AaA.",
+        "AaAaA",
+    ],
+    "sprout": [
+        "nn.nn",
+        ".nNn.",
+        "..N..",
+    ],
+    "pencil": [
+        "...t",
+        "..y.",
+        ".y..",
+        "k...",
+    ],
+    # At the neck, from the collar row down: a tie under a dark collar band,
+    # and a badge on a lanyard.
+    "workTie": [
+        "kkkkk",
+        "..b..",
+        ".bbb.",
+        ".bBb.",
+        "..b..",
+    ],
+    "nameBadge": [
+        "BBBBBBB",
+        ".B...B.",
+        "..www..",
+        "..wkw..",
+        "..www..",
+    ],
 }
 # Headphones, worn while a pair is connected: a band over the head and a cup
 # each side, from the front; one cup and the band edge-on, from the side.
@@ -377,9 +423,14 @@ HEADPHONES_AT = {
 }
 
 # Rows to raise an accessory above its anchor.
-ACCESSORY_LIFT = {"crown": 1, "bow": 1}
+ACCESSORY_LIFT = {"crown": 1, "bow": 1, "pencil": -1}
+# Columns to move an accessory from the centre of the head, towards the face.
+ACCESSORY_SHIFT = {"pencil": 3}
 ACCESSORY_COLORS = dict(r="e8404a", b="4f86e8", y="ffd34d", Y="ffd34d", w="ffffff", k="2a2533", p="9b6bff", t="ff8fb1", l="7fd1ff",
-                        g="c9cdd6", G="9196a3")
+                        g="c9cdd6", G="9196a3",
+                        # Colours the pets already wear: the parrot's greens and blue, the
+                        # dog's brown, the orange cat's stripe.
+                        n="5aa838", N="2f7d2c", B="2b4a8c", A="8a5a2b", a="c8661e")
 
 # (hat centre x, hat bottom row, collar centre x, collar row) per frame;
 # None where a collar would be hidden (eating, asleep).
@@ -678,6 +729,8 @@ def swift():
     out += [f'        "{k}": 0x{v},' for k, v in ACCESSORY_COLORS.items()]
     out += ["    ]", "", "    static let accessoryLift: [String: Int] = ["]
     out += [f'        "{k}": {v},' for k, v in ACCESSORY_LIFT.items()]
+    out += ["    ]", "", "    static let accessoryShift: [String: Int] = ["]
+    out += [f'        "{k}": {v},' for k, v in ACCESSORY_SHIFT.items()]
     out += ["    ]", "", "    static let headphones: [String: [String]] = ["]
     for name, rows in HEADPHONES.items():
         out.append(f'        "{name}": [')
@@ -740,7 +793,7 @@ def compose(frame, hat=None, collar=None, pad=8, headphones=False, kind=None):
         if not name or ax is None:
             continue
         art = ACCESSORIES[name]
-        left = int(round(ax - len(art[0]) / 2))
+        left = int(round(ax - len(art[0]) / 2)) + ACCESSORY_SHIFT.get(name, 0)
         top = (ay - len(art) + 1 - ACCESSORY_LIFT.get(name, 0) + pad) if name != collar else ay + pad
         for y, row in enumerate(art):
             for x, ch in enumerate(row):

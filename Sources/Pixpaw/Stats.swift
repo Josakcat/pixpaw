@@ -49,3 +49,44 @@ struct PetStats: Codable, Equatable {
         count == 0 ? nil : "\(count) \(count == 1 ? one : many)"
     }
 }
+
+/// All-time counts beside the year's tally, for the Wardrobe: a new year
+/// (or clearing the year's card) never takes a headset or a sprout back.
+/// Counts only, kept in the droplet's preferences like the tally.
+struct PetAllTime: Codable, Equatable {
+    var counts: [String: Int] = [:]
+    /// Days in a row with stars: the run, its longest, and its last day.
+    var streak = 0
+    var bestStreak = 0
+    var lastStarDay: String?
+
+    /// For anyone updating: every year counted so far, so nobody loses progress.
+    static func seeded(from stats: PetStats) -> PetAllTime {
+        var all = PetAllTime()
+        for year in stats.years.values {
+            for (stat, count) in year where count > 0 { all.counts[stat, default: 0] += count }
+        }
+        return all
+    }
+
+    mutating func add(_ stat: PetStat, _ count: Int = 1) {
+        guard count > 0 else { return }
+        counts[stat.rawValue, default: 0] += count
+    }
+
+    func count(_ stat: PetStat) -> Int { counts[stat.rawValue] ?? 0 }
+
+    /// Stars came in on `day`; `yesterday` is the day before it. The first
+    /// stars of a day carry the run on or start a new one.
+    mutating func earnedStars(on day: String, yesterday: String) {
+        guard lastStarDay != day else { return }
+        streak = lastStarDay == yesterday ? streak + 1 : 1
+        bestStreak = max(bestStreak, streak)
+        lastStarDay = day
+    }
+
+    /// The run as it stands: gone once a whole day went by without stars.
+    func currentStreak(today: String, yesterday: String) -> Int {
+        lastStarDay == today || lastStarDay == yesterday ? streak : 0
+    }
+}

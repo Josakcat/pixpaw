@@ -2,6 +2,46 @@
 
 ## [Unreleased]
 
+## [1.12.0] - 2026-11-08
+
+Everything new since 1.10.2:
+
+### Added
+- 🔍 What can I do?: type what you want in a small box over your pet and it finds it among its commands and Droppy's ("note buy milk" goes straight on its sign). Ask me in the menu, the 🔍 on the card, or Control-Option-/. Nothing that turns off, deletes or quits ever shows.
+- 🃏 Your pet's card: hold on or right-click your pet for big buttons (Feed, Play, Nap, Focus, Lofi, a note), a Right now line with a button for what you'd likely do next (it never runs one itself), and the menu's groups. Pick its look: Droppy's theme, glass or solid. ⋯ opens the full menu.
+- 🧰 Your pet runs Droppy's own tools: Notes, Tasks, Clipboard, the Pomodoro, joining a meeting and the scrolling capture go through Droppy, and the pet's own reminders step aside while Droppy shows them.
+- 💡 A light beside the notch while something runs: blue for a long command or CI, amber when an agent needs you, mint when it's done, red for a snag. Beside the notch has Off, Moments and Always, and Droppy's own activities go first.
+- 🏠 The home comes out for naps and folds away after. Your pet also goes home by itself in a call and late at night. Settings → Home.
+- 👓 A bigger Wardrobe: a flower crown, a beanie, an acorn cap, glasses and sunglasses, and things you earn working together: a headset, a pencil, a tie, a name badge and a sprout.
+- 🐷 A pig, with an oink, a watermelon and a mud wallow.
+- 📸 Carry screenshots to Droppy's shelf, off until you switch it on in Settings → Capture.
+
+### Changed
+- 🗂️ The menu and Settings, regrouped: Right now, Ask me, Care, Work, Meetings, Home, Capture and Wardrobe. Home and Beside the notch have Settings pages of their own.
+
+### Fixed
+- 🔗 Links from other apps no longer start a page capture, and a focus session started by a link doesn't start lofi.
+- 💬 Long answers to an agent's question are no longer cut short.
+- 🎩 Hats sit right on a pet you drew. Thanks to trish for the report!
+
+## [1.11.1] - 2026-11-06
+
+Everything new since 1.10.2:
+
+### Added
+- 🧰 Your pet runs Droppy's own tools. Where Droppy already has something, your pet asks Droppy instead of doing the same itself: its menu's Droppy section opens Droppy's Notes, Tasks, Clipboard and Agents; say "open my notes", "my tasks", "show my clipboard", "capture the page" or "next song" to Talk to me; Focus starts Droppy's Pomodoro droplet when you have it; joining the next meeting and the scrolling capture go through Droppy; and lofi in a browser pauses for breaks again. While Droppy shows them itself, the pet's meeting reminders, AI usage gauge and lock screen line step aside. Settings → Use Droppy's own tools.
+- 🃏 Your pet's card. Hold on your pet (or click it, your choice) and a card opens over it: how it's doing, six big buttons for Feed, Play, Nap, Focus, Lofi and a note, Talk to me in its corner, and rows that open beside it as you point at them. Pick its look: Droppy's theme, clear, tinted or frosted glass with a glass level, or solid, with a preview in Settings. A right-click still gives the plain menu.
+- 🐷 A pig: pink, a curly tail, an oink, a watermelon to roll, and a mud wallow at 500 stars.
+- 📸 Carry screenshots to the shelf: when you take a screenshot, your pet runs it up to Droppy's shelf ("Got it!"). Off until you switch it on in Settings → Capture.
+
+### Changed
+- 🗂️ The plain menu, regrouped: Ask me, Care, Work and Meetings.
+
+### Fixed
+- 🔗 Links from other apps no longer start a page capture, and a focus session started by a link doesn't start lofi: both take a click, a shortcut or your pet's menu.
+- 💬 Long answers to an agent's question are no longer cut short: the card (and the menu bar) lists them one per row, wrapped.
+- 🎩 Hats sit on the head of a pet you drew in every pose, instead of floating over its back when its tail rose as high as its ears. Thanks to trish for the report!
+
 ## [1.11.0] - 2026-11-06
 
 Everything new since 1.10.2:

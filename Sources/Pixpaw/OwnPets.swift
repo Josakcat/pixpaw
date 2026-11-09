@@ -329,6 +329,7 @@ enum OwnPets {
         // One character per colour, '.' for none.
         var letters: [UInt32: Character] = [:]
         var palette: [Character: UInt32] = [:]
+        var headWidth: Int?
         for frame in cellOrder {
             let grid = trimmed(made[frame] ?? [])
             let rows = grid.map { row in
@@ -343,7 +344,10 @@ enum OwnPets {
             }
             let key = kind.artKey(frame)
             frames[key] = rows
-            hatSpots[key] = hatSpot(rows)
+            // The sitting pose comes first and shows how wide the head is.
+            let width = headWidth ?? Self.headWidth(rows)
+            headWidth = width
+            hatSpots[key] = hatSpot(rows, headWidth: width, facesFront: frame == .held1 || frame == .held2)
         }
         colours[kind] = palette
     }
@@ -372,14 +376,47 @@ enum OwnPets {
         return Array(grid.dropFirst(extra))
     }
 
-    /// A hat on the top of the head: over the middle of the topmost few rows.
-    private static func hatSpot(_ rows: [String]) -> (Double, Int) {
-        guard let top = rows.firstIndex(where: { $0.contains { $0 != "." } }) else { return (10, 0) }
-        let columns = rows[top..<min(rows.count, top + 3)].flatMap { row in
+    /// How wide the head is in a sitting pose: the rightmost part of the
+    /// topmost three rows, where a tail held as high is a part of its own.
+    private static func headWidth(_ rows: [String]) -> Int {
+        guard let top = rows.firstIndex(where: { $0.contains { $0 != "." } }) else { return 8 }
+        let columns = Set(rows[top..<min(rows.count, top + 3)].flatMap { row in
             row.enumerated().filter { $0.element != "." }.map(\.offset)
+        })
+        guard var left = columns.max() else { return 8 }
+        let right = left
+        // Ears a column or two apart are one head; a wider gap is something else.
+        while columns.contains(left - 1) || columns.contains(left - 2) { left -= columns.contains(left - 1) ? 1 : 2 }
+        return min(12, max(5, right - left + 1))
+    }
+
+    /// A hat on the top of the head. Every pet faces right, so the head is
+    /// the right end of it, a head wide, whatever the tail does: over the
+    /// highest columns there, its brim on the first row the head fills
+    /// (under the ears, where the built-in pets wear theirs). Held, a pet
+    /// faces you, so the hat goes over the middle of its top rows.
+    private static func hatSpot(_ rows: [String], headWidth: Int, facesFront: Bool) -> (Double, Int) {
+        let width = rows.map(\.count).max() ?? 0
+        let tops: [Int?] = (0..<width).map { x in
+            rows.firstIndex { row in x < row.count && row[row.index(row.startIndex, offsetBy: x)] != "." }
         }
-        let centre = Double((columns.min() ?? 0) + (columns.max() ?? 0) + 1) / 2
-        return (centre, top)
+        guard let right = tops.lastIndex(where: { $0 != nil }), let first = tops.firstIndex(where: { $0 != nil }) else { return (10, 0) }
+        let window = facesFront ? first...right : max(first, right - headWidth + 1)...right
+        guard let top = window.compactMap({ tops[$0] }).min() else { return (10, 0) }
+        let head = window.filter { tops[$0].map { $0 <= top + 2 } ?? false }
+        guard let left = head.first, let last = head.last else { return (10, top) }
+        let centre = Double(left + last + 1) / 2
+        // The brim: the first row a run of the head fills three quarters across.
+        let brim = (top...min(rows.count - 1, top + 2)).first { y in
+            let row = Array(rows[y])
+            var run = 0, longest = 0
+            for x in left...last {
+                run = x < row.count && row[x] != "." ? run + 1 : 0
+                longest = max(longest, run)
+            }
+            return longest * 4 >= (last - left + 1) * 3
+        } ?? top
+        return (centre, brim)
     }
 
     // MARK: Writing a sheet

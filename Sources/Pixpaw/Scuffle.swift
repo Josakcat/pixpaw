@@ -48,6 +48,8 @@ final class DustCloud {
                 self.layer.transform = CATransform3DMakeTranslation(CGFloat([0, 2, -1, 3, 0, -2][self.frame % 6]), CGFloat(self.frame % 2) * 3, 0)
             }
         }
+        // Keeps tumbling while a menu is open, like the pet.
+        if let timer { RunLoop.main.add(timer, forMode: .common) }
     }
 
     func stop() {

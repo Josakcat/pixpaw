@@ -80,9 +80,12 @@ final class HelperPet {
     func start() {
         draw()
         panel.orderFrontRegardless()
-        timer = Timer.scheduledTimer(withTimeInterval: 1 / 12, repeats: true) { [weak self] _ in
+        let timer = Timer(timeInterval: 1 / 12, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.step() }
         }
+        // Keeps moving while a menu is open, like the pet.
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
     }
 
     /// Done: it brings the parcel over to the pet.

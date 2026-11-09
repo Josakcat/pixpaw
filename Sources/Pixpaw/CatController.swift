@@ -129,17 +129,33 @@ final class CatController: ObservableObject {
     /// The gift lying on the floor, waiting for a click.
     private var giftPanel: CatPanel?
 
-    /// A home of its own once it has 500 stars: a little house on the floor
-    /// it walks back to for a nap. You can switch it off, and drag it about.
+    /// A home of its own once it has 500 stars: a little house that pops up
+    /// on the floor when it naps, and folds away a minute after it comes out.
+    /// You can switch it off, keep it out, and drag it about.
     static let homeUnlockAt = 500
     var hasHome: Bool { points >= Self.homeUnlockAt }
     @Published var homeOn = true { didSet { if homeOn != oldValue { refreshHome() } } }
-    /// Where the house stands: its left edge, kept between launches.
+    /// The home stands all the time, as it did before 1.12.
+    @Published var keepsHomeOut = false { didSet { if keepsHomeOut != oldValue { refreshHome(); updateHomeFold() } } }
+    /// Where you last dragged the house: its left edge, kept between launches.
     private(set) var homeX: CGFloat?
-    private var homePanel: CatPanel?
+    @Published private(set) var homeShowing = false
+    private var homePanel: CatPanel? { didSet { homeShowing = homePanel != nil } }
     private var homeLayer: CALayer?
+    /// A home on its way out, until its fold has played.
+    private var foldingHome: CatPanel?
     private var headingHome = false
     private var asleepAtHome = false
+    /// When an empty home folds itself away; checked by the loop, so there is
+    /// no timer of its own to stop.
+    private var homeFoldsAt: Date?
+    private var homeHovered = false
+    /// The home came out for a quiet spell, so it goes when the quiet does.
+    private var homeOutForQuiet = false
+    /// Gone to bed because it should be quiet, and not woken since.
+    private var quietNap = false
+    /// A quiet nap waiting for it to be put down or finish eating.
+    private var pendingQuietNap: QuietBed.Action?
     /// Meals eaten and games played, for the shelf's tally.
     @Published private(set) var meals: Int
     @Published private(set) var plays: Int
@@ -150,6 +166,7 @@ final class CatController: ObservableObject {
     @Published private(set) var points: Int
     @Published var hat: CatAccessory? { didSet { redraw() } }
     @Published var collar: CatAccessory? { didSet { redraw() } }
+    @Published var glasses: CatAccessory? { didSet { redraw() } }
     /// Headphones are connected: the cat wears a pair, in place of its hat.
     @Published var wearsHeadphones = false {
         didSet {
@@ -217,19 +234,23 @@ final class CatController: ObservableObject {
     var hasNotes: (() -> Bool)?
     var onNotes: (() -> Void)?
     var onOpenNotes: (() -> Void)?
-    /// The port of a dev server an agent started that is up now, and
-    /// opening it in the browser.
-    var localServer: (() -> Int?)?
-    var onOpenServer: (() -> Void)?
-    /// The repository whose CI just failed, while there's a run to look at.
-    var failedCI: (() -> String?)?
-    var onOpenFailedCI: (() -> Void)?
     /// Talk to me, in its menu, while that's on.
     var canTalk: (() -> Bool)?
+    /// The key the user bound to one of the droplet's shortcuts ("talk",
+    /// "ask"), spelled for the menu; nil when there's none.
+    var shortcutKey: ((String) -> (key: String, modifiers: NSEvent.ModifierFlags)?)?
     var onTalk: (() -> Void)?
+    /// The "What can I do?" box, with what was typed into the card (or nothing).
+    var onAsk: ((String) -> Void)?
+    /// Right now: what just happened and the buttons for it, newest first,
+    /// worked out (and the old ones dropped) each time it's asked.
+    var suggestions: (() -> [PetSuggestion])?
+    var onSuggestion: ((PetSuggestionKind, PetSuggestionAction) -> Void)?
     var lofiPlaying: Bool { isFriend ? buddy?.lofiPlaying ?? false : lofiVibe }
     /// Start or stop a focus session; the droplet keeps the clock.
     var onFocus: (() -> Void)?
+    /// Opens Settings on the Wardrobe page.
+    var onOpenWardrobe: (() -> Void)?
     /// Files dropped on it, to take to the shelf when it gets there.
     var onDeliver: (([URL]) -> Void)?
     /// Takes files dropped on it to the shelf.
@@ -270,6 +291,11 @@ final class CatController: ObservableObject {
     /// happiness points it earns to the main cat.
     var isFriend = false
     var forwardAward: ((StarSource) -> Void)?
+    /// The all-time counts and days together, from the droplet, for what
+    /// achievements open; and a word when the day's first stars come in.
+    var allTime: (() -> PetAllTime)?
+    var daysTogether: (() -> Int)?
+    var onStarsEarned: (() -> Void)?
     /// Stars earned today, per source and in all, against the daily limits.
     @Published private(set) var starDay: StarDay
     private var lastPetStar = Date.distantPast
@@ -367,6 +393,8 @@ final class CatController: ObservableObject {
     /// When the display link last drew; if it goes quiet, the loop draws.
     private var lastDisplayFrame: CFTimeInterval = 0
     private var catView: CatView?
+    /// Where the pet is on screen, for a panel to open over it.
+    var screenFrame: CGRect? { panel?.frame }
     /// The window the cat is standing on, and where its top-left was last seen.
     private var perch: CatSurface?
     private var perchOrigin: CGPoint?
@@ -474,7 +502,7 @@ final class CatController: ObservableObject {
 
     init(kind: PetKind = .cat, coat: CatCoat, chasesPointer: Bool, roaming: CatRoaming, pouncesOnDrags: Bool, chatty: Bool,
          pets: Int, meals: Int = 0, plays: Int = 0, points: Int = 0, hat: CatAccessory? = nil, collar: CatAccessory? = nil,
-         starDay: StarDay? = nil, giftDay: String = "", stretches: Int = 0, homeX: CGFloat? = nil, lastFed: Date) {
+         glasses: CatAccessory? = nil, starDay: StarDay? = nil, giftDay: String = "", stretches: Int = 0, homeX: CGFloat? = nil, lastFed: Date) {
         self.giftDay = giftDay
         self.homeX = homeX
         self.stretches = stretches
@@ -484,6 +512,7 @@ final class CatController: ObservableObject {
         self.starDay = starDay ?? StarDay(day: StarDay.today)
         self.hat = hat
         self.collar = collar
+        self.glasses = glasses
         self.coat = coat
         self.kind = kind
         self.chatty = chatty
@@ -767,6 +796,7 @@ final class CatController: ObservableObject {
         starDay.counts[source.counter, default: 0] += 1
         starDay.stars += amount
         award(amount)
+        onStarsEarned?()
         if starDay.stars >= StarSource.dailyTotal, !starDay.announcedCap {
             starDay.announcedCap = true
             say(CatLine(text: "That's all the stars for today ⭐ See you tomorrow!", symbol: "star.fill", seconds: 3))
@@ -778,20 +808,59 @@ final class CatController: ObservableObject {
     /// announces (and puts on, if that slot is empty) anything they unlock.
     func award(_ amount: Int) {
         let before = points
-        points += amount
+        noteUnlocks { points += amount }
         if before < Self.homeUnlockAt, points >= Self.homeUnlockAt {
             say(CatLine(text: "500 stars! I have a home of my own now!", symbol: "house.fill", seconds: 4))
             refreshHome()
-        }
-        for item in CatAccessory.allCases where item.unlockAt > before && item.unlockAt <= points {
-            say(CatLine(text: "Unlocked: \(item.title)!", symbol: "gift.fill", seconds: 3))
-            switch item.slot {
-            case .hat where hat == nil: hat = item
-            case .collar where collar == nil: collar = item
-            default: break
-            }
+            // Shown off once; it folds away like any empty home.
+            if homeOn, !isFriend, panel != nil, homePanel == nil { showHome(animated: true) }
         }
         onPersist?()
+    }
+
+    /// Runs `change` and announces anything it unlocks that this pet can
+    /// wear, putting it on when that slot is empty.
+    func noteUnlocks(_ change: () -> Void) {
+        let before = wardrobeProgress
+        change()
+        for item in CatAccessory.newlyUnlocked(before: before, after: wardrobeProgress) where item.fits(wearer) {
+            say(CatLine(text: "Unlocked: \(item.title)!", symbol: "gift.fill", seconds: 3))
+            if worn(in: item.slot) == nil { put(item, in: item.slot) }
+        }
+    }
+
+    /// What opens things to wear: stars (your pet's, for the friend), the
+    /// run of days with stars, all-time counts and days together.
+    var wardrobeProgress: WardrobeProgress {
+        let source = isFriend ? buddy ?? self : self
+        let all = source.allTime?() ?? PetAllTime()
+        let days = source.daysTogether?() ?? 0
+        return WardrobeProgress(stars: wardrobeStars,
+                                streak: all.currentStreak(today: StarDay.today, yesterday: StarDay.yesterday),
+                                bestStreak: all.bestStreak,
+                                counts: Dictionary(uniqueKeysWithValues: PetStat.allCases.map { ($0, all.count($0)) }),
+                                daysTogether: days)
+    }
+
+    /// What this pet is like, for what fits it.
+    var wearer: Wearer {
+        Wearer(isOwn: kind.isOwn, hasNeck: kind.wearsCollars, looksLike: kind.actsLike.rawValue)
+    }
+
+    func worn(in slot: CatAccessory.Slot) -> CatAccessory? {
+        switch slot {
+        case .hat: hat
+        case .face: glasses
+        case .collar: collar
+        }
+    }
+
+    private func put(_ item: CatAccessory?, in slot: CatAccessory.Slot) {
+        switch slot {
+        case .hat: hat = item
+        case .face: glasses = item
+        case .collar: collar = item
+        }
     }
 
     /// Puts on, or takes off with nil, something already unlocked.
@@ -799,11 +868,29 @@ final class CatController: ObservableObject {
     /// your pet's, since every star the friend earns goes to your pet.
     var wardrobeStars: Int { isFriend ? buddy?.points ?? points : points }
 
+    /// Something that is yours already stays wearable, whatever opens it now.
     func wear(_ item: CatAccessory?, in slot: CatAccessory.Slot) {
-        if let item, item.unlockAt > wardrobeStars { return }
-        switch slot {
-        case .hat: hat = item
-        case .collar: collar = item
+        if let item {
+            guard item.slot == slot, item.fits(wearer), item.isUnlocked(wardrobeProgress) || worn(in: slot) == item else { return }
+        }
+        put(item, in: slot)
+        onPersist?()
+    }
+
+    /// Takes off everything it wears.
+    func undress() {
+        hat = nil
+        glasses = nil
+        collar = nil
+        onPersist?()
+    }
+
+    /// Something unlocked for each slot it can wear, or nothing there now and then.
+    func surpriseOutfit() {
+        let progress = wardrobeProgress
+        for slot in CatAccessory.Slot.allCases {
+            let choices = CatAccessory.allCases.filter { $0.slot == slot && $0.fits(wearer) && $0.isUnlocked(progress) }
+            put(choices.isEmpty || Int.random(in: 0..<4) == 0 ? nil : choices.randomElement(), in: slot)
         }
         onPersist?()
     }
@@ -862,9 +949,14 @@ final class CatController: ObservableObject {
         view.startDisplayLink()
         refreshHome()
 
-        timer = Timer.scheduledTimer(withTimeInterval: 1 / Self.fps, repeats: true) { [weak self] _ in
+        // In the common modes, not just the default one: while a menu is
+        // tracking (the card's ⋯ menu, any menu in Droppy) a default-mode
+        // timer stops, the pet freezes mid-step and lurches on once it closes.
+        let timer = Timer(timeInterval: 1 / Self.fps, repeats: true) { [weak self] _ in
             MainActor.assumeIsolated { self?.step() }
         }
+        RunLoop.main.add(timer, forMode: .common)
+        self.timer = timer
         let center = NSWorkspace.shared.notificationCenter
         observers = [
             center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
@@ -902,6 +994,8 @@ final class CatController: ObservableObject {
         removeBowl()
         removeGift()
         removeHome()
+        quietNap = false
+        pendingQuietNap = nil
         endPlay(quietly: true)
         bubble.clear()
         route = nil
@@ -995,23 +1089,73 @@ final class CatController: ObservableObject {
     }
 
     /// A nap until woken (a click, Come here, food, play): in its home when
-    /// it has one, otherwise right where it is.
-    func goHome() {
+    /// it has one, which pops up beside it for the nap, otherwise right where
+    /// it is. `fromLink`: a URL asked, and a link never brings the home out.
+    func goHome(fromLink: Bool = false) {
         guard panel != nil else { return }
         switch mood {
         case .sleeping, .falling, .jumping, .eating, .pouncing: return
         default: break
         }
-        if let door = homeDoor, let base = homePanel?.frame.minY {
-            // Walkers go to the foot of it and climb in when they get there.
-            let target = moves == .anywhere ? door : CGPoint(x: door.x, y: base)
-            planRoute(to: target, on: moves == .anywhere ? nil : floorSurface(near: target))
-            enter(.walking)
-            headingHome = true
-            return
+        // Your own nap: it stays, and so does the home, when a quiet spell ends.
+        quietNap = false
+        pendingQuietNap = nil
+        homeOutForQuiet = false
+        nap(plan: HomeRules.napPlan(hasHome: hasHome, homeOn: homeOn && !isFriend, showing: homePanel != nil, fromLink: fromLink))
+    }
+
+    private func nap(plan: HomeRules.NapPlan) {
+        if case .walkIn(let popsUp) = plan {
+            if popsUp { showHome(animated: true) }
+            if let door = homeDoor, let base = homePanel?.frame.minY {
+                // Walkers go to the foot of it and climb in when they get there.
+                let target = moves == .anywhere ? door : CGPoint(x: door.x, y: base)
+                planRoute(to: target, on: moves == .anywhere ? nil : floorSurface(near: target))
+                enter(.walking)
+                headingHome = true
+                updateHomeFold()
+                return
+            }
         }
         route = nil
         enter(.sleeping)
+    }
+
+    // MARK: Quiet naps
+
+    /// It should be quiet (a call, a shared screen, late at night): to bed by
+    /// itself, after anything it is held for or eating. A pet you sent to nap
+    /// already stays as it is.
+    func napForQuiet(_ action: QuietBed.Action) {
+        pendingQuietNap = nil
+        guard panel != nil, !isFriend, mood != .sleeping, !headingHome else { return }
+        if HomeRules.quietNapWaits(held: mood == .held, eating: mood == .eating || mood == .goingToBowl,
+                                   midAir: isMidAir || mood == .jumping || mood == .pouncing || mood == .climbing) {
+            pendingQuietNap = action
+            return
+        }
+        let wasShowing = homePanel != nil
+        switch action {
+        case .goHome: nap(plan: HomeRules.napPlan(hasHome: hasHome, homeOn: homeOn, showing: wasShowing, fromLink: false))
+        case .napHere: nap(plan: .napHere)
+        }
+        // Set after: the walk there begins with a change of mood.
+        quietNap = true
+        homeOutForQuiet = !wasShowing && homePanel != nil
+    }
+
+    /// The quiet is over: out it comes if it is still in bed for it, and a
+    /// home that came out for the quiet folds at once.
+    func endQuietNap() {
+        pendingQuietNap = nil
+        if quietNap, mood == .sleeping || headingHome { enter(.sitting) }
+        quietNap = false
+        if HomeRules.foldsAfterQuiet(cameOutForQuiet: homeOutForQuiet, keptOut: keepsHomeOut) {
+            foldHome(animated: true)
+        } else {
+            homeOutForQuiet = false
+            updateHomeFold()
+        }
     }
 
     // MARK: Home
@@ -1029,42 +1173,121 @@ final class CatController: ObservableObject {
         CGSize(width: CGFloat(CatArt.homeWidth) * CatSprites.scale, height: CGFloat(CatArt.homeHeight) * CatSprites.scale)
     }
 
-    /// Puts the house up, or takes it down, as the stars and the setting say.
+    /// Takes the house down when the stars or the setting say so, and puts
+    /// it up when it is kept out; otherwise it comes out only for a nap.
     func refreshHome() {
         guard !isFriend, panel != nil, homeOn, hasHome else { return removeHome() }
-        if homePanel == nil {
-            let size = homeSize
-            let home = CatPanel(contentRect: CGRect(origin: .zero, size: size))
-            let view = HomeView(frame: CGRect(origin: .zero, size: size))
-            view.wantsLayer = true
-            let layer = CALayer()
-            layer.frame = view.bounds
-            layer.magnificationFilter = .nearest
-            layer.actions = ["contents": NSNull()]
-            view.layer?.addSublayer(layer)
-            view.onClick = { [weak self] in self?.homeClicked() }
-            view.onDrag = { [weak self] dx in self?.moveHome(by: dx) }
-            home.contentView = view
-            homePanel = home
-            homeLayer = layer
-            // On the floor of the main screen, near the right-hand side to begin with.
-            let area = NSScreen.main?.visibleFrame ?? .zero
-            let floor = floorSurface(near: CGPoint(x: area.midX, y: area.minY))
-            let x = homeX ?? floor.maxX - size.width - 60
-            home.setFrameOrigin(CGPoint(x: min(max(x, floor.minX), floor.maxX - size.width), y: floor.y))
-            homeX = home.frame.minX
-            home.orderFrontRegardless()
-        }
+        if keepsHomeOut, homePanel == nil { showHome(animated: false) }
         drawHome()
     }
 
+    /// Puts the house on the floor: where you last dragged it, otherwise
+    /// beside the pet on the side with room. It pops up with a puff of dust,
+    /// or fades in under Reduce Motion.
+    private func showHome(animated: Bool) {
+        guard homePanel == nil, !isFriend, panel != nil, homeOn, hasHome else { return }
+        let size = homeSize
+        let home = CatPanel(contentRect: CGRect(origin: .zero, size: size))
+        let view = HomeView(frame: CGRect(origin: .zero, size: size))
+        view.wantsLayer = true
+        let layer = CALayer()
+        // Grows from its middle on the floor.
+        layer.anchorPoint = CGPoint(x: 0.5, y: 0)
+        layer.frame = view.bounds
+        layer.magnificationFilter = .nearest
+        layer.actions = ["contents": NSNull(), "opacity": NSNull()]
+        view.layer?.addSublayer(layer)
+        view.onClick = { [weak self] in self?.homeClicked() }
+        view.onDrag = { [weak self] dx in self?.moveHome(by: dx) }
+        view.onPutAway = { [weak self] in self?.putHomeAway() }
+        view.onHover = { [weak self] over in self?.homeHovered = over }
+        home.contentView = view
+        // On the floor of the screen it was dragged to, or of the pet's.
+        let screen = homeX.flatMap { x in NSScreen.screens.first { $0.frame.minX <= x && x < $0.frame.maxX } }
+        let floor = floorSurface(near: screen.map { CGPoint(x: homeX ?? 0, y: $0.visibleFrame.minY) } ?? position)
+        let x = HomeRules.placeX(saved: screen == nil ? nil : homeX, petMinX: position.x, petWidth: CatSprites.catSize.width,
+                                 homeWidth: size.width, floorMinX: floor.minX, floorMaxX: floor.maxX)
+        home.setFrameOrigin(CGPoint(x: x, y: floor.y))
+        homePanel = home
+        homeLayer = layer
+        home.orderFrontRegardless()
+        drawHome()
+        if animated { HomeMotion.popIn(layer, in: view) }
+        updateHomeFold()
+    }
+
+    /// Off the screen at once: Home switched off, the pet put away, deactivated.
     private func removeHome() {
         if asleepAtHome { asleepAtHome = false }
         headingHome = false
-        homePanel?.orderOut(nil)
-        homePanel?.close()
+        homeOutForQuiet = false
+        homeFoldsAt = nil
+        homeHovered = false
+        for home in [homePanel, foldingHome].compactMap({ $0 }) {
+            (home.contentView as? HomeView)?.stopTracking()
+            home.orderOut(nil)
+            home.close()
+        }
+        foldingHome = nil
         homePanel = nil
         homeLayer = nil
+    }
+
+    /// Folds the house away. A pet asleep inside keeps sleeping, on the floor
+    /// where the house stood; one on its way there stops.
+    private func foldHome(animated: Bool) {
+        guard let home = homePanel else { return }
+        if asleepAtHome {
+            asleepAtHome = false
+            if moves != .anywhere { position.y = home.frame.minY }
+            place()
+        }
+        if headingHome {
+            headingHome = false
+            enter(.sitting)
+        }
+        homeOutForQuiet = false
+        homeFoldsAt = nil
+        homeHovered = false
+        (home.contentView as? HomeView)?.stopTracking()
+        let layer = homeLayer
+        homePanel = nil
+        homeLayer = nil
+        guard animated, let layer else {
+            home.orderOut(nil)
+            home.close()
+            return
+        }
+        foldingHome?.close()
+        foldingHome = home
+        HomeMotion.foldAway(layer) { [weak self, weak home] in
+            guard let self, let home, self.foldingHome === home else { return }
+            home.orderOut(nil)
+            home.close()
+            self.foldingHome = nil
+        }
+    }
+
+    /// The × on the house, or the menu's Put the home away.
+    func putHomeAway() {
+        foldHome(animated: true)
+    }
+
+    /// Twice a second: an empty home folds when its minute is up (not while
+    /// the pointer is on it), and a quiet nap that waited goes ahead.
+    private func stepHome() {
+        switch HomeRules.foldStep(now: Date(), deadline: homeFoldsAt, hovering: homeHovered) {
+        case .wait: break
+        case .fold: foldHome(animated: true)
+        case .later(let date): homeFoldsAt = date
+        }
+        if let action = pendingQuietNap { napForQuiet(action) }
+    }
+
+    /// Sets, keeps or clears when an empty home folds.
+    private func updateHomeFold() {
+        homeFoldsAt = HomeRules.foldDeadline(now: Date(), showing: homePanel != nil, keptOut: keepsHomeOut,
+                                             petInside: asleepAtHome, headingHome: headingHome, current: homeFoldsAt)
     }
 
     /// Its own style of home; the doorway open while it sleeps inside, and
@@ -1084,6 +1307,7 @@ final class CatController: ObservableObject {
         asleepAtHome = true
         drawHome()
         place()
+        updateHomeFold()
     }
 
     /// A click on the house: out it comes if it is asleep inside, otherwise
@@ -1177,6 +1401,7 @@ final class CatController: ObservableObject {
         if isStretching { stepStretch() }
         if tick % Int(Self.fps * 10) == 0 { refreshHunger() }
         if let clears = bowlClearsAt, Date() >= clears { removeBowl() }
+        if tick % 6 == 0 { stepHome() }
 
         let mouse = NSEvent.mouseLocation
         if hypot(mouse.x - lastMouse.x, mouse.y - lastMouse.y) > 3 { lastMouseMove = Date() }
@@ -1844,6 +2069,8 @@ final class CatController: ObservableObject {
     private func enter(_ next: CatMood) {
         if next != mood { log?("mood \(mood) -> \(next) at \(position)") }
         if next != .walking { headingHome = false }
+        // Woken, or called off on the way to bed: up until the next quiet.
+        if next != .walking, next != .sleeping { quietNap = false }
         // Picked up or off after something else on the way: no bug at the end.
         if next != .walking, next != .jumping, next != .falling {
             bugRun = false
@@ -1878,6 +2105,7 @@ final class CatController: ObservableObject {
         case .walking, .chasing, .goingToBowl, .jumping, .falling, .hunting, .pouncing, .playing: break
         default: route = nil
         }
+        updateHomeFold()
     }
 
     /// Where it may go: the walking setting, or anywhere for a flier.
@@ -2766,13 +2994,13 @@ final class CatController: ObservableObject {
         guard let catLayer, let effectLayer else { return }
         let special = agentEffect()
         let effectShowing = special != nil || reaction != nil || mood == .happy || mood == .sleeping || (mood == .sitting && (isHungry || musicPlaying || dizzyTicks > 0 || yawnTicks > 0 || focusing || agentWorking || typing || busyMac)) || (mood == .walking && busyMac)
-        let look = "\(CatSprites.shared.version)|\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(wearsHeadphones || lofiVibe)|\(costume ?? "")|\(legSwing)|\(atLaptop)|\(mood == .climbing ? climbSide ?? 0 : 0)"
+        let look = "\(CatSprites.shared.version)|\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(glasses?.rawValue ?? "")|\(wearsHeadphones || lofiVibe)|\(costume ?? "")|\(legSwing)|\(atLaptop)|\(mood == .climbing ? climbSide ?? 0 : 0)"
         if let drawn, drawn.frame == frame, drawn.coat == coat, drawn.right == facesRight, drawn.bob == bob,
            drawn.look == look, !effectShowing, effectLayer.opacity == 0 {
             return
         }
         drawn = (frame, coat, facesRight, bob, look)
-        let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar, headphones: wearsHeadphones || lofiVibe, costume: costume, kind: kind,
+        let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar, glasses: glasses, headphones: wearsHeadphones || lofiVibe, costume: costume, kind: kind,
                                                  swing: legSwing, laptop: atLaptop)
         spriteHeight = sprite.map { CGFloat($0.height) * CatSprites.scale } ?? spriteHeight
         catLayer.contents = sprite
@@ -2845,11 +3073,14 @@ final class CatController: ObservableObject {
     }
 
     /// Files dropped on it: it runs them over beneath the notch, to the shelf.
-    func carry(_ urls: [URL]) {
+    /// Already on its way with some: these go too. `line` replaces the
+    /// usual bubble.
+    func carry(_ urls: [URL], saying line: CatLine? = nil) {
         acceptsDrop = false
         dropHoverSince = nil
         guard !urls.isEmpty else { return }
-        say(CatWords.carrying(urls.count))
+        let urls = (delivering ?? []) + urls
+        say(line ?? CatWords.carrying(urls.count))
         let size = CatSprites.catSize
         let area = (Self.screen(containing: CGPoint(x: position.x + size.width / 2, y: position.y + 1)) ?? NSScreen.main)?.visibleFrame ?? .zero
         delivering = urls
@@ -2893,7 +3124,7 @@ final class CatController: ObservableObject {
         didDrag = false
     }
 
-    /// A long press opened the menu: the press is no longer a pet or a drag,
+    /// A long press opened the card: the press is no longer a pet or a drag,
     /// and a pet already lifted is put back down.
     fileprivate func cancelPress() {
         let lifted = didDrag
@@ -2907,7 +3138,7 @@ final class CatController: ObservableObject {
     fileprivate func mouseDragged(to screenPoint: CGPoint) {
         guard dragOffset != nil else { return }
         // A hand never holds quite still: only a real move picks it up, the
-        // same few points that stop a long press from opening the menu.
+        // same few points that stop a long press from opening the card.
         if !didDrag, hypot(screenPoint.x - pressPoint.x, screenPoint.y - pressPoint.y) <= 4 { return }
         if !didDrag {
             didDrag = true
@@ -3182,21 +3413,76 @@ final class CatPanel: NSPanel {
 }
 
 /// The home on the floor: a click sends the pet in or calls it out; a
-/// drag slides the house along the floor.
+/// drag slides the house along the floor. While the pointer is over it, a
+/// small × in its corner puts it away.
 final class HomeView: NSView {
     var onClick: (@MainActor () -> Void)?
     var onDrag: (@MainActor (CGFloat) -> Void)?
+    var onPutAway: (@MainActor () -> Void)?
+    var onHover: (@MainActor (Bool) -> Void)?
     private var lastX: CGFloat = 0
     private var dragged = false
+    private var pressedClose = false
+    private var tracking: NSTrackingArea?
+    private lazy var closeButton: CALayer = {
+        let button = CALayer()
+        button.frame = closeRect
+        button.cornerRadius = closeRect.width / 2
+        button.backgroundColor = NSColor(white: 0.12, alpha: 0.92).cgColor
+        let mark = CATextLayer()
+        mark.string = "×"
+        mark.font = NSFont.systemFont(ofSize: 13, weight: .semibold)
+        mark.fontSize = 13
+        mark.alignmentMode = .center
+        mark.foregroundColor = NSColor.white.cgColor
+        mark.contentsScale = NSScreen.main?.backingScaleFactor ?? 2
+        mark.frame = CGRect(x: 0, y: 1, width: closeRect.width, height: closeRect.height - 1)
+        button.addSublayer(mark)
+        button.isHidden = true
+        button.actions = ["hidden": NSNull()]
+        button.zPosition = 10
+        return button
+    }()
+
+    /// Top right, inside the house's own rectangle.
+    private var closeRect: CGRect { CGRect(x: bounds.maxX - 20, y: bounds.maxY - 20, width: 18, height: 18) }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+
+    override func updateTrackingAreas() {
+        super.updateTrackingAreas()
+        if let tracking { removeTrackingArea(tracking) }
+        let area = NSTrackingArea(rect: bounds, options: [.mouseEnteredAndExited, .activeAlways, .inVisibleRect], owner: self)
+        addTrackingArea(area)
+        tracking = area
+    }
+
+    /// The house is going: no more hover, and the × with it.
+    func stopTracking() {
+        if let tracking { removeTrackingArea(tracking) }
+        tracking = nil
+        onHover = nil
+        closeButton.isHidden = true
+    }
+
+    override func mouseEntered(with event: NSEvent) { hover(true) }
+    override func mouseExited(with event: NSEvent) { hover(false) }
+
+    private func hover(_ over: Bool) {
+        guard tracking != nil else { return }
+        if closeButton.superlayer == nil { layer?.addSublayer(closeButton) }
+        closeButton.isHidden = !over
+        MainActor.assumeIsolated { onHover?(over) }
+    }
 
     override func mouseDown(with event: NSEvent) {
         lastX = NSEvent.mouseLocation.x
         dragged = false
+        pressedClose = !closeButton.isHidden && closeRect.insetBy(dx: -3, dy: -3).contains(convert(event.locationInWindow, from: nil))
     }
 
     override func mouseDragged(with event: NSEvent) {
+        guard !pressedClose else { return }
         let x = NSEvent.mouseLocation.x
         guard dragged || abs(x - lastX) > 3 else { return }
         dragged = true
@@ -3206,11 +3492,96 @@ final class HomeView: NSView {
     }
 
     override func mouseUp(with event: NSEvent) {
+        if pressedClose {
+            pressedClose = false
+            guard closeRect.insetBy(dx: -3, dy: -3).contains(convert(event.locationInWindow, from: nil)) else { return }
+            return MainActor.assumeIsolated { onPutAway?() }
+        }
         if !dragged { MainActor.assumeIsolated { onClick?() } }
     }
 
     override func resetCursorRects() {
         addCursorRect(bounds, cursor: .openHand)
+        addCursorRect(closeRect, cursor: .pointingHand)
+    }
+}
+
+/// The home popping up with a puff of dust, and folding away; a fade under
+/// Reduce Motion. Core Animation runs it off the main thread.
+@MainActor
+enum HomeMotion {
+    static let popTime: CFTimeInterval = 0.3
+
+    private static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
+
+    static func popIn(_ layer: CALayer, in view: NSView) {
+        if reduceMotion {
+            let fade = CABasicAnimation(keyPath: "opacity")
+            fade.fromValue = 0
+            fade.toValue = 1
+            fade.duration = popTime
+            layer.add(fade, forKey: "pop")
+            return
+        }
+        let grow = CAKeyframeAnimation(keyPath: "transform.scale")
+        grow.values = [0.2, 1.08, 0.97, 1]
+        grow.keyTimes = [0, 0.6, 0.85, 1]
+        grow.duration = popTime
+        grow.timingFunction = CAMediaTimingFunction(name: .easeOut)
+        layer.add(grow, forKey: "pop")
+        puff(in: view)
+    }
+
+    /// Squashes down to the floor (or fades), then `done`.
+    static func foldAway(_ layer: CALayer, done: @escaping @MainActor () -> Void) {
+        CATransaction.begin()
+        CATransaction.setCompletionBlock { MainActor.assumeIsolated { done() } }
+        let fade = CABasicAnimation(keyPath: "opacity")
+        fade.toValue = 0
+        if reduceMotion {
+            fade.duration = popTime
+            layer.add(fade, forKey: "fold")
+        } else {
+            let squash = CABasicAnimation(keyPath: "transform")
+            squash.toValue = CATransform3DMakeScale(1.1, 0.05, 1)
+            squash.timingFunction = CAMediaTimingFunction(name: .easeIn)
+            let group = CAAnimationGroup()
+            fade.beginTime = 0.12
+            fade.duration = 0.13
+            squash.duration = 0.25
+            group.animations = [squash, fade]
+            group.duration = 0.25
+            layer.add(group, forKey: "fold")
+        }
+        layer.opacity = 0
+        CATransaction.commit()
+    }
+
+    /// Little grey pixels kicked up at both corners of the house.
+    private static func puff(in view: NSView) {
+        guard let root = view.layer else { return }
+        let pixel = CatSprites.scale
+        let dust = NSColor(white: 0.82, alpha: 0.9).cgColor
+        for (side, x) in [(-1.0, pixel * 3), (1.0, view.bounds.maxX - pixel * 4)] {
+            for (i, rise) in [(0, 2.0), (1, 4.0), (2, 1.0)] {
+                let speck = CALayer()
+                speck.backgroundColor = dust
+                speck.frame = CGRect(x: x, y: CGFloat(i) * pixel, width: pixel, height: pixel)
+                speck.opacity = 0
+                root.addSublayer(speck)
+                let drift = CABasicAnimation(keyPath: "position")
+                drift.toValue = CGPoint(x: speck.position.x + side * pixel * CGFloat(2 + i), y: speck.position.y + pixel * rise)
+                let fade = CAKeyframeAnimation(keyPath: "opacity")
+                fade.values = [1, 0.8, 0]
+                let group = CAAnimationGroup()
+                group.animations = [drift, fade]
+                group.duration = 0.45
+                CATransaction.begin()
+                CATransaction.setCompletionBlock { speck.removeFromSuperlayer() }
+                speck.add(group, forKey: "puff")
+                CATransaction.commit()
+            }
+        }
     }
 }
 
@@ -3279,12 +3650,18 @@ final class CatView: NSView {
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
-    /// Hold on the cat for half a second to get its menu.
+    /// Hold on the cat for half a second to get its card.
     private var pressTimer: Timer?
     private var pressStart: CGPoint = .zero
+    /// The card was open when this press began (its click-away closed it
+    /// a moment ago), so the long press closes it rather than reopening it.
+    private var cardOpenAtPress = false
 
     override func mouseDown(with event: NSEvent) {
+        // Control-click is a right-click on a Mac.
+        if event.modifierFlags.contains(.control) { return rightMouseDown(with: event) }
         pressStart = NSEvent.mouseLocation
+        cardOpenAtPress = MainActor.assumeIsolated { PetCard.shared.isOpen || PetCard.shared.justClosed }
         MainActor.assumeIsolated { controller?.mouseDown(at: pressStart) }
         pressTimer?.invalidate()
         let timer = Timer(timeInterval: 0.45, repeats: false) { [weak self] _ in
@@ -3296,7 +3673,7 @@ final class CatView: NSView {
 
     override func mouseDragged(with event: NSEvent) {
         let now = NSEvent.mouseLocation
-        // A real drag, not a wobbly hold, cancels the menu.
+        // A real drag, not a wobbly hold, cancels the card.
         if hypot(now.x - pressStart.x, now.y - pressStart.y) > 4 {
             pressTimer?.invalidate()
             pressTimer = nil
@@ -3314,258 +3691,132 @@ final class CatView: NSView {
         pressTimer = nil
         guard let controller else { return }
         MainActor.assumeIsolated { controller.cancelPress() }
-        openCard()
+        toggleCard(wasOpen: cardOpenAtPress)
     }
 
-    /// A click, while the card opens on a click: open it, or close it.
-    func toggleCard() {
+    /// A long press, a right-click, or a click while the card opens on a
+    /// click: open the card, or close it.
+    func toggleCard(wasOpen: Bool? = nil) {
         MainActor.assumeIsolated {
-            // The click that closed it (a click elsewhere) doesn't reopen it.
-            if PetCard.shared.isOpen || PetCard.shared.justClosed { PetCard.shared.close() } else { openCard() }
+            // The press that closed it (its click-away) doesn't reopen it.
+            if wasOpen ?? (PetCard.shared.isOpen || PetCard.shared.justClosed) { PetCard.shared.close() } else { openCard() }
         }
     }
 
     private func openCard() {
-        guard let controller, let menu = makeMenu() else { return }
-        // The card, over the pet; the same items, the same actions.
+        guard let controller, let state = menuState() else { return }
+        // The card, over the pet: the menu's own items, the same actions;
+        // its ⋯ button pops up the menu itself.
         let (name, status, stars) = MainActor.assumeIsolated {
             (controller.kind.title, controller.isAsleep ? "Asleep" : controller.isHungry ? "Hungry" : controller.focusing ? "Focusing" : "Doing fine",
              controller.wardrobeStars)
         }
-        guard let frame = window?.frame else { _ = menu.popUp(positioning: nil, at: CGPoint(x: bounds.midX, y: bounds.maxY - 4), in: self); return }
+        let groups = PetMenu.groups(state)
+        guard let frame = window?.frame else {
+            popUpMenu(groups)
+            return
+        }
+        let model = PetCardModel(PetCardLayout(groups, suggestions: state.suggestions), name: name, status: status, stars: stars)
         MainActor.assumeIsolated {
             let style = controller.cardStyle?() ?? (look: PetCardLook.droppy, level: 0.5)
-            PetCard.shared.show(cardModel(from: menu, name: name, status: status, stars: stars), over: frame, target: self,
-                                talk: #selector(talk), look: style.look, level: style.level)
+            PetCard.shared.show(model, over: frame, target: self, look: style.look, level: style.level,
+                                more: { [weak self] in self?.popUpMenu(groups) }) { [weak controller] text in
+                controller?.onAsk?(text)
+            }
         }
     }
 
-    /// A right-click: the plain menu, as before.
+    /// A right-click (or control-click) is a long press: the card, or
+    /// closing it when it's open.
     override func rightMouseDown(with event: NSEvent) {
         pressTimer?.invalidate()
         pressTimer = nil
         MainActor.assumeIsolated { controller?.cancelPress() }
-        _ = makeMenu()?.popUp(positioning: nil, at: CGPoint(x: bounds.midX, y: bounds.maxY - 4), in: self)
+        toggleCard()
     }
 
-    /// The card's model, read off the menu: what can't wait first, six
-    /// tiles for what you do most, rows for the rest.
-    private func cardModel(from menu: NSMenu, name: String, status: String, stars: Int) -> PetCardModel {
-        var urgent: [NSMenuItem] = [], sections: [String: [NSMenuItem]] = [:], loose: [NSMenuItem] = []
-        var section: String?
-        var pastSections = false
-        for item in menu.items {
-            if item.isSectionHeader { section = item.title; continue }
-            if item.isSeparatorItem { if section != nil { pastSections = true }; continue }
-            if pastSections { loose.append(item) } else if let section { sections[section, default: []].append(item) } else { urgent.append(item) }
-        }
-        func card(_ item: NSMenuItem) -> PetCardItem {
-            PetCardItem(title: item.title, symbol: item.identifier?.rawValue, action: item.action,
-                        represented: item.representedObject as? String, badge: item.badge?.stringValue,
-                        enabled: item.isEnabled, checked: item.state == .on, children: item.submenu.map(PetCardItem.items(of:)))
-        }
-        let all = sections.values.flatMap { $0 }
-        let tileActions: [Selector] = [#selector(feed), #selector(nap), #selector(wake), #selector(focus), #selector(lofi), #selector(pauseLofi), #selector(askSign)]
-        var tiles = all.filter { $0.action.map(tileActions.contains) ?? false }
-        if let play = all.first(where: { $0.title == "Play" && $0.submenu != nil }) { tiles.insert(play, at: min(1, tiles.count)) }
-        // Feed, Play, Nap, Focus, Lofi, Note, in that order.
-        let order: [Selector] = [#selector(feed), #selector(nap), #selector(wake), #selector(focus), #selector(lofi), #selector(pauseLofi), #selector(askSign)]
-        tiles.sort { a, b in
-            let ia = a.submenu != nil ? 1 : (order.firstIndex { $0 == a.action }.map { $0 * 2 } ?? 99)
-            let ib = b.submenu != nil ? 1 : (order.firstIndex { $0 == b.action }.map { $0 * 2 } ?? 99)
-            return ia < ib
-        }
-        var rows: [NSMenuItem] = []
-        if let droppy = sections["Ask me"]?.first(where: { $0.submenu != nil }) { rows.append(droppy) }
-        if let meetings = sections["Meetings"], !meetings.isEmpty {
-            let inner = NSMenu()
-            inner.autoenablesItems = false
-            meetings.forEach { $0.menu?.removeItem($0); inner.addItem($0) }
-            let entry = NSMenuItem(title: "Meetings", action: nil, keyEquivalent: "")
-            entry.identifier = NSUserInterfaceItemIdentifier("video")
-            entry.submenu = inner
-            rows.append(entry)
-        }
-        // The rest of Care and Work: a treat, stretching, the note done.
-        let used = Set(tiles.map(ObjectIdentifier.init))
-        rows += (sections["Care"] ?? []).filter { !used.contains(ObjectIdentifier($0)) && $0.submenu == nil }
-        rows += (sections["Work"] ?? []).filter { !used.contains(ObjectIdentifier($0)) }
-        rows += loose
-        return PetCardModel(name: name, status: status, stars: stars,
-                            canTalk: sections["Ask me"]?.contains { $0.action == #selector(talk) } ?? false,
-                            urgent: urgent.map(card), tiles: tiles.map(card), rows: rows.map(card))
+    /// The full menu, every item in it, for the keyboard and VoiceOver:
+    /// the card's ⋯ button and VO-Shift-M on the pet.
+    private func popUpMenu(_ groups: [PetMenuGroup]? = nil) {
+        guard let groups = groups ?? menuState().map(PetMenu.groups) else { return }
+        let menu = makeMenu(groups)
+        // Droppy's own card surface is dark whatever the system's mode; the menu matches it.
+        // The glass looks follow the system, as the menu already does.
+        if MainActor.assumeIsolated({ controller?.cardStyle?().look }) == .droppy { menu.appearance = NSAppearance(named: .darkAqua) }
+        _ = menu.popUp(positioning: nil, at: CGPoint(x: bounds.midX, y: bounds.maxY - 4), in: self)
     }
 
-    /// The pet's menu, as it is right now.
-    private func makeMenu() -> NSMenu? {
+    // VoiceOver: the pet is a button; pressing it opens the card, and its
+    // menu (VO-Shift-M) is the full menu, every item in it.
+    override func isAccessibilityElement() -> Bool { true }
+    override func accessibilityRole() -> NSAccessibility.Role? { .button }
+    override func accessibilityLabel() -> String? { MainActor.assumeIsolated { controller?.kind.title } }
+    override func accessibilityPerformPress() -> Bool { openCard(); return true }
+    override func accessibilityPerformShowMenu() -> Bool { popUpMenu(); return true }
+
+    private func makeMenu(_ groups: [PetMenuGroup]) -> NSMenu { .pet(groups, target: self) }
+
+    /// What the pet's menu shows right now, read off the pet.
+    private func menuState() -> PetMenuState? {
         guard let controller else { return nil }
-        let menu = NSMenu()
-        menu.autoenablesItems = false
-        // `badge`: what the item is at now, on its right ("25 min", "Hungry").
-        func item(_ title: String, _ symbol: String, _ action: Selector, badge: String? = nil) -> NSMenuItem {
-            let item = NSMenuItem(title: title, action: action, keyEquivalent: "")
-            item.target = self
-            item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-            item.identifier = NSUserInterfaceItemIdentifier(symbol)
-            if let badge, !badge.isEmpty { item.badge = NSMenuItemBadge(string: badge) }
-            return item
-        }
-        func submenu(_ title: String, _ symbol: String, badge: String? = nil, _ items: [NSMenuItem]) -> NSMenuItem {
-            let entry = NSMenuItem(title: title, action: nil, keyEquivalent: "")
-            entry.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
-            entry.identifier = NSUserInterfaceItemIdentifier(symbol)
-            if let badge { entry.badge = NSMenuItemBadge(string: badge) }
-            let inner = NSMenu()
-            inner.autoenablesItems = false
-            items.forEach(inner.addItem)
-            entry.submenu = inner
-            return entry
-        }
-        let state = MainActor.assumeIsolated {
-            (meeting: controller.joinTitle, hungry: controller.isHungry, asleep: controller.isAsleep,
-             home: controller.hasHome && controller.homeOn, focusing: controller.focusing, onBreak: controller.onBreak,
-             focus: controller.focusLabel?(), lofi: controller.lofiLabel?(), lofiOn: controller.lofiPlaying,
-             note: controller.signIsNote, friend: controller.buddy != nil, games: controller.kind.actsLike.games,
-             playing: controller.toyKind != nil || controller.fetching, server: controller.localServer?(),
-             failedCI: controller.failedCI?(), talks: controller.canTalk?() ?? false,
-             notes: controller.notesLabel?(), notesKept: controller.hasNotes?() ?? false, takesNotes: controller.onNotes != nil,
-             droppy: controller.droppyTools?() ?? [], droppyFocus: controller.droppyFocusing?() ?? false)
-        }
-
-        // What can't wait comes first, together: the app your agent just
-        // started, a push whose checks failed, a meeting about to start.
-        if let port = state.server {
-            menu.addItem(item("Open localhost:\(port)", "safari", #selector(openServer)))
-        }
-        if let repo = state.failedCI {
-            menu.addItem(item("See why \(repo)'s CI failed", "xmark.octagon", #selector(openFailedCI)))
-        }
-        if let meeting = state.meeting {
-            menu.addItem(item("Join “\(meeting)”", "video.fill", #selector(joinMeeting)))
-        }
-        if !menu.items.isEmpty { menu.addItem(.separator()) }
-
-        // Ask me: talking to it, and Droppy's own tools it runs for you.
-        let droppy = DroppyTool.inMenu.filter(state.droppy.contains)
-        if state.talks || !droppy.isEmpty {
-            menu.addItem(.sectionHeader(title: "Ask me"))
-            if state.talks { menu.addItem(item("Talk to me", "mic.fill", #selector(talk))) }
-            if !droppy.isEmpty {
-                menu.addItem(submenu("Droppy", "drop.fill", droppy.map { tool in
-                    let entry = item(tool.title, tool.symbol, #selector(droppyTool(_:)))
-                    entry.representedObject = tool.rawValue
-                    return entry
-                }))
+        return MainActor.assumeIsolated {
+            @MainActor func shortcut(_ id: String) -> PetMenuShortcut? {
+                controller.shortcutKey?(id).map { key in
+                    PetMenuShortcut(key: key.key, control: key.modifiers.contains(.control), option: key.modifiers.contains(.option),
+                                    shift: key.modifiers.contains(.shift), command: key.modifiers.contains(.command))
+                }
             }
-        }
-
-        menu.addItem(.sectionHeader(title: "Care"))
-        menu.addItem(item("Feed", "fork.knife", #selector(feed), badge: state.hungry ? "Hungry" : nil))
-        menu.addItem(item("Give a treat", "fish.fill", #selector(treat)))
-        menu.addItem(state.asleep ? item("Wake up", "sun.max", #selector(wake))
-                     : state.home ? item("Go home for a nap", "house.fill", #selector(nap)) : item("Nap", "moon.zzz", #selector(nap)))
-        // Only the games this one plays, its own toy first.
-        var toys: [NSMenuItem] = state.games.map { game in
-            let entry = item(game.title, game.symbol, #selector(playGame(_:)))
-            entry.representedObject = game.rawValue
-            return entry
-        }
-        if state.friend {
-            toys.append(.separator())
-            toys.append(item("Rock, paper, scissors", "hand.raised.fingers.spread", #selector(playHands)))
-        }
-        if state.playing {
-            toys.append(.separator())
-            toys.append(item("Stop playing", "stop.circle", #selector(stopPlaying)))
-        }
-        menu.addItem(submenu("Play", "gamecontroller", toys))
-
-        // Work: focus and its breaks, lofi, the note on its sign.
-        menu.addItem(.sectionHeader(title: "Work"))
-        if state.droppyFocus {
-            // Droppy keeps the time: only Droppy can stop its Pomodoro.
-            let entry = item("Focusing with Droppy", "timer", #selector(focus))
-            entry.isEnabled = false
-            menu.addItem(entry)
-        } else {
-            menu.addItem(state.focusing ? item("Stop focus", "stop.circle", #selector(focus), badge: state.focus)
-                     : state.onBreak ? item("Skip the break", "forward.end", #selector(focus), badge: state.focus)
-                     : item("Focus", "timer", #selector(focus), badge: state.focus))
-        }
-        menu.addItem(item("Stretch with me", "figure.cooldown", #selector(stretch)))
-        menu.addItem(state.lofiOn ? item("Pause lofi", "pause.circle", #selector(pauseLofi))
-                     : item("Play lofi", "headphones", #selector(lofi), badge: state.lofi))
-        menu.addItem(item("Add a note…", "signpost.right", #selector(askSign)))
-        if state.note {
-            menu.addItem(item("Done with this note", "checkmark.circle", #selector(dropSign)))
-        }
-
-        // Meetings: joining one (Droppy's, unless one is offered up top),
-        // today's list, and the pet's notes of one.
-        var meetings: [NSMenuItem] = []
-        if state.meeting == nil, state.droppy.contains(.joinMeeting) {
-            let entry = item("Join the next meeting", "video", #selector(droppyTool(_:)))
-            entry.representedObject = DroppyTool.joinMeeting.rawValue
-            meetings.append(entry)
-        }
-        if state.droppy.contains(.todaysMeetings) {
-            let entry = item("Today's meetings", "calendar", #selector(droppyTool(_:)))
-            entry.representedObject = DroppyTool.todaysMeetings.rawValue
-            meetings.append(entry)
-        }
-        if state.takesNotes {
-            meetings.append(state.notes != nil ? item("Stop meeting notes", "stop.circle.fill", #selector(meetingNotes), badge: state.notes)
-                            : item("Take meeting notes", "waveform.badge.mic", #selector(meetingNotes)))
-            if state.notesKept, state.notes == nil {
-                meetings.append(item("Open the last meeting notes", "doc.text", #selector(openNotes)))
+            let tools = controller.droppyTools?() ?? []
+            let now = Date()
+            var state = PetMenuState()
+            state.suggestions = (controller.suggestions?() ?? []).map { suggestion in
+                PetMenuState.Suggestion(line: PetSuggestions.line(suggestion, now: now), left: PetSuggestions.left(suggestion, now: now),
+                                        buttons: suggestion.actions.map { action in
+                                            .init(menu: action.menu(suggestion), button: action.button(port: suggestion.port), symbol: action.symbol,
+                                                  id: "\(suggestion.kind.rawValue).\(action.rawValue)")
+                                        })
             }
-        }
-        if !meetings.isEmpty {
-            menu.addItem(.sectionHeader(title: "Meetings"))
-            meetings.forEach(menu.addItem)
-        }
-
-        menu.addItem(.separator())
-        var captures = [item("Photo", "camera.fill", #selector(photo)), item("GIF", "film", #selector(recordGIF))]
-        if state.droppy.contains(.captureScrolling) {
-            // Droppy's: you pick the window or area, and it scrolls it.
-            captures.append(item("Scrolling capture", "camera.viewfinder", #selector(capturePage)))
-        } else if PageCapture.browserIsOpen {
-            captures.append(item("Whole page", "camera.viewfinder", #selector(capturePage)))
-        }
-        menu.addItem(submenu("Capture", "camera", captures))
-
-        let (points, worn, collars) = MainActor.assumeIsolated {
-            (controller.wardrobeStars, [controller.hat, controller.collar], controller.kind.wearsCollars)
-        }
-        let wardrobe = NSMenuItem(title: "Wardrobe", action: nil, keyEquivalent: "")
-        wardrobe.image = NSImage(systemSymbolName: "tshirt", accessibilityDescription: nil)
-        wardrobe.badge = NSMenuItemBadge(string: "\(points) ★")
-        let clothes = NSMenu()
-        clothes.autoenablesItems = false
-        // Only a character that has a collar drawn for it is offered one.
-        let slots: [(CatAccessory.Slot, String)] = collars ? [(.hat, "No hat"), (.collar, "No collar")] : [(.hat, "No hat")]
-        for (slot, none) in slots {
-            let off = NSMenuItem(title: none, action: #selector(wearItem(_:)), keyEquivalent: "")
-            off.target = self
-            off.representedObject = slot == .hat ? "hat:" : "collar:"
-            off.state = worn[slot == .hat ? 0 : 1] == nil ? .on : .off
-            clothes.addItem(off)
-            for item in CatAccessory.allCases where item.slot == slot {
-                let unlocked = item.unlockAt <= points
-                let entry = NSMenuItem(title: unlocked ? item.title : "\(item.title) (at \(item.unlockAt) ★)", action: #selector(wearItem(_:)), keyEquivalent: "")
-                entry.target = self
-                entry.representedObject = (slot == .hat ? "hat:" : "collar:") + item.rawValue
-                entry.isEnabled = unlocked
-                entry.state = worn.contains(item) ? .on : .off
-                clothes.addItem(entry)
+            state.talks = controller.canTalk?() ?? false
+            state.talkKey = shortcut("talk")
+            state.askKey = shortcut("ask")
+            state.droppy = DroppyTool.inMenu.filter(tools.contains).map { .init(title: $0.title, symbol: $0.symbol, id: $0.rawValue) }
+            state.hungry = controller.isHungry
+            state.asleep = controller.isAsleep
+            state.home = controller.hasHome && controller.homeOn
+            state.homeOut = controller.homeShowing
+            state.games = controller.kind.actsLike.games.map { .init(title: $0.title, symbol: $0.symbol, id: $0.rawValue) }
+            state.friend = controller.buddy != nil
+            state.playing = controller.toyKind != nil || controller.fetching
+            state.droppyFocus = controller.droppyFocusing?() ?? false
+            state.focusing = controller.focusing
+            state.onBreak = controller.onBreak
+            state.focus = controller.focusLabel?()
+            state.lofiOn = controller.lofiPlaying
+            state.lofi = controller.lofiLabel?()
+            state.note = controller.signIsNote
+            state.join = controller.joinTitle == nil && tools.contains(.joinMeeting)
+            state.todaysMeetings = tools.contains(.todaysMeetings)
+            state.takesNotes = controller.onNotes != nil
+            state.notes = controller.notesLabel?()
+            state.notesKept = controller.hasNotes?() ?? false
+            state.scrollingCapture = tools.contains(.captureScrolling)
+            state.wholePage = !state.scrollingCapture && PageCapture.browserIsOpen
+            // A place it has nothing drawn for (a dog's neck) is left out.
+            let progress = controller.wardrobeProgress, wearer = controller.wearer
+            state.places = [(CatAccessory.Slot.hat, "Head", "No hat", "crown"), (.face, "Face", "No glasses", "eyeglasses"),
+                            (.collar, "Neck", "No collar", "lanyardcard")].compactMap { slot, title, none, symbol in
+                let fitting = CatAccessory.allCases.filter { $0.slot == slot && $0.fits(wearer) }
+                guard !fitting.isEmpty else { return nil }
+                let worn = controller.worn(in: slot)
+                return PetMenuState.Place(title: title, symbol: symbol, none: none, noneID: "\(slot.rawValue):",
+                                          things: fitting.filter { $0.isUnlocked(progress) || worn == $0 }.map {
+                                              .init(title: $0.title, id: "\(slot.rawValue):\($0.rawValue)", worn: worn == $0)
+                                          },
+                                          next: CatAccessory.next(in: slot, for: wearer, progress).map { "Next: \($0.title), \($0.whatsLeft(progress))" })
             }
-            if slot == .hat, collars { clothes.addItem(.separator()) }
+            state.stars = controller.wardrobeStars
+            return state
         }
-        wardrobe.submenu = clothes
-        wardrobe.identifier = NSUserInterfaceItemIdentifier("tshirt")
-        menu.addItem(wardrobe)
-        return menu
     }
 
     @objc private func feed() { MainActor.assumeIsolated { controller?.feed() } }
@@ -3583,14 +3834,19 @@ final class CatView: NSView {
         guard let tool = (sender.representedObject as? String).flatMap(DroppyTool.init(rawValue:)) else { return }
         MainActor.assumeIsolated { controller?.onDroppyTool?(tool) }
     }
-    @objc private func joinMeeting() { MainActor.assumeIsolated { controller?.joinMeeting() } }
-    @objc private func openServer() { MainActor.assumeIsolated { controller?.onOpenServer?() } }
     @objc private func meetingNotes() { MainActor.assumeIsolated { controller?.onNotes?() } }
     @objc private func openNotes() { MainActor.assumeIsolated { controller?.onOpenNotes?() } }
     @objc private func talk() { MainActor.assumeIsolated { controller?.onTalk?() } }
-    @objc private func openFailedCI() { MainActor.assumeIsolated { controller?.onOpenFailedCI?() } }
+    @objc private func ask() { MainActor.assumeIsolated { controller?.onAsk?("") } }
+    @objc private func runSuggestion(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
+        let parts = value.split(separator: ".", maxSplits: 1).map(String.init)
+        guard parts.count == 2, let kind = PetSuggestionKind(rawValue: parts[0]), let action = PetSuggestionAction(rawValue: parts[1]) else { return }
+        MainActor.assumeIsolated { controller?.onSuggestion?(kind, action) }
+    }
     @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
     @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
+    @objc private func putHomeAway() { MainActor.assumeIsolated { controller?.putHomeAway() } }
     @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }
     @objc private func playGame(_ sender: NSMenuItem) {
         guard let game = (sender.representedObject as? String).flatMap(PetGame.init(rawValue:)) else { return }
@@ -3600,8 +3856,9 @@ final class CatView: NSView {
     @objc private func wearItem(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }
         let parts = value.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
-        let slot: CatAccessory.Slot = parts.first == "hat" ? .hat : .collar
+        guard let slot = parts.first.flatMap({ CatAccessory.Slot(rawValue: String($0)) }) else { return }
         let item = parts.count > 1 ? CatAccessory(rawValue: String(parts[1])) : nil
         MainActor.assumeIsolated { controller?.wear(item, in: slot) }
     }
+    @objc private func openWardrobe() { MainActor.assumeIsolated { controller?.onOpenWardrobe?() } }
 }

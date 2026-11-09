@@ -20,11 +20,28 @@ your desktop and talks to you. A Droplet for
   Accessibility to find the bar).
 - Grooms, purrs when petted, pounces on files you drag, and dangles like a
   real cat when you pick it up.
-- Hold it for half a second (or click it, in Settings) for its card: how it's
-  doing, Feed, Play, Nap, Focus, Lofi and a note as big buttons, Talk to me,
-  and rows (Droppy, Meetings, Capture, Wardrobe) that open beside it as you
-  point. Its look is Droppy's theme or a glass of your own. A right-click
-  gives the plain menu.
+- Hold it for half a second or right-click it (or click it, in Settings) for
+  its card: how it's doing, Feed, Play, Nap, Focus, Lofi and a note as big
+  buttons, Talk to me, and rows (Droppy, Meetings, Capture, Wardrobe) that
+  open beside it as you point. Its look is Droppy's theme or a glass of your
+  own. The card's ⋯ button gives the full menu, every item in it, for the
+  keyboard and VoiceOver.
+- What can I do?: a small box over your pet (Ask me in its menu, the 🔍 on
+  its card, typing while the card is open, or Control-Option-/). Type what you
+  want and it finds it among your pet's commands and Droppy's; "note buy milk"
+  goes straight on its sign. Droppy's search is asked only while you type, and
+  nothing that turns off, deletes, sleeps or quits ever shows, nor web or
+  Store results.
+- Right now: one line on the card for what just happened (a screenshot, a
+  meeting about to start, CI failing…) with a button for what you'd likely do
+  next. It never runs one itself.
+- Beside the notch: Off, Moments (it comes out only when something happens:
+  an agent needs you or is done, a long command or CI, its focus timer) or
+  Always, and a light in the wings while something runs (blue, amber, mint,
+  red, violet). Droppy's own music, timers and meetings always go first.
+- Its home comes out for naps, with a puff of dust, and folds away a minute
+  after it wakes (× to put it away sooner, or keep it out in Settings → Home).
+  In a call, or late at night once you've been away, it goes home by itself.
 - Says good morning the first time it sees you each morning, with your first event of the day.
 - Celebrates your birthday with confetti and a party hat.
 - From midnight to 5 am it wears a nightcap and, once a night, tells you it's late.
@@ -93,7 +110,10 @@ your desktop and talks to you. A Droplet for
 
 **Little extras**
 - Happiness stars (petting, meals, play, catches, stretches; up to 30 a day)
-  unlock pixel hats and collars, and at 500 a home of its own.
+  unlock pixel hats, glasses and collars, and at 500 a home of its own. A
+  headset, a pencil, a tie, a name badge and a sprout are earned by working
+  together (focus rounds, notes done, bugs caught, days together, a streak).
+  The Wardrobe page shows what's worn and how far each locked thing is.
 - A hunger meter and a food bowl.
 - Synthesised sounds (meow, purr, buzz, bark, squeak and more); no sound files. Pets you draw can bring sounds of their own.
 - A shelf widget with its mood, stars, coats and quick controls.
@@ -114,7 +134,10 @@ your desktop and talks to you. A Droplet for
 | ![What it's working on](Assets/Screenshot-18.png) | ![Talk to it](Assets/Screenshot-19.png) |
 | ![Safer with your agents](Assets/Screenshot-20.png) | ![Walks on your Dock](Assets/Screenshot-21.png) |
 | ![Your pet's card](Assets/Screenshot-22.png) | ![Droppy's assistant](Assets/Screenshot-23.png) |
-| ![A pig](Assets/Screenshot-24.png) | |
+| ![A pig](Assets/Screenshot-24.png) | ![A bigger Wardrobe](Assets/Screenshot-25.png) |
+| ![A home for naps](Assets/Screenshot-26.png) | ![What can I do?](Assets/Screenshot-27.png) |
+| ![Answer your agents](Assets/Screenshot-28.png) | ![Your pet's card, one click away](Assets/Screenshot-29.png) |
+| ![A light while agents work](Assets/Screenshot-30.png) | |
 
 Everything runs on your Mac unless you choose Claude for meeting summaries
 (the transcript goes to Anthropic) or CI after a push (your `gh` command asks
@@ -279,10 +302,10 @@ also has a field for your own words: your answer to a question, like Claude's
 ## Links for scripts and Shortcuts
 
 `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…`): `show`, `hide`,
-`come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|stop` (`play?toy=hands`: rock, paper, scissors with its friend), `wear?hat=…&collar=…`,
+`come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|stop` (`play?toy=hands`: rock, paper, scissors with its friend), `wear?hat=…&collar=…&glasses=…`,
 `quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
 `note?text=…`, `join` (your next video call), `countdown?title=…&date=2026-12-24`,
-`capture` (the whole page in your browser), `meeting` (stops meeting notes; starting them, like Talk to me and lofi, takes a click in Pixpaw), `gif` (five seconds of your pet as a GIF), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `agent?name=…&state=tool-done&tool=Bash&outcome=ok|failed` and `agent?name=…&state=helper&event=start|done&id=…` (used by the hooks for long commands and helpers), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
+`focus?minutes=25` or `focus?stop` (a focus session, without lofi), `meeting` (stops meeting notes; starting them, like Talk to me, lofi and a page capture, takes a click in Pixpaw), `gif` (five seconds of your pet as a GIF), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `agent?name=…&state=tool-done&tool=Bash&outcome=ok|failed` and `agent?name=…&state=helper&event=start|done&id=…` (used by the hooks for long commands and helpers), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
 
 ## Art

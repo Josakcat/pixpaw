@@ -40,7 +40,7 @@ enum PetPhoto {
         }
 
         // The pet, sitting, twenty times its pixel size, feet on the floor.
-        if let sprite = CatSprites.shared.image(.sit, coat: cat.coat, hat: cat.hat, collar: cat.collar,
+        if let sprite = CatSprites.shared.image(.sit, coat: cat.coat, hat: cat.hat, collar: cat.collar, glasses: cat.glasses,
                                                 headphones: cat.wearsHeadphones, costume: cat.costume, kind: cat.kind) {
             let scale: CGFloat = 20
             let size = CGSize(width: CGFloat(sprite.width) * scale, height: CGFloat(sprite.height) * scale)

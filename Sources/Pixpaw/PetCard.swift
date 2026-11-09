@@ -1,13 +1,15 @@
-// droppykit-lint: allow-file own-window: the pet's card, a small non-activating panel on Droppy's own panel surface that opens over the pet on a long press or a click (the user's choice), with its submenus as panels beside it; closes on Escape, a click elsewhere (a mouse-click monitor, only while it is open) or once something in it is chosen; never opened by itself, and closed in deactivate()
+// droppykit-lint: allow-file own-window: the pet's card, a small non-activating panel on Droppy's own panel surface that opens over the pet on a long press, a right-click or a click (the user's choice), with its submenus as panels beside it; closes on Escape, a click elsewhere (a mouse-click monitor, only while it is open) or once something in it is chosen (a letter typed hands over to the What can I do? box); never opened by itself, and closed in deactivate()
 //
 //  PetCard.swift
 //  Pixpaw
 //
-//  Hold on your pet (or click it, in Settings) and its card opens over it:
-//  who it is and how it's doing, the six things you do most as big
-//  buttons, and rows for the rest. A row with more opens it beside the
-//  card as you point at it, never over it, and so on for a menu inside
-//  that. A right-click still gives the plain menu.
+//  Hold on your pet or right-click it (or click it, in Settings) and its
+//  card opens over it: who it is and how it's doing, the six things you
+//  do most as big buttons, and rows for the rest. A row with more opens
+//  it beside the card as you point at it, never over it, and so on for a
+//  menu inside that. Its ⋯ button gives the full menu, every item in it,
+//  for the keyboard and VoiceOver; the card's rows are that menu's own
+//  groups and items (PetMenu.swift), less what's on top.
 //
 
 import AppKit
@@ -23,6 +25,8 @@ struct PetCardItem: Identifiable {
     /// What the action reads off its sender, as a menu item's would.
     var represented: String?
     var badge: String?
+    /// The key the user set for it: "⌃⌥/".
+    var shortcut: String?
     var enabled = true
     var checked = false
     var isSeparator = false
@@ -30,16 +34,117 @@ struct PetCardItem: Identifiable {
 
     static let separator = PetCardItem(title: "", symbol: nil, isSeparator: true)
 
-    /// A menu, item by item, submenus included.
-    static func items(of menu: NSMenu) -> [PetCardItem] {
-        menu.items.map { item in
-            if item.isSeparatorItem || item.isSectionHeader { return .separator }
-            return PetCardItem(title: item.title, symbol: item.identifier?.rawValue, action: item.action,
-                               represented: item.representedObject as? String, badge: item.badge?.stringValue,
-                               enabled: item.isEnabled, checked: item.state == .on,
-                               children: item.submenu.map(items(of:)))
+    /// An item of the pet's menu, submenus included.
+    init(_ entry: PetMenuEntry) {
+        if entry.isSeparator { self = .separator; return }
+        self.init(title: entry.title, symbol: entry.symbol, action: entry.action.map { NSSelectorFromString($0.rawValue) },
+                  represented: entry.represented, badge: entry.badge, shortcut: entry.shortcut?.text,
+                  enabled: entry.enabled, checked: entry.checked, children: entry.children?.map(PetCardItem.init))
+    }
+
+    init(title: String, symbol: String?, action: Selector? = nil, represented: String? = nil, badge: String? = nil, shortcut: String? = nil,
+         enabled: Bool = true, checked: Bool = false, isSeparator: Bool = false, children: [PetCardItem]? = nil) {
+        self.title = title
+        self.symbol = symbol
+        self.action = action
+        self.represented = represented
+        self.badge = badge
+        self.shortcut = shortcut
+        self.enabled = enabled
+        self.checked = checked
+        self.isSeparator = isSeparator
+        self.children = children
+    }
+
+    /// What VoiceOver reads: the title, then what it's at, then its key.
+    var spoken: String { [title, badge, shortcut].compactMap { $0 }.joined(separator: ", ") }
+}
+
+/// One of the menu's groups, as rows: its header, or a divider for the
+/// ones after the menu's separator.
+struct PetCardGroup: Identifiable {
+    let id = UUID()
+    let title: String?
+    let items: [PetCardItem]
+}
+
+/// An item of the pet's full menu: what it runs, and on what.
+private final class PetMenuItem: NSMenuItem {
+    var petAction: Selector?
+    weak var petTarget: AnyObject?
+}
+
+/// Runs a menu item's action once the menu has gone, on the next turn of
+/// the main loop, not inside its tracking: the menu fades out first and
+/// the action (a toy, a panel, the pet setting off) starts on a quiet loop.
+private final class PetMenuRelay: NSObject, @unchecked Sendable {
+    /// Holds nothing: one for every menu.
+    static let shared = PetMenuRelay()
+
+    @MainActor @objc func fire(_ sender: NSMenuItem) {
+        guard let item = sender as? PetMenuItem, let action = item.petAction else { return }
+        // The item is held here: the menu is gone by the time this runs.
+        DispatchQueue.main.async {
+            guard let target = item.petTarget else { return }
+            NSApp.sendAction(action, to: target, from: item)
         }
     }
+}
+
+extension NSMenu {
+    /// The pet's full menu, built item by item from its menu model; actions
+    /// go to `target`, the pet's view, once the menu has closed.
+    static func pet(_ groups: [PetMenuGroup], target: AnyObject) -> NSMenu {
+        func menuItem(_ entry: PetMenuEntry) -> NSMenuItem {
+            if entry.isSeparator { return .separator() }
+            let item = PetMenuItem(title: entry.title, action: entry.action.map { _ in #selector(PetMenuRelay.fire(_:)) },
+                                   keyEquivalent: entry.shortcut?.key ?? "")
+            item.petAction = entry.action.map { NSSelectorFromString($0.rawValue) }
+            item.petTarget = target
+            if let key = entry.shortcut {
+                var mask = NSEvent.ModifierFlags()
+                if key.control { mask.insert(.control) }
+                if key.option { mask.insert(.option) }
+                if key.shift { mask.insert(.shift) }
+                if key.command { mask.insert(.command) }
+                item.keyEquivalentModifierMask = mask
+            }
+            item.target = PetMenuRelay.shared
+            if let symbol = entry.symbol {
+                item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
+                item.identifier = NSUserInterfaceItemIdentifier(symbol)
+            }
+            item.representedObject = entry.represented
+            if let badge = entry.badge { item.badge = NSMenuItemBadge(string: badge) }
+            item.isEnabled = entry.enabled
+            item.state = entry.checked ? .on : .off
+            if let children = entry.children {
+                let inner = NSMenu()
+                inner.autoenablesItems = false
+                children.map(menuItem).forEach(inner.addItem)
+                item.submenu = inner
+            }
+            return item
+        }
+        let menu = NSMenu()
+        menu.autoenablesItems = false
+        for group in groups {
+            menu.addItem(group.title.map { NSMenuItem.sectionHeader(title: $0) } ?? .separator())
+            group.items.map(menuItem).forEach(menu.addItem)
+        }
+        return menu
+    }
+}
+
+/// Right now, under the card's header: what just happened, and a button
+/// or two for it.
+struct PetCardSuggestion {
+    /// "Screenshot just now".
+    let line: String
+    /// How long it stays, "3 min".
+    let left: String?
+    let symbol: String
+    let buttons: [PetCardItem]
 }
 
 /// What the card shows, built by the pet's view from its current state.
@@ -47,10 +152,28 @@ struct PetCardModel {
     let name: String
     let status: String
     let stars: Int
-    let canTalk: Bool
-    let urgent: [PetCardItem]
+    /// The header's buttons: Talk to me (when it talks), What can I do?.
+    let talk: PetCardItem?
+    let ask: PetCardItem?
+    let suggestion: PetCardSuggestion?
     let tiles: [PetCardItem]
-    let rows: [PetCardItem]
+    let groups: [PetCardGroup]
+
+    init(_ layout: PetCardLayout, name: String, status: String, stars: Int) {
+        self.name = name
+        self.status = status
+        self.stars = stars
+        talk = layout.talk.map(PetCardItem.init)
+        ask = layout.ask.map(PetCardItem.init)
+        suggestion = layout.rightNow.map { first in
+            PetCardSuggestion(line: first.line, left: first.left, symbol: first.buttons.first?.symbol ?? "sparkles",
+                              buttons: first.buttons.map {
+                                  PetCardItem(PetMenuEntry(title: $0.button, symbol: $0.symbol, action: .runSuggestion, represented: $0.id))
+                              })
+        }
+        tiles = layout.tiles.map(PetCardItem.init)
+        groups = layout.groups.map { PetCardGroup(title: $0.title, items: $0.items.map(PetCardItem.init)) }
+    }
 }
 
 /// How the card looks: Droppy's own theme, or a glass of your own.
@@ -89,23 +212,46 @@ final class PetCard {
     private var level = 0.5
 
     var isOpen: Bool { panel != nil }
+    /// The app the card last opened over, for the box it hands over to.
+    private(set) var openedOver: NSRunningApplication?
     private var closedAt = Date.distantPast
     /// Closed a moment ago, by the very click now arriving at the pet.
     var justClosed: Bool { Date().timeIntervalSince(closedAt) < 0.4 }
 
     /// Opens the card over `petFrame` (screen coordinates); actions go to
-    /// `target`, the pet's view, exactly as its menu's do.
-    func show(_ model: PetCardModel, over petFrame: CGRect, target: NSView, talk: Selector, look: PetCardLook, level: Double) {
+    /// `target`, the pet's view, exactly as its menu's do. Its ⋯ button
+    /// closes it and calls `more`, the full menu.
+    /// A letter typed while it's open closes it and goes to `type`, the
+    /// "What can I do?" box, with that letter in it.
+    func show(_ model: PetCardModel, over petFrame: CGRect, target: NSView, look: PetCardLook, level: Double,
+              more: @escaping () -> Void, type: @escaping (String) -> Void) {
         close()
         self.target = target
         self.look = look
         self.level = level
         let previous = NSWorkspace.shared.frontmostApplication
-        let view = PetCardView(model: model, talk: talk, look: look, level: level,
+        openedOver = previous
+        let view = PetCardView(model: model, look: look, level: level,
                                run: { [weak self] item, frame in self?.run(item, at: frame, depth: 0) },
-                               hover: { [weak self] item, frame in self?.hover(item, at: frame, depth: 0) })
+                               hover: { [weak self] item, frame in self?.hover(item, at: frame, depth: 0) },
+                               more: { [weak self] in
+                                   // Hide the card but keep Droppy active until the menu is done:
+                                   // close() hands focus back first, and a menu popped up after
+                                   // that never shows. After the click: a menu popped up from
+                                   // inside the button's own click would track over the panel.
+                                   self?.closeFlyouts(from: 0)
+                                   self?.panel?.orderOut(nil)
+                                   DispatchQueue.main.async {
+                                       more()
+                                       self?.close()
+                                   }
+                               })
         let panel = PetCardPanel(view)
         panel.onCancel = { [weak self] in self?.close() }
+        panel.onType = { [weak self] text in
+            self?.close()
+            type(text)
+        }
         panel.setFrameOrigin(Self.origin(for: panel.frame.size, over: petFrame))
         self.panel = panel
         panel.makeKeyAndOrderFront(nil)
@@ -211,6 +357,17 @@ final class PetCard {
 /// becoming the app the user was in.
 private final class PetCardPanel: NSPanel {
     var onCancel: (() -> Void)?
+    /// A letter or digit typed, no Command, Control or Option: the card
+    /// hands over to the "What can I do?" box. Nil on its submenus.
+    var onType: ((String) -> Void)?
+
+    override func sendEvent(_ event: NSEvent) {
+        if event.type == .keyDown, let onType, event.modifierFlags.intersection([.command, .control, .option]).isEmpty,
+           let text = event.characters, text.count == 1, text.unicodeScalars.allSatisfy(CharacterSet.alphanumerics.contains) {
+            return onType(text)
+        }
+        super.sendEvent(event)
+    }
 
     init<Content: View>(_ content: Content) {
         let hosting = NSHostingView(rootView: content)
@@ -269,26 +426,32 @@ struct PetCardSurface: View {
 
 private struct PetCardView: View {
     let model: PetCardModel
-    let talk: Selector
     let look: PetCardLook
     let level: Double
     let run: (PetCardItem, CGRect) -> Void
     let hover: (PetCardItem, CGRect) -> Void
+    /// The ⋯ button: the full menu.
+    let more: () -> Void
     private static let radius: CGFloat = 20
 
     var body: some View {
         VStack(alignment: .leading, spacing: DroppySpacing.md) {
-            if !model.urgent.isEmpty {
-                VStack(spacing: DroppySpacing.xs) {
-                    ForEach(model.urgent) { PetCardRow(item: $0, accent: true, run: run, hover: hover) }
-                }
-            }
             header
+            if let suggestion = model.suggestion { rightNow(suggestion) }
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DroppySpacing.sm), count: 3), spacing: DroppySpacing.sm) {
                 ForEach(model.tiles) { tile($0) }
             }
-            VStack(spacing: DroppySpacing.xs) {
-                ForEach(model.rows) { PetCardRow(item: $0, accent: false, run: run, hover: hover) }
+            VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+                ForEach(model.groups) { group in
+                    if let title = group.title {
+                        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                            .padding(.horizontal, DroppySpacing.sm).padding(.top, 2)
+                            .accessibilityAddTraits(.isHeader)
+                    } else {
+                        Divider().padding(.vertical, 2)
+                    }
+                    ForEach(group.items) { PetCardRow(item: $0, accent: false, run: run, hover: hover) }
+                }
             }
         }
         .padding(DroppySpacing.lg)
@@ -307,13 +470,46 @@ private struct PetCardView: View {
             }
             .accessibilityElement(children: .combine)
             Spacer(minLength: 0)
-            if model.canTalk {
-                Button { run(PetCardItem(title: "Talk to me", symbol: "mic.fill", action: talk), .zero) } label: {
-                    Image(systemName: "mic.fill")
+            ForEach([model.ask, model.talk].compactMap { $0 }) { item in
+                Button { run(item, .zero) } label: {
+                    Image(systemName: item.symbol ?? "circle")
                 }
                 .buttonStyle(DroppyCircleButtonStyle(size: 28))
-                .help("Talk to me")
-                .accessibilityLabel("Talk to me")
+                .disabled(!item.enabled)
+                .help(item.shortcut.map { "\(item.title) \($0)" } ?? item.title)
+                .accessibilityLabel(item.spoken)
+            }
+            Button(action: more) {
+                Image(systemName: "ellipsis")
+            }
+            .buttonStyle(DroppyCircleButtonStyle(size: 28))
+            .help("More")
+            .accessibilityLabel("More")
+            .accessibilityHint("Every item in a menu")
+        }
+    }
+
+    /// One line for what just happened, and its buttons. The pet only gets
+    /// them ready: nothing here runs until it's clicked.
+    private func rightNow(_ suggestion: PetCardSuggestion) -> some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            HStack(spacing: DroppySpacing.xs) {
+                Image(systemName: suggestion.symbol).font(.system(size: 11)).foregroundStyle(.tint)
+                Text(suggestion.line).font(.system(size: 12, weight: .medium)).lineLimit(1)
+                Spacer(minLength: 0)
+                if let left = suggestion.left {
+                    Text(left).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary)
+                }
+            }
+            .accessibilityElement(children: .combine)
+            HStack(spacing: DroppySpacing.xs) {
+                ForEach(suggestion.buttons) { item in
+                    Button { run(item, .zero) } label: {
+                        Label(item.title, systemImage: item.symbol ?? "circle").lineLimit(1)
+                    }
+                    .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                    .disabled(!item.enabled)
+                }
             }
         }
     }
@@ -333,7 +529,7 @@ private struct PetCardView: View {
             }
             .buttonStyle(PetTileStyle())
             .disabled(!item.enabled)
-            .accessibilityLabel(item.badge.map { "\(item.title), \($0)" } ?? item.title)
+            .accessibilityLabel(item.spoken)
         }
         .frame(height: 62)
     }
@@ -386,6 +582,7 @@ private struct PetCardRow: View {
                     Text(item.title).lineLimit(1)
                     Spacer(minLength: 0)
                     if let badge = item.badge { Text(badge).foregroundStyle(.secondary).lineLimit(1) }
+                    if let shortcut = item.shortcut { Text(shortcut).foregroundStyle(.tertiary).lineLimit(1) }
                     if item.children != nil { Image(systemName: "chevron.right").font(.system(size: 10, weight: .semibold)).foregroundStyle(.tertiary) }
                 }
                 .font(.system(size: 13))
@@ -395,6 +592,9 @@ private struct PetCardRow: View {
             }
             .buttonStyle(PetRowStyle())
             .disabled(!item.enabled)
+            .accessibilityLabel(item.spoken)
+            .accessibilityValue(item.checked ? "Selected" : "")
+            .accessibilityHint(item.children != nil ? "Opens beside the card" : "")
             .onHover { inside in if inside { hover(item, geo.frame(in: .global)) } }
         }
         .frame(height: 28)

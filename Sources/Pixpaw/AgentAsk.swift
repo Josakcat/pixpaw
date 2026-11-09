@@ -224,6 +224,7 @@ struct AskCardView: View {
                 Label("Careful: \(risk.prefix(1).lowercased() + risk.dropFirst())", systemImage: "exclamationmark.triangle.fill")
                     .font(.system(size: 11.5, weight: .bold, design: .rounded))
                     .foregroundStyle(Self.warning)
+                    .fixedSize(horizontal: false, vertical: true)
             }
             Text(ask.title)
                 .font(.system(size: 12.5, weight: .semibold, design: .rounded))
@@ -239,19 +240,38 @@ struct AskCardView: View {
                         .fill(risk == nil ? Color(white: 0.93) : Color(red: 1, green: 0.9, blue: 0.88)))
                     .fixedSize(horizontal: false, vertical: true)
             }
-            HStack(spacing: 6) {
-                ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
-                    Button { answer(option) } label: {
-                        HStack(spacing: 4) {
-                            Text(option)
-                            if keys.contains(index + 1) {
-                                Text("⌥\(index + 1)").opacity(0.6)
+            // One row of capsules while every answer fits whole; otherwise a
+            // list, each answer on its own full-width row that wraps.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
+                        Button { answer(option) } label: {
+                            HStack(spacing: 4) {
+                                Text(option)
+                                if keys.contains(index + 1) {
+                                    Text("⌥\(index + 1)").opacity(0.6)
+                                }
                             }
                         }
+                        .buttonStyle(style(index, option, row: false))
+                        .accessibilityLabel(option)
                     }
-                    // A risky one puts nothing forward: Allow is no easier than Deny.
-                    .buttonStyle(AskButtonStyle(prominent: index == 0 && risk == nil, warns: option.localizedCaseInsensitiveContains("deny")))
-                    .accessibilityLabel(option)
+                }
+                VStack(alignment: .leading, spacing: 4) {
+                    ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
+                        Button { answer(option) } label: {
+                            HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                Text(option)
+                                    .fixedSize(horizontal: false, vertical: true)
+                                    .frame(maxWidth: .infinity, alignment: .leading)
+                                if keys.contains(index + 1) {
+                                    Text("⌥\(index + 1)").opacity(0.6)
+                                }
+                            }
+                        }
+                        .buttonStyle(style(index, option, row: true))
+                        .accessibilityLabel(option)
+                    }
                 }
             }
             if let typed = ask.typed {
@@ -296,6 +316,11 @@ struct AskCardView: View {
         .accessibilityLabel(risk.map { "Careful. \(ask.agent) asks: \(ask.title) \($0)." } ?? "\(ask.agent) asks: \(ask.title)")
     }
 
+    /// A risky one puts nothing forward: Allow is no easier than Deny.
+    private func style(_ index: Int, _ option: String, row: Bool) -> AskButtonStyle {
+        AskButtonStyle(prominent: index == 0 && ask.risk == nil, warns: option.localizedCaseInsensitiveContains("deny"), row: row)
+    }
+
     private func send() {
         let text = typing.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
@@ -303,24 +328,29 @@ struct AskCardView: View {
     }
 }
 
-/// Small rounded answer buttons that read on the white card.
+/// Small rounded answer buttons that read on the white card: capsules in a
+/// row, or full-width rows whose text wraps when the answers are long.
 struct AskButtonStyle: ButtonStyle {
     let prominent: Bool
     let warns: Bool
+    var row = false
 
     func makeBody(configuration: Configuration) -> some View {
+        let shape = RoundedRectangle(cornerRadius: row ? 8 : 100, style: .continuous)
         configuration.label
             .font(.system(size: 11.5, weight: .semibold, design: .rounded))
-            .lineLimit(1)
+            .lineLimit(row ? nil : 1)
+            .multilineTextAlignment(.leading)
             .padding(.horizontal, 9)
-            .padding(.vertical, 4)
+            .padding(.vertical, row ? 5 : 4)
+            .frame(maxWidth: row ? .infinity : nil, alignment: .leading)
             .foregroundStyle(prominent ? Color.white : warns ? Color(red: 0.75, green: 0.15, blue: 0.12) : Color(white: 0.1))
             .background(
-                Capsule(style: .continuous)
+                shape
                     .fill(prominent ? Color(red: 0.27, green: 0.27, blue: 0.96) : Color(white: 0.9))
                     .opacity(configuration.isPressed ? 0.7 : 1)
             )
-            .contentShape(Capsule())
+            .contentShape(shape)
     }
 }
 

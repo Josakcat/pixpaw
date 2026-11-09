@@ -98,6 +98,8 @@ final class FetchBall {
                 }
             }
         }
+        // Keeps flying while a menu is open, like the pet.
+        if let flight { RunLoop.main.add(flight, forMode: .common) }
     }
 
     func remove() {
