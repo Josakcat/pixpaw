@@ -125,13 +125,13 @@ final class ToolTag {
     /// and `toRight` which way from there; or out of sight with nil.
     func place(beside side: CGPoint?, toRight: Bool) {
         guard let panel, tool != nil else { return }
-        guard let side else { return panel.orderOut(nil) }
+        guard let side else { return panel.hideIfShown() }
         let size = panel.frame.size
         var origin = CGPoint(x: toRight ? side.x : side.x - size.width, y: side.y)
         if let area = NSScreen.screens.first(where: { NSMouseInRect(side, $0.frame, false) })?.frame {
             origin.x = min(max(origin.x, area.minX + 2), area.maxX - size.width - 2)
         }
-        panel.setFrameOrigin(CGPoint(x: origin.x.rounded(), y: origin.y.rounded()))
+        panel.moveOrigin(to: CGPoint(x: origin.x.rounded(), y: origin.y.rounded()))
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
 

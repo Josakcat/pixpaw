@@ -126,8 +126,9 @@ final class CatController: ObservableObject {
     @Published private(set) var pets: Int
     /// The day it last left you a gift ("yyyy-MM-dd"), one a day at most.
     private(set) var giftDay: String
-    /// The gift lying on the floor, waiting for a click.
+    /// The gift lying on the floor, waiting for a click, and which one it is.
     private var giftPanel: CatPanel?
+    private var giftArt: CatEffect?
 
     /// A home of its own once it has 500 stars: a little house that pops up
     /// on the floor when it naps, and folds away a minute after it comes out.
@@ -251,6 +252,10 @@ final class CatController: ObservableObject {
     var onFocus: (() -> Void)?
     /// Opens Settings on the Wardrobe page.
     var onOpenWardrobe: (() -> Void)?
+    /// The menu's Colour: a coat or colourway by its id.
+    var onColour: ((String) -> Void)?
+    /// The menu's Pixel size: true for the old chunky pixels.
+    var onClassicPixels: ((Bool) -> Void)?
     /// Files dropped on it, to take to the shelf when it gets there.
     var onDeliver: (([URL]) -> Void)?
     /// Takes files dropped on it to the shelf.
@@ -335,6 +340,8 @@ final class CatController: ObservableObject {
     private var buddyPlan: BuddyPlan?
     /// Where the cat is, for the other cat to find it.
     var feet: CGPoint? { panel == nil ? nil : position }
+    /// Whether it is drawn in HD now, and so are the bowl, gifts, toys and bug beside it.
+    var drawsFine: Bool { CatSprites.shared.drawsFine(kind, coat: coat) }
     /// Droppy's log, for the moments worth tracing.
     var log: ((String) -> Void)?
 
@@ -351,8 +358,17 @@ final class CatController: ObservableObject {
     private static let heldGrip = CGPoint(x: 8 * CatSprites.scale, y: 16 * CatSprites.scale)
     private static let hungerHours: Double = 4
     private static let hungryBelow: Double = 0.25
-    /// Where the mouth is in the eating frames, from the cat's left edge.
-    private static let mouthX: CGFloat = 51
+    /// Where the mouth is in the eating frames, from the cat's left edge:
+    /// further in for finer art, whose head would spill out of the frame,
+    /// and per kind there, where each one's mouth was drawn.
+    private var mouthX: CGFloat {
+        guard CatSprites.shared.drawsFine(kind, coat: coat) else { return 51 }
+        switch kind {
+        case .dino: return 51
+        case .chicken, .giraffe, .hippo, .shark: return 48
+        default: return 45
+        }
+    }
 
     private var panel: CatPanel?
     private let bubble = CatBubble()
@@ -468,6 +484,8 @@ final class CatController: ObservableObject {
         /// Its own picture and the same turned round, for an animal's own
         /// toy; nil for the yarn, teaser and laser.
         var frames: [CGImage]? = nil
+        /// The game it was put out for, to draw it again in another pixel size.
+        var game: PetGame? = nil
     }
     private var toy: Toy?
     private var swatTicks = 0
@@ -543,6 +561,7 @@ final class CatController: ObservableObject {
         guard !isFriend else { return }
         resumeIfStalled()
         guard panel != nil, quietReason == nil || essential else { return }
+        bubble.style = kind.bubbleStyle
         bubble.say(line)
         // Levels you are changing yourself stay silent.
         if line.key == nil { CatSounds.shared.play(.meow, voice: kind) }
@@ -553,6 +572,7 @@ final class CatController: ObservableObject {
     func keepSaying(_ line: CatLine?) {
         guard !isFriend else { return }
         keptLine = line
+        bubble.style = kind.bubbleStyle
         bubble.keep(stretchLine ?? keptLine)
     }
 
@@ -674,6 +694,12 @@ final class CatController: ObservableObject {
             }
         }
         switch kind {
+        case .dragon where mood == .walking: return "Flying about"
+        case .dragon where mood == .jumping: return "Flying"
+        case .dragon where mood == .happy: return "Rawr rawr rawr!"
+        case .dragon where mood == .grooming: return "Preening all three"
+        case .dragon where mood == .sleeping: return "Zzz… zzz… zzz…"
+        case .dragon where mood == .pouncing: return "Rawr!"
         case .giraffe where mood == .walking: return "Strolling about"
         case .giraffe where mood == .grooming: return "Licking its nose"
         case .giraffe where mood == .eating: return "Bending down to eat"
@@ -757,6 +783,10 @@ final class CatController: ObservableObject {
             }
         }
         switch kind {
+        case .dragon where mood == .walking, .dragon where mood == .jumping: return "Flying"
+        case .dragon where mood == .happy: return "Rawr!"
+        case .dragon where mood == .grooming: return "Preening"
+        case .dragon where mood == .pouncing: return "Rawr!"
         case .giraffe where mood == .walking: return "Strolling"
         case .hippo where mood == .walking: return "Waddling"
         case .pig where mood == .walking: return "Trotting"
@@ -994,6 +1024,9 @@ final class CatController: ObservableObject {
         removeBowl()
         removeGift()
         removeHome()
+        cloud?.stop()
+        cloud = nil
+        scuffling = false
         quietNap = false
         pendingQuietNap = nil
         endPlay(quietly: true)
@@ -1294,7 +1327,7 @@ final class CatController: ObservableObject {
     /// the house in front of it then, behind it the rest of the time.
     private func drawHome() {
         guard let homePanel, let panel else { return }
-        homeLayer?.contents = CatSprites.shared.home(kind, occupied: asleepAtHome)
+        homeLayer?.contents = CatSprites.shared.home(kind, occupied: asleepAtHome, fine: drawsFine)
         homePanel.order(asleepAtHome && homeCovers ? .above : .below, relativeTo: panel.windowNumber)
     }
 
@@ -1352,8 +1385,9 @@ final class CatController: ObservableObject {
     /// ball or a feather. It stays until you click it.
     private func leaveGift() {
         guard let art = [CatEffect.giftFlower, .giftBone, .giftBall, .giftFeather].randomElement(),
-              let image = CatSprites.shared.image(art) else { return }
-        let size = CGSize(width: CGFloat(image.width) * CatSprites.scale, height: CGFloat(image.height) * CatSprites.scale)
+              let image = CatSprites.shared.image(art, fine: drawsFine) else { return }
+        let pixel = CatSprites.shared.pixelSize(kind, coat: coat)
+        let size = CGSize(width: CGFloat(image.width) * pixel, height: CGFloat(image.height) * pixel)
         let gift = CatPanel(contentRect: CGRect(origin: .zero, size: size))
         let view = GiftView(frame: CGRect(origin: .zero, size: size))
         view.wantsLayer = true
@@ -1367,6 +1401,7 @@ final class CatController: ObservableObject {
         gift.setFrameOrigin(CGPoint(x: x, y: moves == .anywhere ? position.y : floor.y))
         gift.orderFrontRegardless()
         giftPanel = gift
+        giftArt = art
         giftDay = StarDay.today
         onPersist?()
         remark(CatWords.gift)
@@ -1387,6 +1422,7 @@ final class CatController: ObservableObject {
         giftPanel?.orderOut(nil)
         giftPanel?.close()
         giftPanel = nil
+        giftArt = nil
     }
 
     // MARK: The loop
@@ -1538,7 +1574,7 @@ final class CatController: ObservableObject {
         placeBall(at: shown)
         if bubble.isShowing { bubble.update(anchor: bubbleAnchor()) }
         if let toy {
-            toy.panel.setFrameOrigin(toy.kind != .yarn ? Self.spot(of: toy.kind, at: NSEvent.mouseLocation, size: toy.size) : CGPoint(
+            toy.panel.moveOrigin(to: toy.kind != .yarn ? Self.spot(of: toy.kind, at: NSEvent.mouseLocation, size: toy.size) : CGPoint(
                 x: toy.from.x + (toy.position.x - toy.from.x) * t,
                 y: toy.from.y + (toy.position.y - toy.from.y) * t
             ))
@@ -1576,7 +1612,7 @@ final class CatController: ObservableObject {
         }
         let size = CatSprites.catSize
         let middle = CGPoint(x: (position.x + theirs.x) / 2 + size.width / 2, y: min(position.y, theirs.y))
-        let cloud = DustCloud(bottomCenter: middle)
+        let cloud = DustCloud(bottomCenter: middle, fine: drawsFine)
         self.cloud = cloud
         hideForScuffle()
         cloud.start()
@@ -1758,15 +1794,15 @@ final class CatController: ObservableObject {
         if let reaction {
             if Date() < reaction.until, mood != .climbing, mood != .held {
                 let hand = AgentArt.hands.contains(reaction.art)
-                return reaction.art.frame(at: tick, every: 3).map { ($0, hand ? 0 : CGFloat((tick / 3) % 3)) }
+                return reaction.art.frame(at: tick, every: 3, fine: drawsFine).map { ($0, hand ? 0 : CGFloat((tick / 3) % 3)) }
             }
             if Date() >= reaction.until { self.reaction = nil }
         }
         guard let since = waitingSince, mood == .sitting else { return nil }
         let waited = Date().timeIntervalSince(since)
-        if waited >= Self.dozesAfter { return CatSprites.shared.image(.zzz).map { ($0, CGFloat((stateTicks / 6) % 3) * 2) } }
+        if waited >= Self.dozesAfter { return CatSprites.shared.image(.zzz, fine: drawsFine).map { ($0, CGFloat((stateTicks / 6) % 3) * 2) } }
         let art: AgentArt = waited < 180 ? .popcorn : waited < 600 ? .hourglass : .cobweb
-        return art.frame(at: tick, every: art == .hourglass ? 18 : 5).map { ($0, 0) }
+        return art.frame(at: tick, every: art == .hourglass ? 18 : 5, fine: drawsFine).map { ($0, 0) }
     }
 
     // MARK: Fetch
@@ -1793,7 +1829,7 @@ final class CatController: ObservableObject {
         endPlay(quietly: true)
         endFetch()
         if mood == .sleeping { enter(.sitting) }
-        let ball = FetchBall(image: ToyArt.frames(game)?.first) { [weak self] in
+        let ball = FetchBall(image: ToyArt.frames(game, fine: drawsFine)?.first, points: CatSprites.shared.pixelSize(kind, coat: coat)) { [weak self] in
             guard let self else { return }
             self.playFetch(self.fetchToy)
         }
@@ -2285,9 +2321,10 @@ final class CatController: ObservableObject {
         case .teaser: .teaser
         case .laser: .laser
         }
-        let frames = ToyArt.frames(game)
-        guard let image = frames?.first ?? CatSprites.shared.image(rows) else { return }
-        let size = CGSize(width: CGFloat(image.width) * CatSprites.scale, height: CGFloat(image.height) * CatSprites.scale)
+        let frames = ToyArt.frames(game, fine: drawsFine)
+        guard let image = frames?.first ?? CatSprites.shared.image(rows, fine: drawsFine) else { return }
+        let pixel = CatSprites.shared.pixelSize(self.kind, coat: coat)
+        let size = CGSize(width: CGFloat(image.width) * pixel, height: CGFloat(image.height) * pixel)
         let toyPanel = CatPanel(contentRect: CGRect(origin: .zero, size: size))
         toyPanel.ignoresMouseEvents = true
         let view = NSView(frame: CGRect(origin: .zero, size: size))
@@ -2321,7 +2358,7 @@ final class CatController: ObservableObject {
         }
         toyPanel.setFrameOrigin(start)
         toyPanel.orderFrontRegardless()
-        toy = Toy(kind: kind, panel: toyPanel, layer: layer, size: size, position: start, from: start, frames: frames)
+        toy = Toy(kind: kind, panel: toyPanel, layer: layer, size: size, position: start, from: start, frames: frames, game: game)
         catView?.displayLinkPaused = false
         if mood.isIdle || mood == .happy || mood == .sleeping || mood == .chasing {
             enter(.sitting)
@@ -2395,7 +2432,7 @@ final class CatController: ObservableObject {
             // Turn a quarter each time the ball rolls its own width.
             toy.rolled += abs(toy.position.x - toy.from.x)
             let turn = Int(toy.rolled / (toy.size.width / 2)) % 2
-            toy.layer.contents = toy.frames.map { $0[turn % $0.count] } ?? CatSprites.shared.image(turn == 0 ? .yarn1 : .yarn2)
+            toy.layer.contents = toy.frames.map { $0[turn % $0.count] } ?? CatSprites.shared.image(turn == 0 ? .yarn1 : .yarn2, fine: drawsFine)
         case .teaser, .laser:
             // Keeps up with the pointer; between steps the display link
             // moves it with the pointer.
@@ -2842,7 +2879,7 @@ final class CatController: ObservableObject {
             bowlPanel = bowl
             bowlLayer = layer
         }
-        bowlLayer?.contents = CatSprites.shared.image(treat ? .treat : .bowl)
+        bowlLayer?.contents = CatSprites.shared.image(treat ? .treat : .bowl, fine: drawsFine)
         bowlPanel?.setFrameOrigin(CGPoint(x: x, y: floor.y))
         bowlPanel?.orderFrontRegardless()
         bowlHasFood = true
@@ -2853,7 +2890,7 @@ final class CatController: ObservableObject {
 
     private func headToBowl() {
         guard let bowl = bowlPanel?.frame else { return }
-        let spot = CGPoint(x: bowl.midX - Self.mouthX, y: bowl.minY)
+        let spot = CGPoint(x: bowl.midX - mouthX, y: bowl.minY)
         planRoute(to: spot, on: floorSurface(near: spot))
         enter(.goingToBowl)
     }
@@ -2875,7 +2912,7 @@ final class CatController: ObservableObject {
         refreshHunger()
         onPersist?()
         bowlHasFood = false
-        bowlLayer?.contents = CatSprites.shared.image(.bowlEmpty)
+        bowlLayer?.contents = CatSprites.shared.image(.bowlEmpty, fine: drawsFine)
         bowlClearsAt = Date().addingTimeInterval(4)
         enter(.happy)
     }
@@ -2976,18 +3013,46 @@ final class CatController: ObservableObject {
 
     /// What the window shows; redrawing is skipped while it stays the same.
     private var drawn: (frame: CatFrame, coat: CatCoat, right: Bool, bob: CGFloat, look: String)?
+    /// The `CatSprites.version` the home, bowl, gift and toy were drawn in.
+    private var propsVersion: Int?
     /// Height of what is drawn, hat included, for the bubble to clear.
     private var spriteHeight: CGFloat = CatSprites.catSize.height
     private var shownSprite: CGImage?
+    /// Points per pixel of `shownSprite`: finer art's are smaller.
+    private var shownPixel = CatSprites.scale
     private var shownEffect: CGImage?
 
     /// What it looks like this moment, for a GIF: the art as drawn, which way
     /// it faces, its bounce, and any heart, Zzz or note with its place in
     /// the window.
-    var look: (sprite: CGImage, right: Bool, bob: CGFloat, effect: (image: CGImage, frame: CGRect)?)? {
+    var look: (sprite: CGImage, pixel: CGFloat, right: Bool, bob: CGFloat, effect: (image: CGImage, frame: CGRect)?)? {
         guard let shownSprite else { return nil }
         let effect = shownEffect.flatMap { image in effectLayer.map { (image: image, frame: $0.frame) } }
-        return (shownSprite, facesRight || mood == .held, bob, effect)
+        return (shownSprite, shownPixel, facesRight || mood == .held, bob, effect)
+    }
+
+    /// Draws what it has out again after Pixel size or Colour changed, so
+    /// nothing stays in the old style beside it.
+    private func redrawProps() {
+        propsVersion = CatSprites.shared.version
+        if homePanel != nil { drawHome() }
+        if bowlLayer != nil {
+            let art: CatEffect = bowlIsTreat ? .treat : bowlHasFood ? .bowl : .bowlEmpty
+            bowlLayer?.contents = CatSprites.shared.image(art, fine: drawsFine)
+        }
+        if let giftArt, let image = CatSprites.shared.image(giftArt, fine: drawsFine) {
+            giftPanel?.contentView?.layer?.contents = image
+        }
+        if var toy, let game = toy.game {
+            toy.frames = ToyArt.frames(game, fine: drawsFine)
+            let rows: CatEffect = switch toy.kind {
+            case .yarn: .yarn1
+            case .teaser: .teaser
+            case .laser: .laser
+            }
+            toy.layer.contents = toy.frames?.first ?? CatSprites.shared.image(rows, fine: drawsFine)
+            self.toy = toy
+        }
     }
 
     private func redraw() {
@@ -3000,21 +3065,24 @@ final class CatController: ObservableObject {
             return
         }
         drawn = (frame, coat, facesRight, bob, look)
+        if propsVersion != CatSprites.shared.version { redrawProps() }
         let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar, glasses: glasses, headphones: wearsHeadphones || lofiVibe, costume: costume, kind: kind,
-                                                 swing: legSwing, laptop: atLaptop)
-        spriteHeight = sprite.map { CGFloat($0.height) * CatSprites.scale } ?? spriteHeight
+                                                 swing: legSwing, laptop: atLaptop, fine: true, friend: isFriend)
+        let pixel = CatSprites.shared.pixelSize(kind, coat: coat)
+        spriteHeight = sprite.map { CGFloat($0.height) * pixel } ?? spriteHeight
         catLayer.contents = sprite
         shownSprite = sprite
+        shownPixel = pixel
         if let sprite {
-            let w = CGFloat(sprite.width) * CatSprites.scale
-            let h = CGFloat(sprite.height) * CatSprites.scale
+            let w = CGFloat(sprite.width) * pixel
+            let h = CGFloat(sprite.height) * pixel
             catLayer.bounds = CGRect(x: 0, y: 0, width: w, height: h)
             // Feet on the window's floor; a hat makes the image taller, upward.
             catLayer.position = CGPoint(x: CatSprites.catSize.width / 2, y: h / 2 + bob)
         }
         if mood == .climbing, let side = climbSide, let sprite {
             // Feet to the wall, head up: turned a quarter, hugging that side.
-            let w = CGFloat(sprite.width) * CatSprites.scale, h = CGFloat(sprite.height) * CatSprites.scale
+            let w = CGFloat(sprite.width) * pixel, h = CGFloat(sprite.height) * pixel
             let size = CatSprites.catSize
             catLayer.position = CGPoint(x: side > 0 ? size.width - h / 2 : h / 2, y: w / 2)
             catLayer.setAffineTransform(side > 0 ? CGAffineTransform(rotationAngle: .pi / 2)
@@ -3039,7 +3107,8 @@ final class CatController: ObservableObject {
         case .sitting where musicPlaying: effect = .note
         default: effect = nil
         }
-        guard let image = special?.image ?? effect.flatMap({ CatSprites.shared.image($0) }) else {
+        let fine = drawsFine
+        guard let image = special?.image ?? effect.flatMap({ CatSprites.shared.image($0, fine: fine) }) else {
             effectLayer.opacity = 0
             shownEffect = nil
             return
@@ -3047,8 +3116,10 @@ final class CatController: ObservableObject {
         effectLayer.opacity = 1
         effectLayer.contents = image
         shownEffect = image
-        let w = CGFloat(image.width) * scale * 0.67
-        let h = CGFloat(image.height) * scale * 0.67
+        // Effects are drawn at 2 pt a pixel; their HD drawing is 4/3 the grid, at 1.5 pt.
+        let effectPixel = fine ? scale / 2 : scale * 0.67
+        let w = CGFloat(image.width) * effectPixel
+        let h = CGFloat(image.height) * effectPixel
         // The head is on the right of the art; mirror the effect with the cat.
         let headX = facesRight ? size.width * 0.72 : size.width * 0.28
         let rise: CGFloat
@@ -3381,6 +3452,19 @@ final class CatController: ObservableObject {
 }
 
 // MARK: - Window
+
+/// Window moves that cost nothing when nothing changes: the pet's panels
+/// are placed every display frame, and each real move or order-out is a
+/// round trip to the window server.
+extension NSWindow {
+    func moveOrigin(to origin: CGPoint) {
+        if frame.origin != origin { setFrameOrigin(origin) }
+    }
+
+    func hideIfShown() {
+        if isVisible { orderOut(nil) }
+    }
+}
 
 /// A borderless, non-activating panel: clicking the cat never steals focus
 /// from the app you are in, and it follows you across Spaces.
@@ -3719,8 +3803,7 @@ final class CatView: NSView {
         let model = PetCardModel(PetCardLayout(groups, suggestions: state.suggestions), name: name, status: status, stars: stars)
         MainActor.assumeIsolated {
             let style = controller.cardStyle?() ?? (look: PetCardLook.droppy, level: 0.5)
-            PetCard.shared.show(model, over: frame, target: self, look: style.look, level: style.level,
-                                more: { [weak self] in self?.popUpMenu(groups) }) { [weak controller] text in
+            PetCard.shared.show(model, over: frame, target: self, look: style.look, level: style.level) { [weak controller] text in
                 controller?.onAsk?(text)
             }
         }
@@ -3814,7 +3897,16 @@ final class CatView: NSView {
                                           },
                                           next: CatAccessory.next(in: slot, for: wearer, progress).map { "Next: \($0.title), \($0.whatsLeft(progress))" })
             }
+            if controller.onColour != nil {
+                let kind = controller.kind, worn = CatSprites.shared.petCoat(kind, friend: controller.isFriend)
+                state.colours = kind.hasCoats
+                    ? CatCoat.choices.map { .init(title: $0.title, id: $0.rawValue, worn: $0 == controller.coat) }
+                    : PetCoat.choices(kind).map { .init(title: $0.title, id: $0.id, worn: $0 == worn) }
+            }
             state.stars = controller.wardrobeStars
+            state.classicPixels = CatSprites.shared.classicPixels
+            state.hasFineArt = CatSprites.hasFineArt(controller.kind)
+            state.isFriend = controller.isFriend
             return state
         }
     }
@@ -3861,4 +3953,12 @@ final class CatView: NSView {
         MainActor.assumeIsolated { controller?.wear(item, in: slot) }
     }
     @objc private func openWardrobe() { MainActor.assumeIsolated { controller?.onOpenWardrobe?() } }
+    @objc private func setPixels(_ sender: NSMenuItem) {
+        let classic = sender.representedObject as? String == "classic"
+        MainActor.assumeIsolated { controller?.onClassicPixels?(classic) }
+    }
+    @objc private func setColour(_ sender: NSMenuItem) {
+        guard let id = sender.representedObject as? String else { return }
+        MainActor.assumeIsolated { controller?.onColour?(id) }
+    }
 }

@@ -39,6 +39,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let notesSource = "meetingNotesSource"
         static let hooksHeard = "hooksHeard"
         static let foldedEars = "foldedEars"
+        static let classicPixels = "classicPixels"
         static let kind = "character"
         static let festivals = "festivals"
         static let festivalGreeted = "festivalGreeted"
@@ -123,8 +124,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let autoQuiet = "quietDuringCalls"
         static let quietMirroring = "quietWhenMirroring"
         static let sounds = "sounds"
+        static let bubbleEffects = "bubbleEffects"
         static let friend = "friend"
         static let friendCoat = "friendCoat"
+        /// Each built-in pet's colourway by kind, the friend's as "friend.<kind>".
+        static let petCoats = "petCoats"
         /// The friend's character; unset, the same as the pet's.
         static let friendKind = "friendKind"
         /// What the friend wears, chosen from its own menu.
@@ -152,6 +156,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private(set) var friend: CatController?
     @Published private(set) var hasFriend = false
     @Published private(set) var friendCoat: CatCoat = .gray
+    /// Each built-in pet's colourway (see `PetCoat`); missing is its own look.
+    @Published private(set) var petCoats: [String: String] = [:]
     /// Who the friend is: nil for the same character as your pet.
     @Published private(set) var friendKind: PetKind?
     @Published private(set) var isOut = false
@@ -348,6 +354,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var readingPhoto = false
     @Published private(set) var hasPhotoCoat = false
     @Published private(set) var foldedEars = false
+    @Published private(set) var classicPixels = false
     /// Talk to your pet: on once the microphone and speech recognition are allowed.
     @Published private(set) var talks = false
     @Published private(set) var talkProblem: String?
@@ -369,6 +376,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// Meows, purrs and chewing.
     @Published private(set) var soundsOn = true
+    /// Each pet's own effect as its speech bubble comes up.
+    @Published private(set) var bubbleEffects = true
     /// Quiet because you asked, until you ask again.
     @Published private(set) var quietByHand = false
     private var autoQuietReason: QuietWatcher.Reason?
@@ -442,6 +451,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         hasPhotoCoat = PhotoCoat.palette != nil
         foldedEars = prefs.value(forKey: Key.foldedEars, default: false)
         CatSprites.shared.foldedEars = foldedEars
+        classicPixels = prefs.value(forKey: Key.classicPixels, default: false)
+        CatSprites.shared.classicPixels = classicPixels
         talks = prefs.value(forKey: Key.talks, default: false)
         notesModel = NoteModel(rawValue: prefs.value(forKey: Key.notesModel, default: "")) ?? (NoteModel.apple.available ? .apple : .none)
         notesModelName = prefs.value(forKey: Key.notesModelName, default: "")
@@ -450,6 +461,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         notesSource = MeetingSource(rawValue: prefs.value(forKey: Key.notesSource, default: ""))
             ?? (prefs.value(forKey: Key.notesHearOthers, default: true) ? .both : .microphone)
         hooksHeard = (prefs.value(forKey: Key.hooksHeard, as: [String: Double].self) ?? [:]).mapValues(Date.init(timeIntervalSince1970:))
+        petCoats = prefs.value(forKey: Key.petCoats, as: [String: String].self) ?? [:]
+        CatSprites.shared.petCoats = petCoats
         let kind = PetKind(rawValue: prefs.value(forKey: Key.kind, default: PetKind.cat.rawValue)) ?? .cat
         let cat = CatController(
             kind: kind.isOwn && OwnPets.pet(kind) == nil ? .cat : kind,
@@ -536,6 +549,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.daysTogether = { [weak self] in self?.daysTogether ?? 0 }
         cat.onStarsEarned = { [weak self] in self?.starsEarnedToday() }
         cat.onOpenWardrobe = { [weak self] in self?.openWardrobe() }
+        cat.onColour = { [weak self] in self?.setColour($0) }
+        cat.onClassicPixels = { [weak self] in self?.setClassicPixels($0) }
         cat.traits = social.petTraits
         cat.canPlayHands = { [weak self] asked in self?.canPlayHands(asked: asked) ?? false }
         cat.onHandsPlayed = { [weak self] won, how in self?.handsPlayed(won, how: how) }
@@ -600,6 +615,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         quietsAutomatically = prefs.value(forKey: Key.autoQuiet, default: true)
         quietWhenMirroring = prefs.value(forKey: Key.quietMirroring, default: true)
         soundsOn = prefs.value(forKey: Key.sounds, default: true)
+        bubbleEffects = prefs.value(forKey: Key.bubbleEffects, default: true)
+        BubbleEffect.isOn = bubbleEffects
         hasFriend = prefs.value(forKey: Key.friend, default: false)
         friendCoat = CatCoat(rawValue: prefs.value(forKey: Key.friendCoat, default: CatCoat.gray.rawValue)) ?? .gray
         friendKind = PetKind(rawValue: prefs.value(forKey: Key.friendKind, default: ""))
@@ -826,6 +843,23 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func setCoat(_ coat: CatCoat) {
         cat?.coat = coat
         persist()
+    }
+
+    /// The pet menu's Colour: a coat on a cat, a colourway on the others.
+    func setColour(_ id: String, friend: Bool = false) {
+        let kind = friend ? friendsKind : cat?.kind ?? .cat
+        if kind.hasCoats, let coat = CatCoat(rawValue: id) {
+            friend ? setFriendCoat(coat) : setCoat(coat)
+        } else if let coat = PetCoat.choices(kind).first(where: { $0.id == id }) {
+            setPetCoat(coat, friend: friend)
+        }
+    }
+
+    /// Puts a colourway on your pet, or on its friend.
+    func setPetCoat(_ coat: PetCoat, friend: Bool = false) {
+        petCoats[(friend ? "friend." : "") + coat.kind.rawValue] = coat.id
+        CatSprites.shared.petCoats = petCoats
+        host?.preferences.setValue(petCoats, forKey: Key.petCoats)
     }
 
     /// Reads a photo of your own cat into a coat and puts it on. Vision does
@@ -1410,8 +1444,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                                                  summary: summary, by: failed == nil ? by : nil, transcript: transcript)
                 self.lastNotes = file
                 self.suggest(PetSuggestions.meetingNotes(at: Date()))
-                self.addToShelf([file])
-                self.cat?.say(failed == nil ? CatWords.notesReady : CatWords.notesWithoutSummary)
+                // One line after the shelf answers, so "couldn't reach your shelf" isn't talked over.
+                self.addToShelf([file]) { [weak self] shelved in
+                    self?.cat?.say(!shelved ? CatWords.notesNotShelved : failed == nil ? CatWords.notesReady : CatWords.notesWithoutSummary)
+                }
                 if failed == nil { self.cat?.celebrate() }
             } catch {
                 self.notesProblem = error.localizedDescription
@@ -1431,6 +1467,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         foldedEars = on
         CatSprites.shared.foldedEars = on
         host?.preferences.setValue(on, forKey: Key.foldedEars)
+    }
+
+    func setClassicPixels(_ on: Bool) {
+        classicPixels = on
+        CatSprites.shared.classicPixels = on
+        host?.preferences.setValue(on, forKey: Key.classicPixels)
     }
 
     /// Swaps the cat for another character, or back; the friend follows.
@@ -1641,7 +1683,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// called directly (asking the services server would wait on itself);
     /// anywhere else, the service by name. All of it on the main thread:
     /// pasteboards and services are AppKit.
-    private func addToShelf(_ urls: [URL]) {
+    /// `done` replaces the pet's own shelf line, for callers that say more.
+    private func addToShelf(_ urls: [URL], done: ((Bool) -> Void)? = nil) {
+        let report = done ?? { [weak self] in self?.cat?.say($0 ? CatWords.shelved : CatWords.noShelf) }
         let board = NSPasteboard.withUniqueName()
         board.clearContents()
         board.writeObjects(urls as [NSURL])
@@ -1653,24 +1697,25 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             var problem: NSString?
             unsafeBitCast(method_getImplementation(method), to: Service.self)(provider, selector, board, "" as NSString, &problem)
             board.releaseGlobally()
-            cat?.say(problem == nil ? CatWords.shelved : CatWords.noShelf)
+            if let problem { NSLog("Pixpaw: Add to Droppy Shelf failed: %@", problem) }
+            report(problem == nil)
             return
         }
         // A host with services of its own but not this one would be asking
         // itself, and NSPerformService waits for the answer: say so instead.
         guard NSApp.servicesProvider == nil else {
             board.releaseGlobally()
-            cat?.say(CatWords.noShelf)
+            report(false)
             return
         }
         // The service by name, on the main thread, once the drop that
         // brought the files has finished.
         let name = board.name
-        DispatchQueue.main.async { [weak self] in
+        DispatchQueue.main.async {
             let board = NSPasteboard(name: name)
             let done = NSPerformService("Add to Droppy Shelf", board)
             board.releaseGlobally()
-            self?.cat?.say(done ? CatWords.shelved : CatWords.noShelf)
+            report(done)
         }
     }
 
@@ -2307,6 +2352,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func saveReminders() {
         host?.preferences.setValue(reminders, forKey: Key.reminders)
         health?.reminders = reminders
+    }
+
+    func setBubbleEffects(_ on: Bool) {
+        bubbleEffects = on
+        BubbleEffect.isOn = on
+        host?.preferences.setValue(on, forKey: Key.bubbleEffects)
     }
 
     func setSounds(_ on: Bool) {
@@ -3591,6 +3642,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             friend.onRecordGIF = cat.onRecordGIF
             friend.onFocus = cat.onFocus
             friend.onOpenWardrobe = cat.onOpenWardrobe
+            friend.onColour = { [weak self] in self?.setColour($0, friend: true) }
+            friend.onClassicPixels = cat.onClassicPixels
             friend.focusLabel = cat.focusLabel
             friend.onLofi = cat.onLofi
             friend.onPauseLofi = cat.onPauseLofi
@@ -3754,8 +3807,8 @@ extension PixpawDroplet: LockScreenStatusProviding {
     }
 
     private func lockScreenEntry() -> LockScreenStatusEntry? {
-        // Droppy's lock screen says it already while the pet uses Droppy's tools.
-        if usesDroppyTools, tools.isAvailable { return nil }
+        // Droppy's lock screen says it already while its Agents is on.
+        if droppyShowsUsage { return nil }
         let now = Date()
         let mine = tellsAgents ? agents.values.sorted { $0.name < $1.name } : []
         if let waiting = mine.first(where: { $0.state == .waiting }) {
@@ -3804,7 +3857,7 @@ extension PixpawDroplet: MenuBarExtraProviding {
     public func makeMenuBarExtra() -> MenuBarExtraDescriptor? {
         // Droppy's Agents has a gauge of its own while the pet uses Droppy's tools.
         guard showsMenuBar, !(usesDroppyTools && tools.isOn("agents")) else { return nil }
-        return MenuBarExtraDescriptor(title: "Pixpaw: AI Usage left", systemImage: menuBarSymbol) { [self] in
+        return MenuBarExtraDescriptor(title: "Pixpaw: AI usage left", systemImage: menuBarSymbol) { [self] in
             AnyView(PixpawMenuBarMenu(droplet: self))
         }
     }
@@ -3834,7 +3887,7 @@ private struct PixpawMenuBarMenu: View {
                         ForEach(agents, id: \.name) { agentRow($0, now: timeline.date) }
                     }
                 }
-                section("AI Usage left") {
+                section("AI usage left") {
                     if droplet.planUsage.isEmpty {
                         Text("Shows up once Claude Code, Antigravity or Codex reports it. Needs the hooks in the README.")
                             .font(.system(size: 11))
@@ -4109,7 +4162,7 @@ struct AgentLook {
     }
 }
 
-/// The widget's second page, AI Usage left: what's left of each coding
+/// The widget's second page, AI usage left: what's left of each coding
 /// agent's plan in a section of its own, and a question your agent asks with
 /// its answers. Solo it's a small table, five hours and week side by side;
 /// paired, each plan's emptier window.
@@ -4464,7 +4517,7 @@ private struct PixpawWidget: View {
         HStack(spacing: DroppySpacing.xsm) {
             Image(systemName: droplet.widgetShowsPlans ? "gauge.with.dots.needle.67percent" : "pawprint.fill")
                 .font(.system(size: 12, weight: .medium))
-            Text(droplet.widgetShowsPlans ? "AI Usage left" : "Pixpaw")
+            Text(droplet.widgetShowsPlans ? "AI usage left" : "Pixpaw")
                 .font(.system(size: 12, weight: .semibold))
                 .lineLimit(1)
                 .fixedSize()
@@ -4482,7 +4535,7 @@ private struct PixpawWidget: View {
                     .foregroundStyle(droplet.openAsk != nil && !droplet.widgetShowsPlans ? Color.orange : AdaptiveColors.notchSurfaceSecondaryText)
             }
             .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
-            .help(droplet.widgetShowsPlans ? "Back to your pet" : "AI Usage left: what's left of each AI's plan")
+            .help(droplet.widgetShowsPlans ? "Back to your pet" : "AI usage left: what's left of each AI's plan")
             .accessibilityLabel(droplet.widgetShowsPlans ? "Show your pet" : "Show AI usage left")
             if !droplet.widgetShowsPlans {
                 petButtons
@@ -4646,26 +4699,33 @@ private struct PixpawWidget: View {
         }
     }
 
+    /// The cat's coats, or the other pets' colourways.
     @ViewBuilder private var coatSwatches: some View {
             ForEach(cat.kind.hasCoats ? CatCoat.choices : []) { coat in
-                Button {
-                    droplet.setCoat(coat)
-                } label: {
-                    Circle()
-                        .fill(Color(nsColor: coat.swatch))
-                        .frame(width: 14, height: 14)
-                        .overlay {
-                            if coat == cat.coat {
-                                Image(systemName: "checkmark")
-                                    .font(.system(size: 8, weight: .bold))
-                                    .foregroundStyle(coat.isDark ? Color.white : Color.black.opacity(0.7))
-                            }
-                        }
-                }
-                .buttonStyle(DroppyCircleButtonStyle(size: Self.choiceSize))
-                .help(coat.title)
-                .accessibilityLabel(coat.title)
+                swatch(coat.swatch, dark: coat.isDark, chosen: coat == cat.coat, title: coat.title) { droplet.setCoat(coat) }
             }
+            let chosen = PetCoat.named(droplet.petCoats[cat.kind.rawValue], for: cat.kind)
+            ForEach(PetCoat.choices(cat.kind)) { coat in
+                swatch(coat.swatch, dark: coat.isDark, chosen: coat == chosen, title: coat.title) { droplet.setPetCoat(coat) }
+            }
+    }
+
+    private func swatch(_ colour: NSColor, dark: Bool, chosen: Bool, title: String, action: @escaping () -> Void) -> some View {
+        Button(action: action) {
+            Circle()
+                .fill(Color(nsColor: colour))
+                .frame(width: 14, height: 14)
+                .overlay {
+                    if chosen {
+                        Image(systemName: "checkmark")
+                            .font(.system(size: 8, weight: .bold))
+                            .foregroundStyle(dark ? Color.white : Color.black.opacity(0.7))
+                    }
+                }
+        }
+        .buttonStyle(DroppyCircleButtonStyle(size: Self.choiceSize))
+        .help(title)
+        .accessibilityLabel(title)
     }
 
     @ViewBuilder private var actions: some View {
@@ -4937,8 +4997,11 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Go home when it should be quiet", keywords: ["home", "quiet", "call", "bed", "night", "share", "screen", "sleep"], anchorID: SettingsPage.home.rawValue),
             SettingsSearchEntry(title: "Break reminders", keywords: ["cat", "health", "stretch", "water", "eyes", "break", "reminder", "custom", "pill", "exercise"], anchorID: SettingsPage.focus.rawValue),
             SettingsSearchEntry(title: "Sounds", keywords: ["cat", "meow", "purr", "sound", "mute"]),
+            SettingsSearchEntry(title: "Bubble effects", keywords: ["bubble", "speech", "effect", "animation", "sparkle", "fire", "paw", "plain"]),
             SettingsSearchEntry(title: "Your own pets", keywords: ["draw", "design", "custom", "own", "sprite", "pixel", "png", "aseprite", "piskel", "template", "import"], anchorID: SettingsPage.ownPets.rawValue),
-            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "pig", "piggy", "hog", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal", "coat", "colour", "color", "photo", "picture", "my cat", "fold", "folded", "ears", "scottish"]),
+            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dragon", "three heads", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "pig", "piggy", "hog", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal", "coat", "colour", "color", "photo", "picture", "my cat", "fold", "folded", "ears", "scottish", "classic", "pixels", "pixel", "pixel size", "hd", "fine", "finer", "chunky", "retro"]),
+            SettingsSearchEntry(title: "Colour", keywords: ["colour", "color", "coat", "breed", "orange", "tabby", "black", "white", "siamese", "calico"]
+                + CatArt.petCoats.keys.sorted().flatMap { CatArt.petCoats[$0, default: []].map { $0.title.lowercased() } }),
             SettingsSearchEntry(title: "Where it walks", keywords: ["cat", "roam", "windows", "bottom", "screen"], anchorID: SettingsPage.moving.rawValue),
             SettingsSearchEntry(title: "Notes", keywords: ["sign", "note", "todo", "to-do", "task", "list", "reminder", "board", "placard", "streak"], anchorID: SettingsPage.notes.rawValue),
             SettingsSearchEntry(title: "Countdowns", keywords: ["countdown", "days", "until", "trip", "deadline", "launch", "date"], anchorID: SettingsPage.notes.rawValue),
@@ -5376,6 +5439,23 @@ private struct PixpawSettings: View {
                     .labelsHidden()
                 }
                 if cat.kind.hasCoats {
+                    DropletGroupedPickerRow(title: "Colour") {
+                        Picker("Colour", selection: Binding(get: { cat.coat }, set: { droplet.setCoat($0) })) {
+                            ForEach(CatCoat.choices) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                } else if let chosen = PetCoat.named(droplet.petCoats[cat.kind.rawValue], for: cat.kind) {
+                    DropletGroupedPickerRow(title: "Colour", subtitle: "After real animals.") {
+                        Picker("Colour", selection: Binding(get: { chosen }, set: { droplet.setPetCoat($0) })) {
+                            ForEach(PetCoat.choices(cat.kind)) { Text($0.title).tag($0) }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                }
+                if cat.kind.hasCoats {
                     DropletControlRow(title: "Coat from a photo", icon: "photo",
                                       infoTip: "Pixpaw paints the cat in your own cat's colours: fur, stripes or patches, white and eyes. Only the colours are kept, never the photo.") {
                         HStack(spacing: DroppySpacing.sm) {
@@ -5406,10 +5486,25 @@ private struct PixpawSettings: View {
                         isOn: Binding(get: { droplet.foldedEars }, set: { droplet.setFoldedEars($0) })
                     )
                 }
+                if CatSprites.hasFineArt(cat.kind) || (droplet.hasFriend && CatSprites.hasFineArt(droplet.friendsKind)) {
+                    DropletGroupedPickerRow(title: "Pixel size", subtitle: "Fine (HD) on the desktop, or the original chunky pixels. For both pets.") {
+                        Picker("Pixel size", selection: Binding(get: { droplet.classicPixels }, set: { droplet.setClassicPixels($0) })) {
+                            Text("Fine (HD)").tag(false)
+                            Text("Chunky (classic)").tag(true)
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                }
                 DropletToggleRow(
                     title: "Sounds",
                     subtitle: "Its own voice when it talks, a purr when you pet it, crunching while it eats. Silent while quiet.",
                     isOn: Binding(get: { droplet.soundsOn }, set: { droplet.setSounds($0) })
+                )
+                DropletToggleRow(
+                    title: "Bubble effects",
+                    subtitle: "Its speech bubble comes up its own way: paw prints, honey, feathers, fire. Off, plain bubbles.",
+                    isOn: Binding(get: { droplet.bubbleEffects }, set: { droplet.setBubbleEffects($0) })
                 )
             }
 
@@ -5527,7 +5622,7 @@ private struct PixpawSettings: View {
             settingsSectionHeader("Your pet's card")
         } content: {
             DropletSettingsCard {
-                DropletGroupedPickerRow(title: "Open it", subtitle: "Holding leaves a click for petting; with a click, you pet it by stroking it with the pointer. A right-click always opens it too, and its ⋯ button gives the full menu.") {
+                DropletGroupedPickerRow(title: "Open it", subtitle: "Holding leaves a click for petting; with a click, you pet it by stroking it with the pointer. A right-click always opens it too. The card lists everything; VoiceOver's Show menu opens the classic menu.") {
                     Picker("Open it", selection: Binding(get: { droplet.cardOpening }, set: { droplet.setCardOpening($0) })) {
                         ForEach(PetCardOpening.allCases) { Text($0.title).tag($0) }
                     }
@@ -5714,7 +5809,7 @@ private struct PixpawSettings: View {
             DropletSettingsCard {
                 DropletGroupedPickerRow(
                     title: "Where it walks",
-                    subtitle: "Bottom and on windows: it jumps onto the tops of your windows and rides along when you move one. The bee flies anywhere; the parrot perches."
+                    subtitle: "Bottom and on windows: it jumps onto the tops of your windows and rides along when you move one. The bee flies anywhere; the parrot and the dragon perch."
                 ) {
                     Picker("Where it walks", selection: Binding(get: { cat.roaming }, set: { droplet.setRoaming($0) })) {
                         ForEach(CatRoaming.allCases) { roaming in
@@ -5805,7 +5900,7 @@ private struct PixpawSettings: View {
                                     .foregroundStyle(.secondary)
                                     .frame(maxWidth: .infinity, alignment: .leading)
                             } else {
-                                LazyVGrid(columns: [GridItem(.adaptive(minimum: 104), spacing: DroppySpacing.sm)], spacing: DroppySpacing.sm) {
+                                TileGrid(minimum: 104, spacing: DroppySpacing.sm) {
                                     ForEach(group.items) { item in wardrobeTile(item, festival: group.festivals[item]) }
                                 }
                             }
@@ -5901,18 +5996,25 @@ private struct PixpawSettings: View {
 
     private var wardrobeProgress: WardrobeProgress { cat.wardrobeProgress }
 
+    /// How many of the preview's pixels make one of the 20 x 16 art's: the
+    /// previews draw the pet as the desktop does (Pixel size), at one size.
+    private static func fineFactor(_ kind: PetKind, coat: CatCoat) -> CGFloat {
+        CatSprites.shared.drawsFine(kind, coat: coat) ? CGFloat(FineArt.scale) : 1
+    }
+
     /// The pet in what it wears, sitting and walking the other way, with a
     /// word for each place and the two buttons.
     private var wearingNow: some View {
         HStack(alignment: .center, spacing: DroppySpacing.md) {
             HStack(alignment: .bottom, spacing: DroppySpacing.sm) {
                 ForEach([CatFrame.sit, .walk1], id: \.self) { frame in
-                    if let image = CatSprites.shared.image(frame, coat: cat.coat, hat: cat.hat, collar: cat.collar, glasses: cat.glasses, kind: cat.kind) {
+                    if let image = CatSprites.shared.image(frame, coat: cat.coat, hat: cat.hat, collar: cat.collar, glasses: cat.glasses, kind: cat.kind, fine: true) {
+                        let pixel = 4 / Self.fineFactor(cat.kind, coat: cat.coat)
                         Image(decorative: image, scale: 1)
                             .interpolation(.none)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: CGFloat(image.width) * 4, height: CGFloat(image.height) * 4, alignment: .bottom)
+                            .frame(width: CGFloat(image.width) * pixel, height: CGFloat(image.height) * pixel, alignment: .bottom)
                             .scaleEffect(x: frame == .sit ? 1 : -1, y: 1)
                     }
                 }
@@ -5966,7 +6068,7 @@ private struct PixpawSettings: View {
             let mine = items.filter { $0.isUnlocked(wardrobeProgress) }.count
             switch slot {
             case .hat: return WardrobeGroup(title: "Head", note: "\(mine) of \(items.count) unlocked", items: items)
-            case .face: return WardrobeGroup(title: "Face", note: wearer.isOwn ? "not for pets you drew" : "\(mine) of \(items.count) unlocked", items: items)
+            case .face: return WardrobeGroup(title: "Face", note: wearer.isOwn ? "not for pets you drew" : wearer.looksLike == "dragon" ? "not for the dragon" : "\(mine) of \(items.count) unlocked", items: items)
             case .collar: return WardrobeGroup(title: "Neck", note: "cats for now", items: items)
             }
         }
@@ -6003,10 +6105,11 @@ private struct PixpawSettings: View {
         let image = CatSprites.shared.image(.sit, coat: model.1,
                                             hat: item.slot == .hat ? item : nil,
                                             collar: item.slot == .collar ? item : nil,
-                                            glasses: item.slot == .face ? item : nil, kind: model.0)
+                                            glasses: item.slot == .face ? item : nil, kind: model.0, fine: true)
+        let pixel = 3 / Self.fineFactor(model.0, coat: model.1)
         let progress = item.progress(wardrobeProgress)
         let state: String = {
-            if !fits { return item == .acornCap ? "Hamsters and rabbits" : item.slot == .collar ? "Cats only for now" : "Not for pets you drew" }
+            if !fits { return item == .acornCap ? "Hamsters and rabbits" : item.slot == .collar ? "Cats only for now" : !wearer.isOwn && wearer.looksLike == "dragon" ? "Not for the dragon" : "Not for pets you drew" }
             if wearing { return "Wearing" }
             if mine { return festival.map { "On \($0)" } ?? "Wear" }
             return item.whatsLeft(wardrobeProgress)
@@ -6021,7 +6124,7 @@ private struct PixpawSettings: View {
                             .interpolation(.none)
                             .resizable()
                             .aspectRatio(contentMode: .fit)
-                            .frame(width: CGFloat(image.width) * 3, height: CGFloat(image.height) * 3)
+                            .frame(width: CGFloat(image.width) * pixel, height: CGFloat(image.height) * pixel)
                     }
                 }
                 .frame(height: 72, alignment: .bottom)
@@ -6080,11 +6183,19 @@ private struct PixpawSettings: View {
                     .labelsHidden()
                 }
                 if droplet.friendsKind.hasCoats {
-                    DropletGroupedPickerRow(title: "Friend's coat") {
-                        Picker("Friend's coat", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
+                    DropletGroupedPickerRow(title: "Friend's colour") {
+                        Picker("Friend's colour", selection: Binding(get: { droplet.friendCoat }, set: { droplet.setFriendCoat($0) })) {
                             ForEach(CatCoat.choices) { coat in
                                 Text(coat.title).tag(coat)
                             }
+                        }
+                        .pickerStyle(.menu)
+                        .labelsHidden()
+                    }
+                } else if let chosen = PetCoat.named(droplet.petCoats["friend." + droplet.friendsKind.rawValue], for: droplet.friendsKind) {
+                    DropletGroupedPickerRow(title: "Friend's colour") {
+                        Picker("Friend's colour", selection: Binding(get: { chosen }, set: { droplet.setPetCoat($0, friend: true) })) {
+                            ForEach(PetCoat.choices(droplet.friendsKind)) { Text($0.title).tag($0) }
                         }
                         .pickerStyle(.menu)
                         .labelsHidden()
@@ -6551,7 +6662,7 @@ private struct PixpawSettings: View {
     private var usageSection: some View {
         DropletSettingsSection {
             VStack(alignment: .leading, spacing: 2) {
-                settingsSectionHeader("AI Usage left")
+                settingsSectionHeader("AI usage left")
                 Text("What's left of each AI's five hours and week, a section for each, on the second page of your pet's widget (the gauge button at its top) and in the menu bar.")
                     .font(.body)
                     .foregroundStyle(.secondary)
@@ -6559,7 +6670,7 @@ private struct PixpawSettings: View {
         } content: {
             DropletSettingsCard {
                 DropletToggleRow(
-                    title: "AI Usage left in the menu bar",
+                    title: "AI usage left in the menu bar",
                     icon: "gauge.with.dots.needle.67percent",
                     subtitle: droplet.droppyShowsUsage ? "Droppy's Agents shows this instead, while Use Droppy's own tools is on."
                         : "A gauge as full as your emptiest plan window, a raised hand while an agent needs you. Click it for every AI's windows and resets.",

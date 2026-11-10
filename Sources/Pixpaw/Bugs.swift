@@ -77,7 +77,7 @@ final class PixelBug {
         guard !caught else { return }
         caught = true
         frozen = true
-        layer.contents = AgentArt.squashed.frames.first
+        layer.contents = AgentArt.squashed.frames(fine: pet?.drawsFine == true).first
         DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) { [weak self] in
             MainActor.assumeIsolated { self?.remove() }
         }
@@ -123,7 +123,8 @@ final class PixelBug {
 
     private func draw() {
         guard !caught else { return }
-        layer.contents = AgentArt.bug.frame(at: resting > 0 ? 0 : tick, every: 2)
+        // HD (twice the grid, same points) beside an HD pet.
+        layer.contents = AgentArt.bug.frame(at: resting > 0 ? 0 : tick, every: 2, fine: pet?.drawsFine == true)
         layer.setAffineTransform(heading > 0 ? .identity : CGAffineTransform(scaleX: -1, y: 1))
     }
 }

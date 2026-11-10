@@ -219,34 +219,22 @@ final class PetCard {
     var justClosed: Bool { Date().timeIntervalSince(closedAt) < 0.4 }
 
     /// Opens the card over `petFrame` (screen coordinates); actions go to
-    /// `target`, the pet's view, exactly as its menu's do. Its ⋯ button
-    /// closes it and calls `more`, the full menu.
+    /// `target`, the pet's view, exactly as its menu's do.
     /// A letter typed while it's open closes it and goes to `type`, the
     /// "What can I do?" box, with that letter in it.
     func show(_ model: PetCardModel, over petFrame: CGRect, target: NSView, look: PetCardLook, level: Double,
-              more: @escaping () -> Void, type: @escaping (String) -> Void) {
+              type: @escaping (String) -> Void) {
         close()
         self.target = target
         self.look = look
         self.level = level
         let previous = NSWorkspace.shared.frontmostApplication
         openedOver = previous
-        let view = PetCardView(model: model, look: look, level: level,
-                               run: { [weak self] item, frame in self?.run(item, at: frame, depth: 0) },
-                               hover: { [weak self] item, frame in self?.hover(item, at: frame, depth: 0) },
-                               more: { [weak self] in
-                                   // Hide the card but keep Droppy active until the menu is done:
-                                   // close() hands focus back first, and a menu popped up after
-                                   // that never shows. After the click: a menu popped up from
-                                   // inside the button's own click would track over the panel.
-                                   self?.closeFlyouts(from: 0)
-                                   self?.panel?.orderOut(nil)
-                                   DispatchQueue.main.async {
-                                       more()
-                                       self?.close()
-                                   }
-                               })
-        let panel = PetCardPanel(view)
+        let panel = Self.fitted(on: petFrame) { height in
+            PetCardView(model: model, look: look, level: level, height: height,
+                        run: { [weak self] item, frame in self?.run(item, at: frame, depth: 0) },
+                        hover: { [weak self] item, frame in self?.hover(item, at: frame, depth: 0) })
+        }
         panel.onCancel = { [weak self] in self?.close() }
         panel.onType = { [weak self] text in
             self?.close()
@@ -294,10 +282,12 @@ final class PetCard {
     private func hover(_ item: PetCardItem, at frame: CGRect, depth: Int) {
         closeFlyouts(from: depth)
         guard let children = item.children, item.enabled, let parent = panel(at: depth) else { return }
-        let view = PetCardMenuView(items: children, look: look, level: level,
-                                   run: { [weak self] child, rect in self?.run(child, at: rect, depth: depth + 1) },
-                                   hover: { [weak self] child, rect in self?.hover(child, at: rect, depth: depth + 1) })
-        let flyout = PetCardPanel(view)
+        let look = look, level = level
+        let flyout = Self.fitted(on: parent.frame) { height in
+            PetCardMenuView(items: children, look: look, level: level, height: height,
+                            run: { [weak self] child, rect in self?.run(child, at: rect, depth: depth + 1) },
+                            hover: { [weak self] child, rect in self?.hover(child, at: rect, depth: depth + 1) })
+        }
         flyout.onCancel = { [weak self] in self?.close() }
         flyout.setFrameOrigin(Self.beside(parent.frame, rowTop: parent.frame.maxY - frame.minY, size: flyout.frame.size))
         flyouts.append(flyout)
@@ -346,6 +336,15 @@ final class PetCard {
         var y = rowTop - size.height + 6
         y = min(max(y, area.minY + 8), area.maxY - size.height - 8)
         return CGPoint(x: x.rounded(), y: y.rounded())
+    }
+
+    /// A panel no taller than the screen it opens on: one that would be is
+    /// made again at that height, its rows scrolling.
+    private static func fitted<V: View>(on rect: CGRect, _ make: (CGFloat?) -> V) -> PetCardPanel {
+        let panel = PetCardPanel(make(nil))
+        let cap = ((screen(for: rect)?.visibleFrame.height ?? .greatestFiniteMagnitude) - 16).rounded(.down)
+        guard panel.frame.height > cap else { return panel }
+        return PetCardPanel(make(cap))
     }
 
     private static func screen(for rect: CGRect) -> NSScreen? {
@@ -401,7 +400,10 @@ struct PetCardSurface: View {
         let shape = RoundedRectangle(cornerRadius: radius, style: .continuous)
         switch look {
         case .droppy:
+            // Droppy's surface melts from black into clear glass, so the lowest rows
+            // washed out over a light desktop; a dark layer under it keeps them readable.
             DroppyPanelSurface(cornerRadius: radius)
+                .background(shape.fill(Color.black.opacity(0.9)))
         case .solid:
             shape.fill(Color(nsColor: .windowBackgroundColor))
         case .clear, .tinted, .frosted:
@@ -428,10 +430,11 @@ private struct PetCardView: View {
     let model: PetCardModel
     let look: PetCardLook
     let level: Double
+    /// Set when the card would be taller than its screen: it's this tall,
+    /// and its rows scroll under the header and tiles.
+    let height: CGFloat?
     let run: (PetCardItem, CGRect) -> Void
     let hover: (PetCardItem, CGRect) -> Void
-    /// The ⋯ button: the full menu.
-    let more: () -> Void
     private static let radius: CGFloat = 20
 
     var body: some View {
@@ -441,23 +444,31 @@ private struct PetCardView: View {
             LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DroppySpacing.sm), count: 3), spacing: DroppySpacing.sm) {
                 ForEach(model.tiles) { tile($0) }
             }
-            VStack(alignment: .leading, spacing: DroppySpacing.xs) {
-                ForEach(model.groups) { group in
-                    if let title = group.title {
-                        Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                            .padding(.horizontal, DroppySpacing.sm).padding(.top, 2)
-                            .accessibilityAddTraits(.isHeader)
-                    } else {
-                        Divider().padding(.vertical, 2)
-                    }
-                    ForEach(group.items) { PetCardRow(item: $0, accent: false, run: run, hover: hover) }
-                }
+            if height != nil {
+                ScrollView { rows }
+            } else {
+                rows
             }
         }
         .padding(DroppySpacing.lg)
-        .frame(width: 280)
+        .frame(width: 280, height: height)
         .background(PetCardSurface(look: look, level: level, radius: Self.radius))
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
+    }
+
+    private var rows: some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            ForEach(model.groups) { group in
+                if let title = group.title {
+                    Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                        .padding(.horizontal, DroppySpacing.sm).padding(.top, 2)
+                        .accessibilityAddTraits(.isHeader)
+                } else {
+                    Divider().padding(.vertical, 2)
+                }
+                ForEach(group.items) { PetCardRow(item: $0, accent: false, run: run, hover: hover) }
+            }
+        }
     }
 
     private var header: some View {
@@ -479,13 +490,6 @@ private struct PetCardView: View {
                 .help(item.shortcut.map { "\(item.title) \($0)" } ?? item.title)
                 .accessibilityLabel(item.spoken)
             }
-            Button(action: more) {
-                Image(systemName: "ellipsis")
-            }
-            .buttonStyle(DroppyCircleButtonStyle(size: 28))
-            .help("More")
-            .accessibilityLabel("More")
-            .accessibilityHint("Every item in a menu")
         }
     }
 
@@ -540,10 +544,26 @@ private struct PetCardMenuView: View {
     let items: [PetCardItem]
     let look: PetCardLook
     let level: Double
+    /// Set when the list would be taller than its screen; it scrolls.
+    let height: CGFloat?
     let run: (PetCardItem, CGRect) -> Void
     let hover: (PetCardItem, CGRect) -> Void
 
     var body: some View {
+        Group {
+            if height != nil {
+                ScrollView { list }
+            } else {
+                list
+            }
+        }
+        .padding(DroppySpacing.sm)
+        .frame(width: 230, height: height)
+        .background(PetCardSurface(look: look, level: level, radius: 14))
+        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+    }
+
+    private var list: some View {
         VStack(alignment: .leading, spacing: 2) {
             ForEach(items) { item in
                 if item.isSeparator {
@@ -553,10 +573,6 @@ private struct PetCardMenuView: View {
                 }
             }
         }
-        .padding(DroppySpacing.sm)
-        .frame(width: 230)
-        .background(PetCardSurface(look: look, level: level, radius: 14))
-        .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
     }
 }
 

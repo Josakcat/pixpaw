@@ -27,6 +27,7 @@ let face = PetMenuState.Place(title: "Face", symbol: "eyeglasses", none: "No gla
 func everything(home: Bool, asleep: Bool = false) -> PetMenuState {
     var s = PetMenuState()
     s.suggestions = [screenshot, ci]
+    s.hasFineArt = true
     s.talks = true
     s.talkKey = PetMenuShortcut(key: "t", control: true, option: true)
     s.askKey = key
@@ -48,6 +49,7 @@ func everything(home: Bool, asleep: Bool = false) -> PetMenuState {
     s.notesKept = true
     s.scrollingCapture = true
     s.places = [head, face]
+    s.colours = [.init(title: "Golden", id: "golden", worn: true), .init(title: "Husky", id: "husky", worn: false)]
     s.stars = 185
     return s
 }
@@ -83,9 +85,20 @@ checkSame(droppyFocus, "Droppy's Pomodoro")
 
 // The menu's groups and order.
 let full = PetMenu.groups(everything(home: true))
-check(full.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "—"], "menu groups in order")
-check(full.last?.items.map(\.title) == ["Capture", "Wardrobe"], "Capture and Wardrobe after the separator")
-check(PetMenu.groups(PetMenuState()).map { $0.title ?? "—" } == ["Ask me", "Care", "Work", "—"], "no Right now, Meetings or Home when empty")
+check(full.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "Look", "—"], "menu groups in order")
+let look = full.first { $0.title == "Look" }
+check(look?.items.map(\.title) == ["Colour", "Wardrobe", "Pixel size"], "Colour beside Wardrobe, then Pixel size")
+check(full.last?.items.map(\.title) == ["Capture"], "Capture after the separator")
+check(PetMenu.groups(PetMenuState()).map { $0.title ?? "—" } == ["Ask me", "Care", "Work", "Look", "—"], "no Right now, Meetings or Home when empty")
+check(PetMenu.groups(PetMenuState()).first { $0.title == "Look" }?.items.map(\.title) == ["Wardrobe"], "no colours (a pet you drew), no Colour, no fine art, no Pixel size")
+var friendMenu = everything(home: false)
+friendMenu.isFriend = true
+let friendSizes = PetMenu.groups(friendMenu).first { $0.title == "Look" }?.items.last?.children ?? []
+check(friendSizes.first?.title == "Fine (HD)" && friendSizes.last?.title == "For both pets",
+      "the friend's Pixel size says it's for both pets")
+let colours = look?.items[0].children ?? []
+check(colours.map(\.title) == ["Golden", "Husky"] && colours[0].checked && !colours[1].checked && colours[1].represented == "husky",
+      "Colour: the one on ticked, each by its id")
 
 // The card: six big buttons in their order, the header, Right now.
 let noHome = PetMenu.groups(everything(home: false))
@@ -99,12 +112,12 @@ check(card.groups.first?.title == "Right now" && card.groups.first?.items.map(\.
 let homeCard = PetCardLayout(full, suggestions: [])
 check(homeCard.tiles.contains { $0.title == "Nap" && $0.symbol == "house.fill" }, "with a home, Nap is the home's: short, with the home icon")
 check(homeCard.groups.first { $0.title == "Home" }?.items.map(\.title) == ["Put the home away"], "Put the home away stays a row")
-check(homeCard.groups.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "—"], "card groups with a home")
+check(homeCard.groups.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "Look", "—"], "card groups with a home")
 let pomodoro = PetCardLayout(PetMenu.groups(droppyFocus), suggestions: [])
 check(pomodoro.tiles[3].title == "Focusing with Droppy" && !pomodoro.tiles[3].enabled, "Droppy's Pomodoro: the Focus button is off on both")
 
 // Wardrobe: ticks, the next one switched off, the stars.
-let wardrobe = full.last!.items[1]
+let wardrobe = look!.items[1]
 check(wardrobe.badge == "185 ★", "Wardrobe shows the stars")
 let hats = wardrobe.children![0].children!
 check(hats.map(\.title) == ["No hat", "Party hat", "", "Next: Beanie, 15 ★ to go"] && hats[1].checked && !hats[0].checked && !hats[3].enabled,

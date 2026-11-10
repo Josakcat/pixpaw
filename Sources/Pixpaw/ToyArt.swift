@@ -102,6 +102,15 @@ enum ToyArt {
             ".oGgGgGgo.",
             "..oooooo..",
         ], ["G": 0x2E8B3A, "g": 0x6CC46A]),
+        .marshmallow: ([
+            "..ooooo..",
+            ".oWWWWWo.",
+            "oWWWWWWWo",
+            "oWTWWWTWo",
+            "oWTTWTTWo",
+            ".oTTTTTo.",
+            "..ooooo..",
+        ], ["W": 0xFFF6E8, "T": 0xD9924A]),
         .fish: ([
             "...ooo....",
             ".ooBBBo.oo",
@@ -114,8 +123,9 @@ enum ToyArt {
 
     /// The toy's picture, and the same turned the other way (for one that
     /// rolls); nil for the toys drawn elsewhere (yarn, teaser, laser, ball).
-    static func frames(_ game: PetGame) -> [CGImage]? {
-        guard let art = art[game] else { return nil }
+    /// `fine`: the HD drawing (`FineArt.toys`, twice the grid), beside an HD pet.
+    static func frames(_ game: PetGame, fine: Bool = false) -> [CGImage]? {
+        guard let art = fine ? FineArt.toys[game.rawValue] : art[game] else { return nil }
         let mirrored = art.rows.map { String($0.reversed()) }
         return [image(art.rows, art.palette), image(mirrored, art.palette)].compactMap { $0 }
     }

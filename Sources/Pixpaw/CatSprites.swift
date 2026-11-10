@@ -46,11 +46,43 @@ enum CatCoat: String, CaseIterable, Identifiable, Codable {
     @MainActor var isDark: Bool { (swatch.usingColorSpace(.sRGB)?.brightnessComponent ?? 1) < 0.45 }
 }
 
+/// A built-in pet's colourway, after a real animal (Tools/sprites.py
+/// `PET_COATS`): new colours on the same pixels. The first is the pet's own
+/// look and the default. The cat has `CatCoat`; a pet you drew, its own colours.
+struct PetCoat: Identifiable, Hashable {
+    let kind: PetKind
+    let id: String
+    let title: String
+
+    static func choices(_ kind: PetKind) -> [PetCoat] {
+        (CatArt.petCoats[kind.rawValue] ?? []).map { PetCoat(kind: kind, id: $0.id, title: $0.title) }
+    }
+
+    /// The colourway stored as `id`; anything unknown is the pet's own look.
+    static func named(_ id: String?, for kind: PetKind) -> PetCoat? {
+        let all = choices(kind)
+        return all.first { $0.id == id } ?? all.first
+    }
+
+    /// The 20 x 16 art's colours, and the finer art's (the own look's are the art's).
+    var palette: [Character: UInt32]? { CatArt.petCoatPalettes["\(kind.rawValue).\(id)"] ?? CatArt.coats[kind.rawValue] }
+    var finePalette: [Character: UInt32]? { FineArt.petCoatPalettes["\(kind.rawValue).\(id)"] ?? FineArt.palettes[kind.rawValue] }
+
+    /// The swatch: the body's colour as the desktop draws it (the dragon's own
+    /// look is dark in finer pixels, caramel in classic ones).
+    @MainActor var swatch: NSColor {
+        let fine = CatSprites.hasFineArt(kind) && !CatSprites.shared.classicPixels
+        return NSColor(rgb: (fine ? finePalette?["f"] : palette?[kind == .parrot ? "G" : "f"]) ?? 0xFFFFFF)
+    }
+
+    @MainActor var isDark: Bool { (swatch.usingColorSpace(.sRGB)?.brightnessComponent ?? 1) < 0.45 }
+}
+
 /// Who lives on the desktop: the cat, or a character picked instead of it.
 /// Every character has the cat's frames, so the same moods drive them all.
 /// `own1` to `own5` are the pets you drew yourself (see OwnPets.swift).
 enum PetKind: String, CaseIterable, Identifiable, Codable {
-    case cat, bee, parrot, dino, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig
+    case cat, bee, parrot, dino, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig, dragon
     case own1, own2, own3, own4, own5
 
     var id: String { rawValue }
@@ -70,6 +102,7 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
         case .rabbit: "Rabbit"
         case .shark: "Shark"
         case .pig: "Pig"
+        case .dragon: "Dragon"
         }
     }
 
@@ -93,7 +126,7 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
 
     /// Perches where the cat would stand, but takes off and flies whenever
     /// it goes somewhere.
-    @MainActor var fliesWhenMoving: Bool { actsLike == .parrot }
+    @MainActor var fliesWhenMoving: Bool { actsLike == .parrot || actsLike == .dragon }
 
     /// The games it plays, in its Play menu: a cat bats yarn and chases the
     /// teaser and the laser but won't fetch; a dog fetches, and so on.
@@ -111,7 +144,31 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
         case .hippo: [.watermelon, .yarn, .fetch]
         case .shark: [.fish, .fetch, .laser]
         case .pig: [.watermelon, .carrot, .yarn]
+        case .dragon: [.marshmallow, .fetch, .teaser]
         case .own1, .own2, .own3, .own4, .own5: [.yarn, .teaser, .laser]
+        }
+    }
+
+    /// How its speech bubble comes up: each pet with its own effect (the
+    /// dragon breathes it alight), a pet you drew with a sparkle in its
+    /// colour; plain with Bubble effects off.
+    @MainActor var bubbleStyle: BubbleStyle {
+        guard BubbleEffect.isOn else { return .plain }
+        switch self {
+        case .cat: return .paws
+        case .dog: return .bones
+        case .bee: return .honey
+        case .parrot: return .feathers
+        case .dino: return .leaves
+        case .hamster: return .seeds
+        case .chicken: return .eggs
+        case .giraffe: return .spots
+        case .hippo: return .bubbles
+        case .rabbit: return .carrots
+        case .shark: return .splash
+        case .pig: return .mud
+        case .dragon: return .fire
+        case .own1, .own2, .own3, .own4, .own5: return .sparkle(OwnPets.mainColour(self) ?? 0xB79CFF)
         }
     }
 
@@ -131,13 +188,13 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
 /// like the teaser, chased like the laser dot, or thrown for fetch.
 enum PetGame: String, CaseIterable {
     case yarn, teaser, laser, fetch
-    case mouse, frisbee, bigBone, seed, carrot, worm, bell, flower, leaves, watermelon, fish
+    case mouse, frisbee, bigBone, seed, carrot, worm, bell, flower, leaves, watermelon, fish, marshmallow
 
     enum Way { case roll, dangle, chase, fetch }
 
     var way: Way {
         switch self {
-        case .yarn, .mouse, .watermelon: .roll
+        case .yarn, .mouse, .watermelon, .marshmallow: .roll
         case .teaser, .seed, .carrot, .worm, .bell, .flower, .leaves: .dangle
         case .laser, .fish: .chase
         case .fetch, .frisbee, .bigBone: .fetch
@@ -161,6 +218,7 @@ enum PetGame: String, CaseIterable {
         case .leaves: "Fresh leaves"
         case .watermelon: "Watermelon"
         case .fish: "Little fish"
+        case .marshmallow: "Roasted marshmallow"
         }
     }
 
@@ -181,6 +239,7 @@ enum PetGame: String, CaseIterable {
         case .leaves: "leaf.fill"
         case .watermelon: "circle.bottomhalf.filled"
         case .fish: "fish.fill"
+        case .marshmallow: "flame.fill"
         }
     }
 }
@@ -211,7 +270,7 @@ final class CatSprites {
     /// don't flicker off with every blink.
     private func eyes(_ art: String, kind: PetKind) -> [EyeBox] {
         if let hit = eyeCache[art] { return hit }
-        let eye: Character = kind == .parrot ? "K" : "e"
+        let eye: Character = kind == .parrot ? "K" : kind == .dragon ? "E" : "e"
         var found = CatArt.frames[art].map { WardrobeArt.eyes(in: $0, eye: eye) } ?? []
         let sit = kind.artKey(.sit)
         if WardrobeArt.borrowsSitEyes(art), art != sit, let rows = CatArt.frames[sit],
@@ -230,12 +289,86 @@ final class CatSprites {
         didSet { if foldedEars != oldValue { forgetDrawings() } }
     }
 
+    /// Each built-in pet's colourway id (see `PetCoat`) by kind, and the
+    /// friend's as "friend.<kind>"; missing is the pet's own look.
+    var petCoats: [String: String] = [:] {
+        didSet { if petCoats != oldValue { forgetDrawings() } }
+    }
+
+    /// The pet's colourway, or its friend's; nil for the cat and a pet you drew.
+    func petCoat(_ kind: PetKind, friend: Bool = false) -> PetCoat? {
+        PetCoat.named(petCoats[(friend ? "friend." : "") + kind.rawValue], for: kind)
+    }
+
+    /// The 20 x 16 art on the desktop too, in place of finer art.
+    var classicPixels = false {
+        didSet { if classicPixels != oldValue { forgetDrawings() } }
+    }
+
+    /// The look's finer art (see `FineArt`), when it has some and it is
+    /// wanted, not with Classic pixels. The cat has one sheet, the gray
+    /// tabby's (with its ears folded or not), worn by every coat; the
+    /// others go by their kind.
+    private func fineLook(_ kind: PetKind, coat: CatCoat) -> String? {
+        guard !classicPixels else { return nil }
+        let look = kind.hasCoats ? "\(kind.rawValue).gray\(foldedEars ? ".folded" : "")" : kind.rawValue
+        return FineArt.palettes[look] == nil ? nil : look
+    }
+
+    /// Finer colours worked out for a coat, kept until drawings are forgotten
+    /// (a new photo coat).
+    private var fineCoats: [CatCoat: [Character: UInt32]] = [:]
+
+    /// The finer look's colours in this coat: the gray tabby as drawn, the
+    /// other coats from their 20 x 16 colours.
+    private func finePalette(_ look: String, kind: PetKind, coat: CatCoat, petCoat: PetCoat?) -> [Character: UInt32]? {
+        guard kind.hasCoats, coat != .gray else { return petCoat?.finePalette ?? FineArt.palettes[look] }
+        if let hit = fineCoats[coat] { return hit }
+        // Until there's a photo, its coat is the gray tabby's.
+        guard let colours = coat.palette, colours != CatArt.coats[CatCoat.gray.rawValue] else { return FineArt.palettes[look] }
+        let made = FineArt.palette(coat: colours)
+        fineCoats[coat] = made
+        return made
+    }
+
+    /// Whether any look of this kind has finer art, for the Classic pixels setting.
+    static func hasFineArt(_ kind: PetKind) -> Bool {
+        FineArt.palettes.keys.contains { $0 == kind.rawValue || $0.hasPrefix("\(kind.rawValue).") }
+    }
+
+    /// Whether the desktop draws this pet in finer pixels, `FineArt.scale`
+    /// to each of the 20 x 16 art's.
+    func drawsFine(_ kind: PetKind, coat: CatCoat) -> Bool { fineLook(kind, coat: coat) != nil }
+
+    /// Points per pixel of what `image(fine: true)` draws for this pet.
+    func pixelSize(_ kind: PetKind, coat: CatCoat) -> CGFloat {
+        drawsFine(kind, coat: coat) ? Self.scale / CGFloat(FineArt.scale) : Self.scale
+    }
+
+    /// The 20 x 16 art's small grids (hats, collars, the laptop) for finer
+    /// art: their HD drawing, or else drawn `factor` times over.
+    private var enlarged: [String: [String]] = [:]
+
+    private func accessory(_ name: String, factor: Int) -> [String]? {
+        guard let art = CatArt.accessories[name] else { return nil }
+        guard factor > 1 else { return art }
+        if let fine = FineArt.accessories[name] { return fine }
+        let key = "\(name).\(factor)"
+        if let hit = enlarged[key] { return hit }
+        let big = art.flatMap { row in
+            Array(repeating: String(row.flatMap { Array(repeating: $0, count: factor) }), count: factor)
+        }
+        enlarged[key] = big
+        return big
+    }
+
     /// Goes up whenever drawings already made are out of date (a new photo
     /// coat, ears folded), so a pet on screen knows to draw itself again.
     private(set) var version = 0
 
     func forgetDrawings() {
         cache.removeAll()
+        fineCoats.removeAll()
         version += 1
     }
     /// The frame in its coat, wearing the hat and collar if it has them, and
@@ -244,37 +377,54 @@ final class CatSprites {
     /// grows upward when a hat rises above the art; the feet stay on the
     /// bottom row. `swing` pushes the legs that many art pixels sideways;
     /// `laptop` puts one in front of it, under its head, while it works.
+    /// `fine` (the desktop) draws the look's finer art when it has some;
+    /// `pixelSize` says how big its pixels are then.
     func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil, glasses: CatAccessory? = nil,
-               headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0, laptop: Bool = false) -> CGImage? {
-        let art = kind.artKey(frame)
-        // No headphones are drawn for a pet you drew, so it keeps its hat on.
-        let hat = headphones && !kind.isOwn ? nil : costume ?? hat?.rawValue
-        // Glasses only where they are drawn: a built-in pet, eyes in view.
-        let glasses = kind.isOwn ? nil : glasses
-        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(glasses?.rawValue ?? "-").\(headphones).\(swing).\(laptop)"
+               headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0, laptop: Bool = false,
+               fine: Bool = false, friend: Bool = false) -> CGImage? {
+        let fineLook = fine ? fineLook(kind, coat: coat) : nil
+        let petCoat = self.petCoat(kind, friend: friend)
+        let art = fineLook.map { "\($0).\(frame.rawValue)" } ?? kind.artKey(frame)
+        // Finer art's pixels are this many of the 20 x 16 art's, each way.
+        let factor = fineLook == nil ? 1 : FineArt.scale
+        let phonesAt: (art: [String], left: Int, top: Int)? = fineLook == nil
+            ? CatArt.headphonesAt[art].flatMap { at in CatArt.headphones[at.0].map { ($0, at.1, at.2) } }
+            : FineArt.headphonesAt[art].flatMap { at in FineArt.headphones[at.0].map { ($0, at.1, at.2) } }
+        // Headphones take the hat's place only where they are drawn: a pet
+        // you drew, the dragon, or a pose without them keeps its hat on.
+        let hat = headphones && !kind.isOwn && phonesAt != nil ? nil : costume ?? hat?.rawValue
+        // Glasses only on whoever they fit (not a pet you drew or the dragon), eyes in view.
+        let wearer = Wearer(isOwn: kind.isOwn, hasNeck: kind.wearsCollars, looksLike: kind.actsLike.rawValue)
+        let glasses = glasses.flatMap { $0.fits(wearer) ? $0 : nil }
+        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(glasses?.rawValue ?? "-").\(headphones).\(swing).\(laptop).\(factor).\(petCoat?.id ?? "-")"
         if let hit = cache[key] { return hit }
-        let folded = foldedEars && kind == .cat
-        guard let rows = (CatArt.frames[art] ?? OwnPets.frames[art]).map({ folded ? Self.fold($0) : $0 })
-                .map({ swing == 0 ? $0 : Self.swing($0, by: swing) }),
-              let palette = kind.isOwn ? OwnPets.colours[kind] : kind.hasCoats ? coat.palette : CatArt.coats[kind.rawValue] else { return nil }
+        // Finer art has its folded ears drawn.
+        let folded = foldedEars && kind == .cat && fineLook == nil
+        guard let rows = (fineLook == nil ? CatArt.frames[art] ?? OwnPets.frames[art] : FineArt.frames[art]).map({ folded ? Self.fold($0) : $0 })
+                .map({ swing == 0 ? $0 : Self.swing($0, by: swing * factor) }),
+              let palette = fineLook.flatMap({ finePalette($0, kind: kind, coat: coat, petCoat: petCoat) })
+                ?? (kind.isOwn ? OwnPets.colours[kind] : kind.hasCoats ? coat.palette : petCoat?.palette ?? CatArt.coats[kind.rawValue]) else { return nil }
         // A pet you drew wears its hat on top of its head, and no collar.
-        let anchor = CatArt.anchors[art] ?? OwnPets.hatSpots[art].map { ($0.0, $0.1, -1.0, -1) }
+        let anchor = fineLook == nil ? CatArt.anchors[art] ?? OwnPets.hatSpots[art].map { ($0.0, $0.1, -1.0, -1) } : FineArt.anchors[art]
         let width = rows.first?.count ?? 0
+        // Hats, collars and the laptop in finer art take their HD colours too.
+        let wornColours = factor > 1 ? FineArt.accessoryColors : CatArt.accessoryColors
 
         // Accessory pixels laid over the art, in art coordinates (y may be negative).
         var overlay: [(x: Int, y: Int, rgb: UInt32)] = []
         let darkFur = palette["f"].map(WardrobeArt.isDark) ?? false
         // Glasses first, so a hat brim wins where they meet.
         if let glasses, !WardrobeArt.hidesGlasses(art) {
-            for pixel in WardrobeArt.glasses(glasses, eyes: eyes(art, kind: kind), darkFur: darkFur) {
+            let boxes = fineLook == nil ? eyes(art, kind: kind) : FineArt.eyes[art] ?? []
+            for pixel in WardrobeArt.glasses(glasses, eyes: boxes, darkFur: darkFur) {
                 if let rgb = CatArt.accessoryColors[pixel.colour], pixel.x >= 0, pixel.x < width {
                     overlay.append((pixel.x, pixel.y, rgb))
                 }
             }
         }
         // The headset goes where headphones go, not on top of the head.
-        if hat == CatAccessory.headset.rawValue, let (view, left, top) = CatArt.headphonesAt[art], let phones = CatArt.headphones[view] {
-            for pixel in WardrobeArt.headset(phones, left: left, top: top, darkFur: darkFur) {
+        if hat == CatAccessory.headset.rawValue, let (phones, left, top) = phonesAt {
+            for pixel in WardrobeArt.headset(phones, left: left, top: top, darkFur: darkFur, size: factor) {
                 if let rgb = CatArt.accessoryColors[pixel.colour], pixel.x >= 0, pixel.x < width {
                     overlay.append((pixel.x, pixel.y, rgb))
                 }
@@ -282,19 +432,21 @@ final class CatSprites {
         }
         if let anchor {
             for (item, isHat, centre, row) in [(hat, true, anchor.0, anchor.1), (collar?.rawValue, false, anchor.2, anchor.3)] {
-                guard let item, row >= 0, let art = CatArt.accessories[item] else { continue }
-                let left = Int((centre - Double(art[0].count) / 2).rounded()) + (CatArt.accessoryShift[item] ?? 0)
-                let top = isHat ? row - art.count + 1 - (CatArt.accessoryLift[item] ?? 0) : row
+                guard let item, row >= 0, let art = accessory(item, factor: factor) else { continue }
+                let placed = Int((centre - Double(art[0].count) / 2).rounded()) + (CatArt.accessoryShift[item] ?? 0) * factor
+                // Finer art's heads come nearer the frame's edge: kept whole inside it (a pencil by a side-on face).
+                let left = factor > 1 ? max(0, min(placed, width - art[0].count)) : placed
+                let top = isHat ? row - art.count + 1 - (CatArt.accessoryLift[item] ?? 0) * factor : row
                 for (y, line) in art.enumerated() {
                     for (x, char) in line.enumerated() {
-                        if let rgb = CatArt.accessoryColors[char], left + x >= 0, left + x < width {
+                        if let rgb = wornColours[char], left + x >= 0, left + x < width {
                             overlay.append((left + x, top + y, rgb))
                         }
                     }
                 }
             }
         }
-        if headphones, let (view, left, top) = CatArt.headphonesAt[art], let phones = CatArt.headphones[view] {
+        if headphones, let (phones, left, top) = phonesAt {
             for (y, line) in phones.enumerated() {
                 for (x, char) in line.enumerated() {
                     if let rgb = CatArt.accessoryColors[char], left + x >= 0, left + x < width {
@@ -303,13 +455,13 @@ final class CatSprites {
                 }
             }
         }
-        if laptop, let computer = CatArt.accessories["laptop"], let anchor {
+        if laptop, let computer = accessory("laptop", factor: factor), let anchor {
             // On the floor, centred under the head.
             let left = Int((anchor.0 - Double(computer[0].count) / 2).rounded())
             let top = rows.count - computer.count
             for (y, line) in computer.enumerated() {
                 for (x, char) in line.enumerated() {
-                    if let rgb = CatArt.accessoryColors[char], left + x >= 0, left + x < width {
+                    if let rgb = wornColours[char], left + x >= 0, left + x < width {
                         overlay.append((left + x, top + y, rgb))
                     }
                 }
@@ -371,22 +523,26 @@ final class CatSprites {
         return NSImage(cgImage: scaled, size: NSSize(width: CGFloat(art.width) * points, height: CGFloat(art.height) * points))
     }
 
-    func image(_ effect: CatEffect) -> CGImage? {
-        let key = "effect.\(effect.rawValue)"
+    /// An effect's picture; `fine`: its HD drawing (props at twice the grid,
+    /// effects over the head at 4/3), for beside a pet that `drawsFine` (nil for one with none).
+    func image(_ effect: CatEffect, fine: Bool = false) -> CGImage? {
+        let key = "effect.\(fine ? "fine." : "")\(effect.rawValue)"
         if let hit = cache[key] { return hit }
-        guard let rows = CatArt.effects[effect.rawValue] else { return nil }
-        let image = Self.render(rows, palette: CatArt.effectColors)
+        guard let rows = (fine ? FineArt.effects : CatArt.effects)[effect.rawValue] else { return nil }
+        let image = Self.render(rows, palette: fine ? FineArt.effectColors : CatArt.effectColors)
         cache[key] = image
         return image
     }
 
     /// The character's home; with someone asleep inside, the doorway is
-    /// left open so the pet behind shows through it.
-    func home(_ kind: PetKind, occupied: Bool) -> CGImage? {
-        let key = "home.\(kind.actsLike.rawValue).\(occupied)"
+    /// left open so the pet behind shows through it. `fine`: the HD home,
+    /// twice the grid, for a pet that `drawsFine`.
+    func home(_ kind: PetKind, occupied: Bool, fine: Bool = false) -> CGImage? {
+        let key = "home.\(fine ? "fine." : "")\(kind.actsLike.rawValue).\(occupied)"
         if let hit = cache[key] { return hit }
-        guard let rows = CatArt.homes[kind.actsLike.rawValue] else { return nil }
-        let image = Self.render(rows.map { row in row.map { occupied && $0 == "d" ? nil : CatArt.homeColors[$0] } })
+        guard let rows = (fine ? FineArt.homes : CatArt.homes)[kind.actsLike.rawValue] else { return nil }
+        let colors = fine ? FineArt.homeColors : CatArt.homeColors
+        let image = Self.render(rows.map { row in row.map { occupied && $0 == "d" ? nil : colors[$0] } })
         cache[key] = image
         return image
     }

@@ -11,9 +11,13 @@ cat frame in every coat so the art can be checked by eye;
 Legend: . clear  o outline  f fur  s stripe/patch  w white  p pink  e eye
 """
 import struct
+from collections import Counter
 import sys
 import zlib
 from pathlib import Path
+
+from fine_extras import (FINE_ACCESSORIES, FINE_ACCESSORY_COLORS, FINE_AGENT, FINE_EFFECTS, FINE_EFFECT_COLORS,
+                         FINE_HOME_COLORS, FINE_HOMES, FINE_TOYS)
 
 W, H = 20, 16
 
@@ -255,10 +259,11 @@ def _orbit(turn):
 for _i, _turn in enumerate((0, 40, 80)):
     EFFECTS[f"dizzy{_i + 1}"] = _orbit(_turn)
 
-EFFECTS["yarn2"] = [
-    "".join(EFFECTS["yarn1"][len(EFFECTS["yarn1"]) - 1 - r][c] for r in range(len(EFFECTS["yarn1"])))
-    for c in range(len(EFFECTS["yarn1"][0]))
-]
+for _effects in (EFFECTS, FINE_EFFECTS):
+    _effects["yarn2"] = [
+        "".join(_effects["yarn1"][len(_effects["yarn1"]) - 1 - r][c] for r in range(len(_effects["yarn1"])))
+        for c in range(len(_effects["yarn1"][0]))
+    ]
 
 
 # Things to wear. Hats sit on the head with their bottom row on `hat` row;
@@ -458,6 +463,14 @@ KIND_COLORS = {
     "parrot": dict(o="16201a", G="5aa838", D="2f7d2c", H="3b8540", C="2f7a62", P="f26a3d", E="f1e9a6", K="16161a",
                    W="ead9c8", T="7c8a3a", L="bccf3a", B="2b4a8c", O="4f9a30", F="8f8a86"),
     "dino": dict(o="1d2b1a", f="6cc24a", s="4a9a33", w="d8f0a0", p="ffa53c", e="111111"),
+    # The three-headed dragon: a caramel body whose three heads are the body's
+    # own colour (R back, Y middle, M front; one blue step apart so each keeps
+    # a letter of its own in the sheet), with a red, a gold and a turquoise
+    # horn per head (r, y, m), p a gold sparkle. E is the middle head's eye,
+    # the same colour as e but a letter of its own, so the glasses finder
+    # never takes two heads for one face.
+    "dragon": dict(o="3a2214", f="d9975f", s="b5733f", w="fbebc8", l="b5733f", e="2a160c", E="2a160d",
+                   R="d9975e", Y="d9975d", M="d9975c", p="ffd34d", r="e5484d", y="f6c445", m="2fc1b5"),
     "dog": dict(o="2b1a10", f="e0a35a", s="8a5a2b", w="fff3dd", p="ff7f9a", e="1a1110"),
     "hamster": dict(o="3a2414", f="f2a65a", s="d4823a", w="fff6ea", p="ff9fb2", e="1a1110"),
     "chicken": dict(o="3a2a20", f="fbf7f0", s="ddd5c8", w="fff1c4", p="e8432c", e="111111", b="f5a623"),
@@ -468,6 +481,150 @@ KIND_COLORS = {
     # Drawn from the hippo: pink, a snout round the nostrils, a curly tail.
     "pig": dict(o="4a2a33", f="f7b3c2", s="e8909f", w="ffdbe3", p="e0718b", e="2a1418"),
 }
+
+
+# Colourways for every built-in pet but the cat, after real animals; palette
+# only, no new pixels. Each pet's letters are grouped into roles (fur, patch,
+# white, ...): a base letter and the shades painted against it, as (fine base,
+# fine shades, classic base, classic shades). A colourway gives a role a new
+# base; every shade keeps its step from the base, so the shading survives.
+PET_ROLES = {
+    "dog": dict(fur=("f", "oFh", "f", "o"), patch=("S", "st", "s", ""), white=("w", "xvu", "w", ""),
+                eye=("e", "g", None, "")),
+    "rabbit": dict(fur=("f", "oFh", "f", "o"), patch=("S", "st", "s", ""), white=("w", "xvu", "w", ""),
+                   ear=("p", "qmrk", "p", ""), eye=("e", "g", "e", "")),
+    "hamster": dict(fur=("f", "oFh", "f", "o"), patch=("S", "st", "s", ""), white=("w", "xvu", "w", "")),
+    "chicken": dict(fur=("f", "oghstu", "f", "os"), comb=("p", "qrc", "p", ""), beak=("b", "anx", "b", "")),
+    "bee": dict(fur=("f", "ogh", "f", "o"), stripe=("s", "td", "s", "")),
+    "dino": dict(fur=("f", "oFhn", "f", "os"), belly=("w", "xvu", "w", ""), spines=("p", "mq", "p", "")),
+    "giraffe": dict(fur=("f", "oFh", "f", "o"), patch=("S", "st", "s", ""), white=("w", "xvu", "w", "")),
+    "hippo": dict(fur=("f", "oFhst", "f", "os"), white=("w", "xv", "w", "")),
+    "shark": dict(fur=("f", "oFh", "f", "o"), patch=("S", "stg", "s", ""), white=("w", "xv", "w", "")),
+    "pig": dict(fur=("f", "oFh", "f", "os"), snout=("N", "nsm", "p", ""), white=("v", "", "w", "")),
+    "parrot": dict(body=("f", "ghG", "G", ""), wing=("D", "dj", "D", ""), head=("H", "nm", "H", ""),
+                   crown=("C", "c", "C", ""), patch=("P", "rq", "P", ""), belly=("L", "il", "L", ""),
+                   throat=("T", "t", "T", ""), flight=("B", "zAb", "B", ""), tail=("O", "uU", "O", ""),
+                   beak=("W", "xvw", "W", ""), ring=("E", "", "E", "")),
+    "dragon": dict(fur=("f", "Fho", "f", "oRYM"), scales=("s", "S", "s", "l"), belly=("w", "vk", "w", ""),
+                   outline=("c", "", None, "")),
+}
+
+# The pet's own look first (the default), then real ones. Hex per role; a role
+# left out keeps the art's colour.
+PET_COATS = {
+    "dog": [("Golden", {}),
+            ("Cream lab", dict(fur="ecd2a0", patch="cfa66c", white="fffaf0")),
+            ("Chocolate lab", dict(fur="7a4b2c", patch="5c3520", white="9c6a46")),
+            ("Black lab", dict(fur="34302f", patch="242120", white="4a4543")),
+            ("Husky", dict(fur="8c929c", patch="4f5560", white="f4f4f4", eye="4a90d8"))],
+    "rabbit": [("Agouti", {}),
+               ("White", dict(fur="f4f1ec", patch="e2ddd5", white="ffffff", eye="c8404a")),
+               ("Black", dict(fur="302b2b", patch="221e1e", white="4a4444")),
+               ("Chinchilla", dict(fur="9c9ca2", patch="7a7a82", white="eeeeee")),
+               ("Fawn", dict(fur="e4b578", patch="c9944f"))],
+    "hamster": [("Golden", {}),
+                ("Roborovski", dict(fur="dcbb8a", patch="c4a070", white="ffffff")),
+                ("Winter white", dict(fur="eeece8", patch="b8b4ae", white="ffffff")),
+                ("Black bear", dict(fur="322d2b", patch="231f1e", white="4c4644"))],
+    "chicken": [("Leghorn", {}),
+                ("Rhode Island Red", dict(fur="a8452a")),
+                ("Australorp", dict(fur="2c2e36")),
+                ("Buff Orpington", dict(fur="eab86a"))],
+    "bee": [("Bumblebee", {}),
+            ("Honeybee", dict(fur="d99a34", stripe="4a3220")),
+            ("Carpenter bee", dict(fur="453f52", stripe="1b1922")),
+            ("Orchid bee", dict(fur="3fae6a", stripe="1f6a4a"))],
+    "dino": [("Green", {}),
+             ("Desert", dict(fur="c9a46a", belly="f2e2bc", spines="8a5a2c")),
+             ("Slate", dict(fur="7d8ca0", belly="dde3ea", spines="d9643a")),
+             ("Crimson", dict(fur="b5503a", belly="f0d6b0", spines="f2c94c"))],
+    "giraffe": [("Reticulated", {}),
+                ("Masai", dict(fur="e8c88e", patch="6e3a1a")),
+                ("Rothschild", dict(fur="f2ddb0", patch="a8642e")),
+                ("White", dict(fur="f4efe4", patch="e4dccb", white="ffffff"))],
+    "hippo": [("Lavender", {}),
+              ("Common", dict(fur="8f8682", white="e2b9b0")),
+              ("Pygmy", dict(fur="645d68", white="b0948f")),
+              ("Pink", dict(fur="e8b2a8", white="f8d8d0"))],
+    "shark": [("Blue shark", {}),
+              ("Gray reef", dict(fur="80898f", patch="5f686f")),
+              ("Great white", dict(fur="5f6a76", patch="46505b", white="f6f7f8")),
+              ("Lemon", dict(fur="c2ae7a", patch="a08d5c", white="f4efe0")),
+              ("Bronze hammerhead", dict(fur="9c7c5c", patch="7a5f45", white="efe8de"))],
+    "pig": [("Pink", {}),
+            ("Berkshire", dict(fur="332e33", snout="f0e6e2", white="f0e6e2")),
+            ("Tamworth", dict(fur="cf8446", snout="b8683a")),
+            ("Mangalica", dict(fur="efd8a6", snout="d9b98a"))],
+    "parrot": [("Green conure", {}),
+               ("Blue-and-yellow macaw", dict(body="2f80d2", wing="1f5eaa", head="2f80d2", crown="4fae4a",
+                                              patch="f2efe8", belly="f4b81c", throat="f4b81c", flight="1e3f8a",
+                                              tail="2a6cc2", beak="2e2c2c", ring="f2efe8")),
+               ("Scarlet macaw", dict(body="e0352c", wing="f2c230", head="e0352c", crown="e0352c",
+                                      patch="f2efe8", belly="e0352c", throat="e0352c", flight="2a5ab0",
+                                      tail="e0352c", ring="f2efe8")),
+               ("African grey", dict(body="8e9296", wing="6f7378", head="a2a6aa", crown="9a9ea2",
+                                     patch="eeeeee", belly="aeb2b6", throat="959a9e", flight="5c6064",
+                                     tail="c8282e", beak="2e2c2c", ring="eeeeee")),
+               ("Blue budgie", dict(body="6cb4e8", wing="3c3c44", head="f4f4ee", crown="f4f4ee",
+                                    patch="f4f4ee", belly="6cb4e8", throat="f4f4ee", flight="2a4a9c",
+                                    tail="2a4a9c", beak="e8c870", ring="f4f4ee"))],
+    "dragon": [("Original", {}),
+               ("Komodo", dict(fur="7a7262", scales="5a5448", belly="a89a7a")),
+               ("Bearded", dict(fur="d4a05a", scales="b07a3a", belly="f0d8a8")),
+               ("Water dragon", dict(fur="4f9a5a", scales="3a7a48", belly="e8e0b0"))],
+}
+
+
+
+def coat_id(name):
+    """"Blue-and-yellow macaw" -> "blueAndYellowMacaw", the colourway's stored value."""
+    words = name.replace("-", " ").split()
+    return words[0].lower() + "".join(w[:1].upper() + w[1:].lower() for w in words[1:])
+
+
+def rgb(h):
+    return tuple(int(h[i:i + 2], 16) for i in (0, 2, 4))
+
+
+def hexs(c):
+    return "".join(f"{max(0, min(255, round(v))):02x}" for v in c)
+
+
+def lum(c):
+    r, g, b = c
+    return 0.299 * r + 0.587 * g + 0.114 * b
+
+
+def shade(orig_base, orig, new_base):
+    """`orig` was painted as a step from `orig_base`; take the same step from `new_base`."""
+    b, c, n = rgb(orig_base), rgb(orig), rgb(new_base)
+    lb, lc = max(lum(b), 1), lum(c)
+    if lc <= lb:
+        k = lc / lb
+        return hexs(v * k for v in n)
+    a = (lc - lb) / max(255 - lb, 1)
+    return hexs(v + (255 - v) * a for v in n)
+
+
+def pet_coat(pet, palette, coat, fine):
+    out = dict(palette)
+    for role, (fb, fs, cb, cs) in PET_ROLES[pet].items():
+        if role not in coat:
+            continue
+        base, shades = (fb, fs) if fine else (cb, cs)
+        if base is None or base not in palette:
+            continue
+        new = coat[role]
+        for letter in shades:
+            if letter in palette:
+                out[letter] = shade(palette[base], palette[letter], new)
+        out[base] = new
+    if pet == "dragon" and not fine and coat:
+        # The heads keep a letter each: the body's colour one blue step apart.
+        f = rgb(out["f"])
+        for i, letter in enumerate("RYM", 1):
+            out[letter] = hexs((f[0], f[1], max(0, f[2] - i)))
+    return out
 
 
 def read_png(path):
@@ -562,8 +719,9 @@ HOME_SPOTS = {
     "cat": (7, 0, True), "bee": (7, 4, True), "parrot": (2, 10, False), "dino": (7, 0, True),
     "dog": (7, 0, True), "hamster": (4, 4, True), "chicken": (7, 0, True), "giraffe": (2, 0, False),
     "hippo": (7, 4, True), "rabbit": (3, 5, True), "shark": (7, 0, True), "pig": (7, 4, True),
+    "dragon": (7, 0, True),
 }
-HOME_ORDER = ["cat", "bee", "parrot", "dino", "dog", "hamster", "chicken", "giraffe", "hippo", "rabbit", "shark", "pig"]
+HOME_ORDER = ["cat", "bee", "parrot", "dino", "dog", "hamster", "chicken", "giraffe", "hippo", "rabbit", "shark", "pig", "dragon"]
 HOME_COLORS = dict(o="2a1e1a", d="2e2226", r="c94f45", R="9c3a33", w="f3e3c4", W="d9c29c", k="a0693d", K="6e4526",
                    g="6fb05a", G="4a8a3c", y="f5c542", Y="d79a25", b="6aa8d8", B="3f78a8", p="f2a2b5", P="d97f95",
                    s="a7a9b0", S="7d808a", n="fff2b0", t="5fb3a8", T="3f8a80", c="d9a96b", C="b9854a", m="8a6a4a",
@@ -644,6 +802,13 @@ KIND_ANCHORS = {
     "chicken": {f: (_chicken_comb(f)[0] + 0.5, _chicken_comb(f)[1] + 1, None, None) for f in CHICKEN_FRAMES},
 }
 KIND_ANCHORS.update({kind: {f: (x, y, None, None) for f, (x, y) in spots.items()} for kind, spots in _HATS.items()})
+# The dragon's hat sits on its middle head, as drawn in the design: the head
+# follows the groom, sleep and crouch poses, so the spot does too. It wears
+# no headphones and no glasses (its heads are too small for either).
+_DRAGON_HAT = {"sit": (9.5, 1), "blink": (9.5, 1), "happy": (9.5, 1), "walk1": (9.5, 1), "walk2": (9.5, 1), "walk3": (9.5, 1),
+               "run1": (10.5, 2), "run2": (10.5, 2), "groom1": (8.5, 4), "groom2": (8.5, 5), "sleep1": (9.5, 7), "sleep2": (9.5, 8),
+               "eat1": (9.5, 1), "eat2": (9.5, 1), "crouch1": (10.5, 4), "crouch2": (10.5, 4), "held1": (9.5, 1), "held2": (9.5, 1)}
+KIND_ANCHORS["dragon"] = {f: (x, y, None, None) for f, (x, y) in _DRAGON_HAT.items()}
 KIND_HEADPHONES_AT = {
     "bee": {f: ("bee", 11, 4 + _bee_dy(f)) for f in BEE_FRAMES if not f.startswith("sleep")},
     # None while its head is down in the bowl, as for the cat.
@@ -654,8 +819,602 @@ KIND_HEADPHONES_AT = {
     "hamster": {f: ("side", 10, _hamster_top(f)) for f in HAMSTER_FRAMES if not f.startswith("sleep")},
     "chicken": {f: ("side", _chicken_comb(f)[0] - 3, _chicken_comb(f)[1]) for f in CHICKEN_FRAMES if not f.startswith("sleep")},
 }
+KIND_HEADPHONES_AT["dragon"] = {}
 KIND_HEADPHONES_AT.update({kind: {f: ("side", round(x - 3.5), y - 1) for f, (x, y) in spots.items() if not f.startswith(_NO_PHONES[kind])}
                            for kind, spots in _HATS.items()})
+
+
+# Finer art for the desktop. A look (a kind, and for the cat its coat:
+# "cat.gray") can have a second sheet at twice the resolution in
+# Art/fine/<look>.png: 18 cells of 40 x 40, each frame 40 x 32 at the bottom
+# of its cell (carried frames held up from the front, `tall`, 32 x 40 from the left). Pixpaw draws
+# it at 1.5 pt a pixel on the desktop in place of the 20 x 16 art, in the
+# same 60 x 48 pt frame, unless Classic pixels is on; the notch, menus and
+# cards keep the 20 x 16 art. Hats, collars and the laptop are the 20 x 16
+# art drawn 2x; glasses ring the eye boxes below by the same rule as the
+# 20 x 16 art; headphones are FINE_HEADPHONES. To give another look finer
+# art: draw its sheet and add its entry here, nothing else.
+FINE_SCALE = 2
+FINE_CELL = CELL * FINE_SCALE
+# Head-on headphones for a 40 x 32 head: a band over the crown and a cup
+# over each cheek, a light line along the band and a cushion towards the face.
+FINE_HEADPHONES = {
+    "front": [
+        ".......bbbbbbbbbb.......",
+        ".....bbllllllllllbb.....",
+        "....bll..........llb....",
+        "...bl..............lb...",
+        "..bl................lb..",
+        "..b..................b..",
+        ".bl..................lb.",
+        ".b....................b.",
+        "bbB..................Bbb",
+        "blB..................Blb",
+        "blB..................Blb",
+        "blB..................Blb",
+        "blB..................Blb",
+        "bbB..................Bbb",
+        ".bb..................bb.",
+    ],
+    # Side on, for every pet seen from the side: the 20 x 16 side pair at twice
+    # the pixels, a band arching back over the head and one cup on the near
+    # cheek, its cushion towards the face.
+    "side": [
+        "....bbbbbb....",
+        "..bbllllllbb..",
+        ".bll......llb.",
+        ".bl........lb.",
+        "bl..........b.",
+        "b.............",
+        "bbbB..........",
+        "blbB..........",
+        "blbB..........",
+        "blbB..........",
+        "bbbB..........",
+        ".bb...........",
+    ],
+    # Side on, seen from behind (the parrot grooming or crouched with its back turned): the same pair mirrored, its
+    # cup on the far side of the head.
+    "sideBack": [
+        "....bbbbbb....",
+        "..bbllllllbb..",
+        ".bll......llb.",
+        ".bl........lb.",
+        ".b..........lb",
+        ".............b",
+        "..........Bbbb",
+        "..........Bblb",
+        "..........Bblb",
+        "..........Bblb",
+        "..........Bbbb",
+        "...........bb.",
+    ],
+}
+FINE = {
+    # The gray tabby, drawn in pixpaw-extras/hd-pets/cat-v1.
+    "cat.gray": dict(
+        # Fur o line, F shadow, f base, h light; stripe S, s, t; white x line,
+        # v shadow, w base, u light; pink m line, q, p, r; eyes d dark,
+        # y catchlight, e iris, g light iris; l lids and mouth, n nose, k blush.
+        colours=dict(o="464b5a", F="767c89", f="8d939e", h="a9afba", S="5d636e", s="6a707c", t="7a808c",
+                     x="5a6070", v="cdd1d8", w="e9ecf0", u="fafbfc", m="9c5a6a", q="e08e9e", p="f0a0ae", r="f8bcc6",
+                     d="262a33", y="ffffff", e="4fb05e", g="8edc8f", l="3a3e4a", n="e2808f", k="f2a9b6"),
+        tall={"held1", "held2"},
+        # (hat centre x, hat bottom row, collar centre x, collar row); None for
+        # no collar, where the 20 x 16 cat has none (and crouching, chin down).
+        anchors={
+            **{f: (24, 4, 24, 20) for f in ("sit", "blink", "happy")},
+            # Walking and running, the collar sits where the chin meets the chest.
+            "walk1": (30, 4, 22, 19), "walk2": (30, 3, 22, 18), "walk3": (30, 4, 22, 19),
+            "run1": (30, 3, 22, 18), "run2": (30, 4, 22, 19),
+            "groom1": (24, 4, None, None), "groom2": (24, 4, None, None),
+            "sleep1": (28, 13, None, None), "sleep2": (28, 14, None, None),
+            "eat1": (30, 7, None, None), "eat2": (30, 8, None, None),
+            "crouch1": (30, 13, None, None), "crouch2": (30, 13, None, None),
+            "held1": (16, 4, 16, 20), "held2": (16, 4, 16, 20),
+        },
+        # Eye boxes (x0, x1, y0, y1), open or shut, for the glasses; none asleep or carried.
+        eyes={
+            **{f: ((16, 20, 10, 15), (27, 31, 10, 15)) for f in ("sit", "blink", "happy", "groom1", "groom2")},
+            **{f: ((22, 26, 10, 15), (33, 37, 10, 15)) for f in ("walk1", "walk3", "run2")},
+            **{f: ((22, 26, 9, 14), (33, 37, 9, 14)) for f in ("walk2", "run1")},
+            "eat1": ((22, 26, 13, 18), (33, 37, 13, 18)), "eat2": ((22, 26, 14, 19), (33, 37, 14, 19)),
+            **{f: ((22, 26, 18, 23), (33, 37, 18, 23)) for f in ("crouch1", "crouch2")},
+        },
+        # Headphones (view, left, top); none asleep or eating, as for the 20 x 16 cat.
+        headphones_at={
+            **{f: ("front", 12, 2) for f in ("sit", "blink", "happy", "groom1", "groom2")},
+            **{f: ("front", 16, 2) for f in ("walk1", "walk3", "run2")},
+            **{f: ("front", 16, 1) for f in ("walk2", "run1")},
+            **{f: ("front", 16, 11) for f in ("crouch1", "crouch2")},
+            **{f: ("front", 4, 2) for f in ("held1", "held2")},
+        },
+        # Every other coat (and the one from a photo) wears this sheet in
+        # colours worked out from its 20 x 16 ones (o, f, s, w, p, e): each
+        # letter is (from, times, toward, amount), the `from` colour times
+        # `times`, then `amount` of the way to `toward` ("*" is white). Fitted
+        # to the drawn gray, which keeps its own colours above.
+        coats=dict(o=("o", 1, "f", .37), F=("f", .84, "*", 0), f=("f", 1, "*", 0), h=("f", 1.2, "*", 0),
+                   S=("s", 1, "*", 0), s=("s", 1, "f", .27), t=("s", 1, "f", .6),
+                   x=("o", 1, "w", .3), v=("w", .88, "*", 0), w=("w", 1, "*", 0), u=("w", 1.07, "*", 0),
+                   m=("o", 1, "p", .52), q=("p", .91, "*", 0), p=("p", 1, "*", 0), r=("p", 1, "*", .3),
+                   d=("o", 1, "f", .06), y=("e", 1, "*", 1), e=("e", .9, "*", 0), g=("e", 1, "*", .3),
+                   l=("o", 1, "f", .2), n=("p", .88, "*", 0), k=("p", 1, "*", .08)),
+    ),
+    # The other kinds, one look each and no coats. Drawn in pixpaw-extras/hd-pets/<kind>.
+    "dog": dict(
+        # Fur o line, F shadow, f base, h light; patches S, s, t; white x line,
+        # v shadow, w base, u light; pink m line, q, p, r; eyes d dark,
+        # y catchlight, e iris, g light iris; l lids and mouth, n nose, k blush.
+        colours=dict(o="6e4d2b", F="bc894c", f="e0a35a", h="ffc46c", S="8a5a2b", s="a16e38", t="be8647", x="6b5b4e",
+                     v="e0d6c2", w="fff3dd", u="ffffec", m="994f58", q="e8748c", p="ff7f9a", r="ffa5b8", d="362214",
+                     y="ffffff", e="4c321c", g="794f27", l="4f351f", n="3a2a24", k="ff89a2"),
+        tall={"held1", "held2"},
+        anchors={
+            **{f: (27, 4, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "run2")},
+            **{f: (27, 3, None, None) for f in ("walk2", "run1")},
+            **{f: (27, 6, None, None) for f in ("groom1", "groom2")}, "sleep1": (27, 14, None, None),
+            "sleep2": (27, 15, None, None), "eat1": (28, 8, None, None), "eat2": (28, 9, None, None),
+            **{f: (27, 11, None, None) for f in ("crouch1", "crouch2")},
+            **{f: (16, 4, None, None) for f in ("held1", "held2")},
+        },
+        eyes={
+            **{f: ((19, 23, 10, 15), (30, 34, 10, 15)) for f in ("sit", "blink", "happy", "walk1", "walk3", "run2")},
+            **{f: ((19, 23, 9, 14), (30, 34, 9, 14)) for f in ("walk2", "run1")},
+            **{f: ((19, 23, 12, 17), (30, 34, 12, 17)) for f in ("groom1", "groom2")},
+            "eat1": ((22, 26, 13, 18), (33, 37, 13, 18)), "eat2": ((22, 26, 14, 19), (33, 37, 14, 19)),
+            **{f: ((19, 23, 17, 22), (30, 34, 17, 22)) for f in ("crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("front", 15, 2) for f in ("sit", "blink", "happy", "walk1", "walk3", "run2")},
+            **{f: ("front", 15, 1) for f in ("walk2", "run1")},
+            **{f: ("front", 15, 4) for f in ("groom1", "groom2")}, "eat1": ("front", 16, 6),
+            "eat2": ("front", 16, 7), **{f: ("front", 15, 9) for f in ("crouch1", "crouch2")},
+            **{f: ("front", 4, 2) for f in ("held1", "held2")},
+        },
+    ),
+    "rabbit": dict(
+        # Fur o line, F shadow, f base, h light; patches S, s, t; white x line,
+        # v shadow, w base, u light; pink m line, q, p, r; eyes d dark,
+        # y catchlight, e iris, g light iris; l lids and mouth, n nose, k blush.
+        colours=dict(o="6f533e", F="a7815a", f="c79a6b", h="efb980", S="a8784b", s="b08154", t="bb8c5e", x="73655e",
+                     v="d9d2c9", w="f7efe4", u="fffff4", m="9b696e", q="dd94a3", p="f3a3b3", r="f7bfca", d="433128",
+                     y="ffffff", e="5c412c", g="936942", l="574032", n="d68f9e", k="f4aab9"),
+        tall={"held1", "held2"},
+        anchors={
+            **{f: (26, 11, None, None) for f in ("sit", "blink", "happy", "walk3", "groom1", "groom2")},
+            **{f: (27, 13, None, None) for f in ("walk1", "run2")}, "walk2": (27, 7, None, None),
+            "run1": (27, 6, None, None), **{f: (27, 15, None, None) for f in ("sleep1", "crouch1")},
+            "sleep2": (27, 16, None, None), "eat1": (28, 14, None, None), "eat2": (28, 15, None, None),
+            "crouch2": (27, 14, None, None), **{f: (16, 10, None, None) for f in ("held1", "held2")},
+        },
+        eyes={
+            **{f: ((18, 22, 16, 21), (29, 33, 16, 21)) for f in ("sit", "blink", "happy", "walk3", "groom1", "groom2")},
+            **{f: ((19, 23, 18, 23), (30, 34, 18, 23)) for f in ("walk1", "run2")},
+            "walk2": ((19, 23, 13, 18), (30, 34, 13, 18)), "run1": ((19, 23, 12, 17), (30, 34, 12, 17)),
+            "eat1": ((22, 26, 19, 24), (33, 37, 19, 24)), "eat2": ((22, 26, 20, 25), (33, 37, 20, 25)),
+            "crouch1": ((19, 23, 20, 25), (30, 34, 20, 25)), "crouch2": ((19, 23, 19, 24), (30, 34, 19, 24)),
+        },
+        headphones_at={
+            **{f: ("front", 14, 9) for f in ("sit", "blink", "happy", "walk3", "groom1", "groom2")},
+            **{f: ("front", 15, 11) for f in ("walk1", "run2")}, "walk2": ("front", 15, 5), "run1": ("front", 15, 4),
+            "crouch1": ("front", 15, 13), "crouch2": ("front", 15, 12),
+            **{f: ("front", 4, 8) for f in ("held1", "held2")},
+        },
+    ),
+    "hamster": dict(
+        # Fur o line, F shadow, f base, h light; patches S, s, t; white x line,
+        # v shadow, w base, u light; pink m line, q, p, r; eyes d dark,
+        # y catchlight, e iris, g light iris; l lids and mouth, n nose, k blush.
+        colours=dict(o="7e542e", F="cb8b4c", f="f2a65a", h="ffc76c", S="d4823a", s="dc8c43", t="e6984d", x="756354",
+                     v="e0d8ce", w="fff6ea", u="fffffa", m="a06466", q="e891a2", p="ff9fb2", r="ffbcc9", d="452c18",
+                     y="ffffff", e="6e4423", g="b87134", l="5f3e22", n="e08c9d", k="ffa7b8"),
+        tall={"held1", "held2"},
+        anchors={
+            **{f: (25, 11, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "run1", "groom1", "groom2")},
+            **{f: (25, 10, None, None) for f in ("walk2", "run2")}, "sleep1": (25, 16, None, None),
+            "sleep2": (25, 17, None, None), **{f: (28, 13, None, None) for f in ("eat1", "eat2")},
+            **{f: (25, 15, None, None) for f in ("crouch1", "crouch2")},
+            **{f: (16, 9, None, None) for f in ("held1", "held2")},
+        },
+        eyes={
+            **{f: ((17, 21, 15, 20), (28, 32, 15, 20)) for f in ("sit", "blink", "happy", "walk1", "walk3", "run1", "groom1", "groom2")},
+            **{f: ((17, 21, 14, 19), (28, 32, 14, 19)) for f in ("walk2", "run2")},
+            **{f: ((22, 26, 18, 23), (33, 37, 18, 23)) for f in ("eat1", "eat2")},
+            **{f: ((17, 21, 19, 24), (28, 32, 19, 24)) for f in ("crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("front", 13, 9) for f in ("sit", "blink", "happy", "walk1", "walk3", "run1", "groom1", "groom2")},
+            **{f: ("front", 13, 8) for f in ("walk2", "run2")}, **{f: ("front", 16, 11) for f in ("eat1", "eat2")},
+            **{f: ("front", 13, 13) for f in ("crouch1", "crouch2")},
+            **{f: ("front", 4, 7) for f in ("held1", "held2")},
+        },
+    ),
+    "chicken": dict(
+        # White f/g/h, wing s/t/u, comb and wattle p/q/r/c, beak and legs b/a/n/x, o line (warm brown); e eye, y catchlight, k blush.
+        colours=dict(o="7a6352", f="fbf7f0", g="e3dacb", h="fffdf8", s="ddd5c8", t="c4b9a8", u="ebe5dc", p="e8432c",
+                     q="c93424", r="f46b55", c="a3281c", b="f5a623", a="dc8c14", n="ffc85e", x="b06a12", e="1f1712",
+                     y="ffffff", k="f7a8a8"),
+        tall=set(),
+        anchors={
+            **{f: (27.5, 4, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            **{f: (28.5, 3, None, None) for f in ("walk2", "run2")}, "run1": (28.5, 4, None, None),
+            "groom1": (26.0, 6, None, None), "groom2": (25.5, 7, None, None), "sleep1": (26.5, 9, None, None),
+            "sleep2": (26.5, 10, None, None), "eat1": (30.0, 15, None, None), "eat2": (30.0, 14, None, None),
+            **{f: (27.5, 6, None, None) for f in ("crouch1", "crouch2")},
+        },
+        eyes={
+            **{f: ((27, 30, 6, 9),) for f in ("sit", "blink", "happy", "walk1", "walk3")},
+            "walk2": ((29, 32, 6, 9),), "run1": ((29, 32, 7, 10),), "run2": ((29, 32, 5, 8),),
+            "groom1": ((26, 29, 10, 13),), "groom2": ((26, 29, 11, 14),), "eat1": ((30, 33, 19, 22),),
+            "eat2": ((30, 33, 18, 21),), **{f: ((28, 31, 9, 12),) for f in ("crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("side", 19, 3) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            **{f: ("side", 20, 2) for f in ("walk2", "run2")}, "run1": ("side", 20, 3), "groom1": ("side", 18, 5),
+            "groom2": ("side", 17, 6), "eat1": ("side", 22, 14), "eat2": ("side", 22, 13),
+            **{f: ("side", 19, 5) for f in ("crouch1", "crouch2")},
+        },
+    ),
+    "bee": dict(
+        # Yellow f/g/h with a warm o line, stripes s/t/d, wings w/v/u with a blue line z, l shine and catchlight, e eye, p blush.
+        colours=dict(o="6b4a1e", f="ffcf3a", g="eab02a", h="ffe27a", d="241c28", s="2f2733", t="463d4c", z="7d9bb3",
+                     v="bcdcf2", w="d9f0ff", u="f2faff", l="ffffff", e="1d140c", p="ff8fa3"),
+        tall=set(),
+        anchors={
+            **{f: (23.0, 14, None, None) for f in ("sit", "blink", "happy", "walk1", "walk2", "walk3", "run1", "run2")},
+            **{f: (23.0, 12, None, None) for f in ("groom1", "groom2", "held1", "held2")},
+            **{f: (23.0, 16, None, None) for f in ("sleep1", "sleep2", "eat1", "crouch1")},
+            **{f: (23.0, 15, None, None) for f in ("eat2", "crouch2")},
+        },
+        eyes={
+            **{f: ((25, 29, 15, 20),) for f in ("sit", "blink", "happy", "walk1", "walk2", "walk3", "run1", "run2")},
+            **{f: ((25, 29, 13, 18),) for f in ("groom1", "groom2")},
+            **{f: ((25, 29, 17, 22),) for f in ("eat1", "crouch1")},
+            **{f: ((25, 29, 16, 21),) for f in ("eat2", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("side", 19, 12) for f in ("sit", "blink", "happy", "walk1", "walk2", "walk3", "run1", "run2")},
+            **{f: ("side", 19, 10) for f in ("groom1", "groom2", "held1", "held2")},
+            **{f: ("side", 19, 14) for f in ("eat1", "crouch1")},
+            **{f: ("side", 19, 13) for f in ("eat2", "crouch2")},
+        },
+    ),
+    "dino": dict(
+        # Fur o green line, F shadow, f base, h light; belly x line, v shadow, w base,
+        # u light; spikes and tongue m line, q shadow, p base; eye d dark, y catchlight, e iris;
+        # l lids and mouth, n nostril, k blush. Drawn in pixpaw-extras/hd-pets/dino.
+        colours=dict(o="2f5d2b", F="58a83c", f="6cc24a", h="8ed66a", x="6f9a45", v="bfdc86", w="d8f0a0", u="ecf9c6",
+                     m="b8641c", q="e8892a", p="ffa53c", d="1c2618", y="ffffff", e="4c5e3a", l="24331f", n="3e7a2e",
+                     k="ff9d7a"),
+        tall=set(),
+        anchors={
+            **{f: (30.0, 4, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            "walk2": (30.0, 3, None, None), "run1": (31.0, 3, None, None), "run2": (31.0, 4, None, None),
+            **{f: (30.0, 6, None, None) for f in ("groom1", "groom2")},
+            **{f: (30.5, 18, None, None) for f in ("sleep1", "sleep2")}, "eat1": (28.0, 12, None, None),
+            "eat2": (28.0, 13, None, None), **{f: (30.5, 9, None, None) for f in ("crouch1", "crouch2")},
+        },
+        eyes={
+            **{f: ((29, 32, 6, 10),) for f in ("sit", "blink", "happy", "walk1", "walk3")},
+            "walk2": ((29, 32, 5, 9),), "run1": ((30, 33, 4, 8),), "run2": ((30, 33, 5, 9),),
+            **{f: ((29, 32, 8, 12),) for f in ("groom1", "groom2")}, "eat1": ((27, 30, 13, 17),),
+            "eat2": ((27, 30, 14, 18),), **{f: ((29, 32, 10, 14),) for f in ("crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("side", 23, 1) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            "walk2": ("side", 23, 0), "run1": ("side", 24, 0), "run2": ("side", 24, 1),
+            **{f: ("side", 23, 3) for f in ("groom1", "groom2")}, "eat1": ("side", 21, 9), "eat2": ("side", 21, 10),
+            **{f: ("side", 24, 6) for f in ("crouch1", "crouch2")},
+        },
+    ),
+    "giraffe": dict(
+        # Fur o brown line, F shadow, f base, h light; patches, horns, mane and hooves
+        # S, s, t; socks and muzzle x line, v shadow, w base, u light; ear and tongue
+        # m line, p base; eye d dark, y catchlight, e iris; l lids and mouth, n nostril,
+        # k blush. Drawn in pixpaw-extras/hd-pets/giraffe.
+        colours=dict(o="7a4a1c", F="d9a63a", f="f2c14e", h="f8d77c", S="96501f", s="b5652a", t="c67a3c", x="a87a48",
+                     v="eed39a", w="fbe7b5", u="fff4dc", m="a45a36", p="e59a6a", d="2a1a0e", y="ffffff", e="6a4422",
+                     l="4a2c12", n="a0603a", k="f4a088"),
+        tall=set(),
+        anchors={
+            **{f: (31.4, 4, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            **{f: (31.4, 5, None, None) for f in ("walk2", "run1")}, "run2": (31.9, 6, None, None),
+            **{f: (31.4, 6, None, None) for f in ("groom1", "groom2")},
+            **{f: (29.9, 11, None, None) for f in ("sleep1", "sleep2")}, "eat1": (26.4, 15, None, None),
+            "eat2": (26.4, 16, None, None), **{f: (31.4, 7, None, None) for f in ("crouch1", "crouch2")},
+        },
+        eyes={
+            **{f: ((30, 33, 4, 8),) for f in ("sit", "blink", "happy", "walk1", "walk3")},
+            **{f: ((30, 33, 5, 9),) for f in ("walk2", "run1")},
+            **{f: ((30, 33, 6, 10),) for f in ("run2", "groom1", "groom2")}, "eat1": ((25, 28, 15, 19),),
+            "eat2": ((25, 28, 16, 20),), **{f: ((30, 33, 8, 12),) for f in ("crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("side", 24, 1) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            **{f: ("side", 24, 2) for f in ("walk2", "run1")}, "run2": ("side", 25, 3),
+            **{f: ("side", 24, 3) for f in ("groom1", "groom2")},
+            **{f: ("side", 24, 4) for f in ("crouch1", "crouch2")},
+        },
+    ),
+    "hippo": dict(
+        # Fur o purple line, F shadow, f base, h light; back s, t; belly and teeth
+        # x line, v shadow, w base; ears, tongue m line, p base; eye d dark,
+        # y catchlight, e iris; l lids and mouth, n nostrils, k blush (cheek).
+        # Drawn in pixpaw-extras/hd-pets/hippo.
+        colours=dict(o="514470", F="8a7ea8", f="a196bd", h="b8afd2", s="857aa3", t="938aaf", x="8c80ab", v="c4bad9",
+                     w="d6cde6", m="b0607a", p="f4a3b6", d="1f1a2a", y="ffffff", e="4e4268", l="3a3052", n="463a62",
+                     k="f7b2c2"),
+        tall=set(),
+        anchors={
+            **{f: (26.8, 8, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            "walk2": (26.8, 7, None, None), "run1": (27.3, 6, None, None), "run2": (27.8, 8, None, None),
+            **{f: (26.8, 10, None, None) for f in ("groom1", "groom2")},
+            **{f: (27.3, 15, None, None) for f in ("sleep1", "sleep2")}, "eat1": (24.3, 12, None, None),
+            "eat2": (24.3, 13, None, None), **{f: (27.3, 10, None, None) for f in ("crouch1", "crouch2")},
+        },
+        eyes={
+            **{f: ((28, 31, 9, 13),) for f in ("sit", "blink", "happy", "walk1", "walk3")},
+            "walk2": ((28, 31, 8, 12),), "run1": ((28, 31, 7, 11),), "run2": ((29, 32, 9, 13),),
+            **{f: ((28, 31, 11, 15),) for f in ("groom1", "groom2")}, "eat1": ((25, 28, 13, 17),),
+            "eat2": ((25, 28, 14, 18),), **{f: ((28, 31, 12, 16),) for f in ("crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("side", 22, 5) for f in ("sit", "blink", "happy", "walk1", "walk3", "held1", "held2")},
+            "walk2": ("side", 22, 4), "run1": ("side", 22, 3), "run2": ("side", 23, 5),
+            **{f: ("side", 22, 7) for f in ("groom1", "groom2", "crouch1", "crouch2")}, "eat1": ("side", 19, 9),
+            "eat2": ("side", 19, 10),
+        },
+    ),
+    "shark": dict(
+        colours=dict(o="3f5368", F="667e97", f="7a96b4", h="92b4d8", S="4c6683", s="5b7795", t="6d8aa8", x="5b6774",
+                     v="d1d6da", w="eef3f8", d="0f1418", y="ffffff", e="2a3a4e", g="4a6684", l="26303c", k="f5a6b8",
+                     p="f08ca3"),
+        tall=set(),
+        anchors={
+            **{f: (30.5, 11, None, None) for f in ("sit", "blink", "walk1", "walk3", "run2", "groom1", "groom2", "held1", "held2")},
+            **{f: (30.5, 10, None, None) for f in ("happy", "walk2")}, "run1": (29.5, 9, None, None),
+            **{f: (30.5, 17, None, None) for f in ("sleep1", "sleep2", "crouch1", "crouch2")},
+            "eat1": (31.5, 14, None, None), "eat2": (31.5, 15, None, None),
+        },
+        eyes={
+            **{f: ((26, 30, 11, 16),) for f in ("sit", "blink", "walk1", "walk3", "run2", "groom1", "groom2")},
+            **{f: ((26, 30, 10, 15),) for f in ("happy", "walk2", "run1")}, "eat1": ((27, 31, 14, 19),),
+            "eat2": ((27, 31, 15, 20),), **{f: ((26, 30, 16, 21),) for f in ("crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("side", 20, 9) for f in ("sit", "blink", "walk1", "walk3", "run2", "groom1", "groom2", "held1", "held2")},
+            **{f: ("side", 20, 8) for f in ("happy", "walk2")}, "run1": ("side", 20, 7), "eat1": ("side", 21, 12),
+            "eat2": ("side", 21, 13), **{f: ("side", 20, 15) for f in ("crouch1", "crouch2")},
+        },
+    ),
+    "pig": dict(
+        colours=dict(o="8a5d68", F="e39aab", f="f7b3c2", h="ffcbd8", N="d97d90", s="e8909f", n="f2a7b4", v="f0c3cd",
+                     p="e0718b", d="2a1418", y="ffffff", e="5a3440", g="8a5a66", l="4a2a33", k="f27f97", m="7a3a4c"),
+        tall=set(),
+        anchors={
+            **{f: (28.5, 7, None, None) for f in ("sit", "blink", "walk1", "walk3", "groom1", "groom2")},
+            **{f: (28.5, 6, None, None) for f in ("happy", "walk2", "run2")},
+            **{f: (28.5, 5, None, None) for f in ("run1", "held1", "held2")},
+            **{f: (28.5, 15, None, None) for f in ("sleep1", "sleep2")}, "eat1": (28.5, 11, None, None),
+            **{f: (28.5, 12, None, None) for f in ("eat2", "crouch1", "crouch2")},
+        },
+        eyes={
+            **{f: ((20, 24, 9, 14), (32, 36, 9, 14)) for f in ("sit", "blink", "walk1", "walk3", "run2", "groom1", "groom2")},
+            **{f: ((20, 24, 8, 13), (32, 36, 8, 13)) for f in ("happy", "walk2")},
+            "run1": ((20, 24, 7, 12), (32, 36, 7, 12)), "eat1": ((20, 24, 13, 18), (32, 36, 13, 18)),
+            **{f: ((20, 24, 14, 19), (32, 36, 14, 19)) for f in ("eat2", "crouch1", "crouch2")},
+        },
+        headphones_at={
+            **{f: ("front", 16, 5) for f in ("sit", "blink", "walk1", "walk3", "groom1", "groom2")},
+            **{f: ("front", 16, 4) for f in ("happy", "walk2", "run2")},
+            **{f: ("front", 16, 3) for f in ("run1", "held1", "held2")}, "eat1": ("front", 16, 9),
+            **{f: ("front", 16, 10) for f in ("eat2", "crouch1", "crouch2")},
+        },
+    ),
+    "dragon": dict(
+        # Dark and fierce, drawn in pixpaw-extras/hd-pets/dragon-fierce (opt2), with
+        # c a 1-pixel bronze rim round the outside so it reads on a dark desktop.
+        # The notch keeps the caramel 20 x 16 dragon. A hat on the middle head only:
+        # no eye boxes, no headphones, as for the 20 x 16 dragon.
+        colours=dict(o="171211", F="392e28", f="58463a", h="806650", S="3e231d", s="5c322a", k="b08a44", v="6e5534",
+                     w="8f7044", R="7a1f24", A="b8333a", r="e5484d", Y="8a6618", M="156a63", m="2fc1b5", d="0e0a09",
+                     e="ff5a1a", E="ffc04a", g="ff8a1a", G="fff3a0", x="f4ead2", c="6e4428"),
+        tall=set(),
+        anchors={
+            **{f: (19.5, 2, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "groom1", "eat1", "eat2", "held1", "held2")},
+            "walk2": (19.5, 1, None, None), "run1": (20.5, 2, None, None), "run2": (20.5, 3, None, None),
+            "groom2": (19.5, 3, None, None), "sleep1": (20.5, 15, None, None), "sleep2": (20.5, 16, None, None),
+            **{f: (22.5, 7, None, None) for f in ("crouch1", "crouch2")},
+        },
+        eyes={
+        },
+        headphones_at={
+        },
+    ),
+    # Drawn in pixpaw-extras/hd-pets/parrot-v2: a side-view conure, one K eye, held in side view.
+    "parrot": dict(
+        # Body f/g/h, wing D/d/j, head H/n/m, crown C/c, orange P/r/q, beak W/v/w/x, belly L/i/l, throat T/t, blue B/A/b/z, tail O/u/U, feet F/s/p/a, o line; K eye, y catchlight, E eye ring.
+        colours=dict(o="1f3d24", f="5aa838", g="46902d", h="78c24e", D="2f7d2c", d="24642a", j="3f9439", H="3b8540", n="30733a", m="4c9a4c", C="2f7a62", c="3d917a", P="f26a3d", r="d9552b", q="f78a5e", x="6b5648", v="c9b5a2", W="ead9c8", w="f7efe6", L="bccf3a", i="a3b62f", l="d2e26a", T="7c8a3a", t="6c7a31", z="1f2f5c", A="22407a", B="2b4a8c", b="3b62ad", O="4f9a30", u="3f7f27", U="62ad3e", a="5c5856", s="77726f", F="8f8a86", p="a7a29e", K="16161a", y="ffffff", E="f1e9a6"),
+        tall=set(),
+        # (hat centre x, hat bottom row, collar centre x, collar row): no collar, as today.
+        anchors={
+            "sit": (27.5, 5, None, None),
+            "blink": (27.5, 5, None, None),
+            "happy": (27.5, 5, None, None),
+            "walk1": (28.5, 9, None, None),
+            "walk2": (28.5, 9, None, None),
+            "walk3": (28.5, 9, None, None),
+            "run1": (28.5, 9, None, None),
+            "run2": (28.5, 9, None, None),
+            "groom1": (28.5, 6, None, None),
+            "groom2": (25.5, 8, None, None),
+            "sleep1": (27.0, 14, None, None),
+            "sleep2": (27.5, 15, None, None),
+            "eat1": (27.5, 19, None, None),
+            "eat2": (27.5, 18, None, None),
+            "crouch1": (28.5, 13, None, None),
+            "crouch2": (29.5, 12, None, None),
+            "held1": (26.5, 3, None, None),
+            "held2": (26.5, 2, None, None),
+        },
+        # Eye boxes (x0, x1, y0, y1) for the glasses; none asleep or carried (glasses come off then).
+        eyes={
+            "sit": ((29, 31, 8, 10),),
+            "blink": ((29, 31, 8, 10),),
+            "happy": ((29, 31, 8, 10),),
+            "walk1": ((30, 32, 12, 14),),
+            "walk2": ((30, 32, 12, 14),),
+            "walk3": ((30, 32, 12, 14),),
+            "run1": ((30, 32, 12, 14),),
+            "run2": ((30, 32, 12, 14),),
+            "groom1": ((25, 27, 9, 11),),
+            "groom2": ((24, 26, 12, 14),),
+            "eat1": ((28, 30, 23, 25),),
+            "eat2": ((28, 30, 22, 24),),
+            "crouch1": ((30, 32, 16, 18),),
+            "crouch2": ((26, 28, 15, 17),),
+        },
+        # Headphones (view, left, top); none where today has none.
+        headphones_at={
+            "sit": ("side", 24, 3),
+            "blink": ("side", 24, 3),
+            "happy": ("side", 24, 3),
+            "walk1": ("side", 25, 7),
+            "walk2": ("side", 25, 7),
+            "walk3": ("side", 25, 7),
+            "run1": ("side", 25, 7),
+            "run2": ("side", 25, 7),
+            "groom1": ("sideBack", 17, 2),
+            "groom2": ("sideBack", 14, 4),
+            "crouch1": ("side", 25, 11),
+            "crouch2": ("sideBack", 18, 8),
+            "held1": ("side", 23, 1),
+            "held2": ("side", 23, 0),
+        },
+    ),
+}
+# The gray tabby with folded ears, like a Scottish Fold's: the same frames
+# with each ear's tip folded down into a little cap, its pink hidden.
+# `python3 Tools/sprites.py fold` draws Art/fine/cat.gray.folded.png from
+# cat.gray.png; touch it up by hand after, if you like.
+FINE["cat.gray.folded"] = dict(FINE["cat.gray"], folds="cat.gray")
+
+
+def load_fine_sheet(look, spec):
+    """A look's finer frames from Art/fine/<look>.png, as letter grids."""
+    path = ART / "fine" / f"{look}.png"
+    width, height, pixels = read_png(path)
+    assert (width, height) == (FINE_CELL * len(FRAME_ORDER), FINE_CELL), \
+        f"{path}: should be {FINE_CELL * len(FRAME_ORDER)} x {FINE_CELL}, is {width} x {height}"
+    letters = {tuple(int(v[i:i + 2], 16) for i in (0, 2, 4)): k for k, v in spec["colours"].items()}
+    frames = {}
+    for n, name in enumerate(FRAME_ORDER):
+        w, h = (16 * FINE_SCALE, FINE_CELL) if name in spec["tall"] else (W * FINE_SCALE, H * FINE_SCALE)
+        rows = []
+        for y in range(FINE_CELL - h, FINE_CELL):
+            row = ""
+            for x in range(w):
+                r, g, b, a = pixels[y][n * FINE_CELL + x]
+                assert a < 128 or (r, g, b) in letters, f"{path}: {name} has #{r:02x}{g:02x}{b:02x} at ({x}, {y})"
+                row += "." if a < 128 else letters[(r, g, b)]
+            rows.append(row)
+        for y in range(FINE_CELL):
+            for x in range(FINE_CELL):
+                if y < FINE_CELL - h or x >= w:
+                    assert pixels[y][n * FINE_CELL + x][3] < 128, f"{path}: {name} has a pixel at ({x}, {y}), outside its {w} x {h} frame"
+        frames[name] = rows
+    return frames
+
+
+# A folded sheet not drawn yet (see `fold`) is left out.
+FINE_FRAMES = {look: load_fine_sheet(look, spec) for look, spec in FINE.items()
+               if "folds" not in spec or (ART / "fine" / f"{look}.png").exists()}
+
+
+def fine_ears(rows):
+    """The two ears' pink, as lists of (x, y): the largest pink patches at the top of the head."""
+    pink = {(x, y) for y, row in enumerate(rows) for x, c in enumerate(row) if c in "prqm"}
+    patches, seen = [], set()
+    for start in sorted(pink, key=lambda p: (p[1], p[0])):
+        if start in seen:
+            continue
+        patch, todo = [], [start]
+        seen.add(start)
+        while todo:
+            x, y = todo.pop()
+            patch.append((x, y))
+            for n in ((x + 1, y), (x - 1, y), (x, y + 1), (x, y - 1)):
+                if n in pink and n not in seen:
+                    seen.add(n)
+                    todo.append(n)
+        if len(patch) >= 5:
+            patches.append(patch)
+    top = min(min(y for _, y in p) for p in patches)
+    ears = sorted((p for p in patches if min(y for _, y in p) <= top + 1), key=lambda p: min(x for x, _ in p))
+    assert len(ears) == 2, "two ears"
+    return ears
+
+
+def fold_fine(rows):
+    """Each ear's tip folded down: the point gone, a cap of outline one row
+    over the ear's old top, fur inside it, its fold a line of outline, and
+    the pink below covered in the fur beside it."""
+    g = [list(r) for r in rows]
+    for side, ear in enumerate(fine_ears(rows)):
+        x0, x1 = min(x for x, _ in ear), max(x for x, _ in ear)
+        y0 = min(y for _, y in ear)
+        for y in range(y0):
+            for x in range(x0 - 1, x1 + 2):
+                g[y][x] = "."
+        for x in range(x0 + 1, x1):
+            g[y0 - 1][x] = "o"
+            g[y0][x] = "h" if side == 0 else "f"
+        g[y0][x0] = g[y0][x1] = "o"
+        for x, y in ear:
+            if y == y0 + 1:
+                g[y][x] = "o"
+        for x, y in sorted((p for p in ear if p[1] > y0 + 1), key=lambda p: p[1]):
+            near = Counter(g[b][a] for a, b in ((x - 1, y), (x + 1, y), (x, y + 1), (x - 1, y + 1), (x + 1, y + 1))
+                           if 0 <= b < len(g) and 0 <= a < len(g[b]) and g[b][a] not in "prqmo.")
+            g[y][x] = near.most_common(1)[0][0] if near else ("h" if side == 0 else "F")
+    # A stray inner-ear pixel (one only touching an ear by a corner) is covered too.
+    for y, row in enumerate(g):
+        for x, c in enumerate(row):
+            if c in "rq":
+                near = Counter(g[b][a] for a, b in ((x - 1, y), (x + 1, y), (x, y + 1), (x, y - 1))
+                               if 0 <= b < len(g) and 0 <= a < len(g[b]) and g[b][a] not in "prqmo.")
+                g[y][x] = near.most_common(1)[0][0] if near else "f"
+    return ["".join(r) for r in g]
+
+
+def fold():
+    """Draws every folded sheet from the sheet it folds."""
+    for look, spec in FINE.items():
+        if "folds" not in spec:
+            continue
+        source, colours = FINE_FRAMES[spec["folds"]], spec["colours"]
+        width, height = FINE_CELL * len(FRAME_ORDER), FINE_CELL
+        px = bytearray(width * height * 4)
+        for n, name in enumerate(FRAME_ORDER):
+            rows = fold_fine(source[name])
+            for y, row in enumerate(rows):
+                for x, c in enumerate(row):
+                    if c != ".":
+                        k = ((FINE_CELL - len(rows) + y) * width + n * FINE_CELL + x) * 4
+                        px[k:k + 4] = bytes(int(colours[c][i:i + 2], 16) for i in (0, 2, 4)) + b"\xff"
+        png(ART / "fine" / f"{look}.png", width, height, px)
+        print("drew", ART / "fine" / f"{look}.png")
+
+
+def fine_coat(spec, coat):
+    """A look's finer colours for a 20 x 16 coat, by its `coats` recipe."""
+    out = {}
+    for letter, (source, times, toward, amount) in spec["coats"].items():
+        a = [min(255, round(int(coat[source][i:i + 2], 16) * times)) for i in (0, 2, 4)]
+        b = [255] * 3 if toward == "*" else [int(coat[toward][i:i + 2], 16) for i in (0, 2, 4)]
+        out[letter] = "".join(f"{round(u + (v - u) * amount):02x}" for u, v in zip(a, b))
+    return out
 
 
 def check():
@@ -663,6 +1422,16 @@ def check():
     for name, rows in FRAMES.items():
         for i, r in enumerate(rows):
             assert set(r) <= set(".ofswpe"), (name, i, r)
+    for look, spec in FINE.items():
+        assert set(spec["anchors"]) == set(FRAME_ORDER), f"{look}: an anchor for every frame"
+        assert "f" in spec["colours"], f"{look}: f is the fur, for glasses on dark fur"
+    # Every colourway names known roles, and every role's base is a letter of the art.
+    for pet, coats in PET_COATS.items():
+        assert not coats[0][1], f"{pet}: its own look first"
+        for name, coat in coats:
+            assert set(coat) <= set(PET_ROLES[pet]), (pet, name)
+        for role, (fb, _, cb, _) in PET_ROLES[pet].items():
+            assert fb in FINE[pet]["colours"] and (cb is None or cb in KIND_COLORS[pet]), (pet, role)
 
 
 def png(path, width, height, pixels):
@@ -766,8 +1535,111 @@ def swift():
     for coat, pal in list(COATS.items()) + list(KIND_COLORS.items()):
         items = ", ".join(f'"{k}": 0x{v}' for k, v in pal.items())
         out.append(f'        "{coat}": [{items}],')
+    out += ["    ]", "", "    /// Each pet's colourways in order, id and title; the first is its own look.",
+            "    static let petCoats: [String: [(id: String, title: String)]] = ["]
+    for pet, coats in PET_COATS.items():
+        out.append(f'        "{pet}": [' + ", ".join(f'("{coat_id(n)}", "{n}")' for n, _ in coats) + "],")
+    out += ["    ]", "", "    /// A colourway's palette, as \"<kind>.<id>\" (the pet's own look is `coats`).",
+            "    static let petCoatPalettes: [String: [Character: UInt32]] = ["]
+    for pet, coats in PET_COATS.items():
+        for n, coat in coats[1:]:
+            items = ", ".join(f'"{k}": 0x{v}' for k, v in pet_coat(pet, KIND_COLORS[pet], coat, False).items())
+            out.append(f'        "{pet}.{coat_id(n)}": [{items}],')
     out += ["    ]", "}", ""]
     dest = Path(__file__).resolve().parent.parent / "Sources/Pixpaw/CatSprites.generated.swift"
+    dest.write_text("\n".join(out))
+    print("wrote", dest)
+    fine_swift()
+
+
+def fine_swift():
+    out = ["// Generated by Tools/sprites.py from Art/fine/. Edit the art there, then run `python3 Tools/sprites.py swift`.", "",
+           "/// Finer art for the desktop, at `scale` times the pixels of `CatArt`, by",
+           "/// look: \"<kind>\", or for the cat \"cat.<coat>\". Frames, anchors, eyes and",
+           "/// headphone spots are keyed \"<look>.<frame>\".",
+           "enum FineArt {", f"    static let scale = {FINE_SCALE}", "",
+           "    static let palettes: [String: [Character: UInt32]] = ["]
+    looks = {look: FINE[look] for look in FINE_FRAMES}
+    for look, spec in looks.items():
+        items = ", ".join(f'"{k}": 0x{v}' for k, v in spec["colours"].items())
+        out.append(f'        "{look}": [{items}],')
+    out += ["    ]", "", "    /// A pet's colourway, as \"<kind>.<id>\" (see `CatArt.petCoats`).",
+            "    static let petCoatPalettes: [String: [Character: UInt32]] = ["]
+    for pet, coats in PET_COATS.items():
+        for n, coat in coats[1:]:
+            items = ", ".join(f'"{k}": 0x{v}' for k, v in pet_coat(pet, FINE[pet]["colours"], coat, True).items())
+            out.append(f'        "{pet}.{coat_id(n)}": [{items}],')
+    out += ["    ]", "", "    /// The cat's other coats: each letter from the 20 x 16 coat's (see `FineMix`).",
+            "    static let coatMix: [Character: FineMix] = ["]
+    for letter, (source, times, toward, amount) in FINE["cat.gray"]["coats"].items():
+        out.append(f'        "{letter}": FineMix(from: "{source}", times: {float(times)}, toward: "{toward}", amount: {float(amount)}),')
+    out += ["    ]", "", "    static let frames: [String: [String]] = ["]
+    for look, frames in FINE_FRAMES.items():
+        for name, rows in frames.items():
+            out.append(f'        "{look}.{name}": [')
+            out += [f'            "{r}",' for r in rows]
+            out.append("        ],")
+    out += ["    ]", "", "    /// Frame: hat centre x, hat bottom row, collar centre x, collar row (-1 = none).",
+            "    static let anchors: [String: (Double, Int, Double, Int)] = ["]
+    for look, spec in looks.items():
+        for name, (hx, hy, cx, cy) in spec["anchors"].items():
+            out.append(f'        "{look}.{name}": ({float(hx)}, {hy}, {float(cx) if cx is not None else -1}, {cy if cy is not None else -1}),')
+    out += ["    ]", "", "    /// Frame: the eyes the glasses go round, open or shut.", "    static let eyes: [String: [EyeBox]] = ["]
+    for look, spec in looks.items():
+        for name, boxes in spec["eyes"].items():
+            items = ", ".join(f"EyeBox(x0: {a}, x1: {b}, y0: {c}, y1: {d})" for a, b, c, d in boxes)
+            out.append(f'        "{look}.{name}": [{items}],')
+    out += ["    ]", "", "    static let headphones: [String: [String]] = ["]
+    for name, rows in FINE_HEADPHONES.items():
+        out.append(f'        "{name}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
+    out += ["    ]", "", "    /// Frame: headphones view, left column, top row.",
+            "    static let headphonesAt: [String: (String, Int, Int)] = ["]
+    for look, spec in looks.items():
+        for name, (view, left, top) in spec["headphones_at"].items():
+            out.append(f'        "{look}.{name}": ("{view}", {left}, {top}),')
+    out += ["    ]", "", "    /// HD hats, collars and the laptop: `CatArt.accessories` at twice the grid.",
+            "    static let accessories: [String: [String]] = ["]
+    for name, rows in FINE_ACCESSORIES.items():
+        out.append(f'        "{name}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
+    out += ["    ]", "", "    static let accessoryColors: [Character: UInt32] = ["]
+    out += [f'        "{k}": 0x{v},' for k, v in {**ACCESSORY_COLORS, **FINE_ACCESSORY_COLORS}.items()]
+    out += ["    ]", "", "    /// HD `CatArt.effects`: props at twice the grid; effects over the head at 4/3 (drawn at 1.5 pt).",
+            "    static let effects: [String: [String]] = ["]
+    for name, rows in FINE_EFFECTS.items():
+        out.append(f'        "{name}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
+    out += ["    ]", "", "    static let effectColors: [Character: UInt32] = ["]
+    out += [f'        "{k}": 0x{v},' for k, v in {**EFFECT_COLORS, **FINE_EFFECT_COLORS}.items()]
+    out += ["    ]", "", "    /// HD `ToyArt` toys by `PetGame`; `o` is ink.",
+            "    static let toys: [String: (rows: [String], palette: [Character: UInt32])] = ["]
+    for name, (rows, pal) in FINE_TOYS.items():
+        out.append(f'        "{name}": ([')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ], [" + ", ".join(f'"{k}": 0x{v}' for k, v in pal.items()) + "]),")
+    out += ["    ]", "", "    /// HD `AgentArt` pictures by name (twice the grid, or 4/3 for the head effects); `o` is ink.",
+            "    static let agent: [String: (frames: [[String]], palette: [Character: UInt32])] = ["]
+    for name, (frames, pal) in FINE_AGENT.items():
+        out.append(f'        "{name}": ([')
+        for rows in frames:
+            out.append("            [")
+            out += [f'                "{r}",' for r in rows]
+            out.append("            ],")
+        out.append("        ], [" + ", ".join(f'"{k}": 0x{v}' for k, v in pal.items()) + "]),")
+    out += ["    ]", "", "    /// HD homes: `CatArt.homes` at twice the grid; d is the doorway.",
+            "    static let homes: [String: [String]] = ["]
+    for kind, rows in FINE_HOMES.items():
+        out.append(f'        "{kind}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
+    out += ["    ]", "", "    static let homeColors: [Character: UInt32] = ["]
+    out += [f'        "{k}": 0x{v},' for k, v in {**HOME_COLORS, **FINE_HOME_COLORS}.items()]
+    out += ["    ]", "}", ""]
+    dest = Path(__file__).resolve().parent.parent / "Sources/Pixpaw/CatSprites.fine.generated.swift"
     dest.write_text("\n".join(out))
     print("wrote", dest)
 
@@ -830,11 +1702,44 @@ def preview_accessories(path, scale=6):
     png(path, width, height, px)
 
 
+def preview_fine(path, scale=3):
+    """Every finer look in every coat: the gray as drawn, then the others
+    by its `coats` recipe."""
+    rows_of = []
+    for look, frames in FINE_FRAMES.items():
+        spec = FINE[look]
+        rows_of.append((frames, spec["colours"]))
+        if "coats" in spec:
+            rows_of += [(frames, fine_coat(spec, COATS[coat])) for coat in COATS if coat != "gray"]
+    cell = (FINE_CELL + 2) * scale
+    width, height = cell * len(FRAME_ORDER), cell * len(rows_of)
+    px = bytearray([40, 44, 52, 255] * width * height)
+    for j, (frames, pal) in enumerate(rows_of):
+        for i, name in enumerate(FRAME_ORDER):
+            rows = frames[name]
+            for y, row in enumerate(rows):
+                for x, c in enumerate(row):
+                    if c == ".":
+                        continue
+                    rgb = bytes(int(pal[c][k:k + 2], 16) for k in (0, 2, 4)) + b"\xff"
+                    for dy in range(scale):
+                        for dx in range(scale):
+                            X = i * cell + (x + 1) * scale + dx
+                            Y = j * cell + cell - (len(rows) - y + 1) * scale + dy
+                            k = (Y * width + X) * 4
+                            px[k:k + 4] = rgb
+    png(path, width, height, px)
+
+
 if __name__ == "__main__":
     check()
     if sys.argv[1:2] == ["preview"]:
         preview(sys.argv[2])
     elif sys.argv[1:2] == ["wear"]:
         preview_accessories(sys.argv[2])
+    elif sys.argv[1:2] == ["fine"]:
+        preview_fine(sys.argv[2])
+    elif sys.argv[1:2] == ["fold"]:
+        fold()
     elif sys.argv[1:2] == ["swift"]:
         swift()

@@ -40,6 +40,12 @@ final class CatBubble {
     private var kept: CatLine?
     /// What the panel shows now, and which way its tail points.
     private var shown: (line: CatLine, pointsUp: Bool)?
+    /// How the pet's bubbles come up; set by the pet before it talks.
+    var style: BubbleStyle = .plain
+    /// The effect's frame while it plays, and the timer stepping it.
+    private var effectFrame: Int?
+    private var effectTimer: Timer?
+    private var drawn: CatBubbleView?
 
     /// Where the bubble points: the top of the cat's head, or the bottom of
     /// the notch with `pointsUp`.
@@ -79,7 +85,7 @@ final class CatBubble {
     /// Called every tick with where the cat is; shows, moves, times out.
     func update(anchor: Anchor?) {
         guard let anchor else {
-            panel?.orderOut(nil)
+            panel?.hideIfShown()
             return
         }
         if let hideAt, Date() >= hideAt {
@@ -87,16 +93,21 @@ final class CatBubble {
             self.hideAt = nil
         }
         guard let line = current ?? kept else {
-            panel?.orderOut(nil)
+            panel?.hideIfShown()
             shown = nil
             return
         }
         if let current, hideAt == nil {
             // About two seconds a line; a level being changed goes a bit sooner.
-            let reading = current.seconds ?? (current.key == nil ? 2.0 : 1.5)
+            let reading = (current.seconds ?? (current.key == nil ? 2.0 : 1.5))
+                + (playsEffect(pointsUp: anchor.pointsUp) ? BubbleEffect.leadIn : 0)
             hideAt = Date().addingTimeInterval(reading)
         }
         if shown?.line != line || shown?.pointsUp != anchor.pointsUp {
+            // A new thing to say lights up again; the same one turning round,
+            // or a level changing in place, does not.
+            let fresh = shown?.line != line && (line.key == nil || shown?.line.key != line.key)
+            if fresh, playsEffect(pointsUp: anchor.pointsUp) { startEffect() } else if fresh { stopEffect() }
             show(line, pointsUp: anchor.pointsUp)
             shown = (line, anchor.pointsUp)
         }
@@ -104,6 +115,8 @@ final class CatBubble {
     }
 
     func clear() {
+        stopEffect()
+        drawn = nil
         queue = []
         current = nil
         hideAt = nil
@@ -122,7 +135,11 @@ final class CatBubble {
         let clock = line.until.map { $0.timeIntervalSinceNow >= 3600 ? "0:00:00" : "00:00" } ?? ""
         let natural = ceil((line.text + clock as NSString).size(withAttributes: [.font: font]).width) + 4
         let room = Self.maxWidth - 20 - (line.symbol == nil ? 0 : 17)
-        let view = CatBubbleView(line: line, pointsUp: pointsUp, textWidth: min(natural, room))
+        let view = CatBubbleView(
+            line: line, pointsUp: pointsUp, textWidth: min(natural, room),
+            style: style, effectFrame: effectFrame
+        )
+        drawn = view
         if let hosting {
             hosting.rootView = view
         } else {
@@ -143,15 +160,51 @@ final class CatBubble {
     private func place(at anchor: Anchor) {
         guard let panel else { return }
         let size = panel.frame.size
+        // A bubble with an effect has room for it all round; its tail still
+        // ends at the anchor.
+        let margin = drawn?.margin ?? 0
         var origin = CGPoint(
             x: anchor.point.x - size.width / 2,
-            y: anchor.pointsUp ? anchor.point.y - size.height : anchor.point.y
+            y: anchor.pointsUp ? anchor.point.y - size.height + margin : anchor.point.y - margin
         )
         if let area = NSScreen.screens.first(where: { NSMouseInRect(anchor.point, $0.frame, false) })?.frame {
             origin.x = min(max(origin.x, area.minX + 4), area.maxX - size.width - 4)
             origin.y = min(max(origin.y, area.minY + 4), area.maxY - size.height)
         }
-        panel.setFrameOrigin(origin)
+        panel.moveOrigin(to: origin)
+    }
+
+    /// Each pet sends its bubbles up with its own effect over its head (the
+    /// dragon breathes them alight); under the notch, and with Reduce Motion,
+    /// they just come up with the tinted edge.
+    private func playsEffect(pointsUp: Bool) -> Bool {
+        style != .plain && !pointsUp && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+    }
+
+    private func startEffect() {
+        stopEffect()
+        effectFrame = 0
+        let timer = Timer(timeInterval: 1 / BubbleEffect.fps, repeats: true) { [weak self] _ in
+            MainActor.assumeIsolated { self?.stepEffect() }
+        }
+        // Keeps playing while a menu is open, like the pet.
+        RunLoop.main.add(timer, forMode: .common)
+        effectTimer = timer
+    }
+
+    private func stopEffect() {
+        effectTimer?.invalidate()
+        effectTimer = nil
+        effectFrame = nil
+    }
+
+    /// The next frame, on the same panel at the same size; nil once it settles.
+    private func stepEffect() {
+        guard let frame = effectFrame, var view = drawn, let hosting else { return stopEffect() }
+        if frame >= BubbleEffect.lastFrame { stopEffect() } else { effectFrame = frame + 1 }
+        view.effectFrame = effectFrame
+        drawn = view
+        hosting.rootView = view
     }
 }
 
@@ -160,8 +213,32 @@ struct CatBubbleView: View {
     let line: CatLine
     let pointsUp: Bool
     let textWidth: CGFloat
+    var style: BubbleStyle = .plain
+    /// The frame of the effect while it plays; nil once settled.
+    var effectFrame: Int?
+
+    /// A bubble over the head with an effect keeps room around it for it.
+    private var effected: Bool { style != .plain && !pointsUp }
+    var margin: CGFloat { effected ? BubbleEffect.margin(style) : 0 }
 
     var body: some View {
+        let lit = effectFrame.map { $0 >= BubbleEffect.lightFrame } ?? true
+        bubble
+            .opacity(lit ? 1 : 0)
+            .padding(margin)
+            .overlay {
+                if effected, let effectFrame {
+                    Canvas { context, size in
+                        let rect = CGRect(origin: .zero, size: size).insetBy(dx: margin + 1, dy: margin + 1)
+                        let outline = BubbleShape(pointsUp: pointsUp).path(in: rect)
+                        BubbleEffect.draw(style, frame: effectFrame, in: context, size: size, outline: outline)
+                    }
+                }
+            }
+            .fixedSize()
+    }
+
+    private var bubble: some View {
         HStack(alignment: .firstTextBaseline, spacing: 5) {
             if let symbol = line.symbol {
                 Image(systemName: symbol)
@@ -181,7 +258,9 @@ struct CatBubbleView: View {
         .background(
             BubbleShape(pointsUp: pointsUp)
                 .fill(Color.white)
-                .overlay(BubbleShape(pointsUp: pointsUp).stroke(Color(white: 0.12), lineWidth: 2))
+                .overlay(BubbleShape(pointsUp: pointsUp).stroke(
+                    effected ? BubbleEffect.edge(style, frame: effectFrame) : Color(white: 0.12), lineWidth: 2
+                ))
                 .padding(1)
         )
         .fixedSize()

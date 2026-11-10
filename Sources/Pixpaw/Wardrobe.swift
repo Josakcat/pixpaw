@@ -95,12 +95,14 @@ enum CatAccessory: String, CaseIterable, Identifiable, Codable {
 
     /// Who it is drawn for. Collars sit where only the cat has a neck drawn;
     /// glasses and the headset need eyes and headphone spots, which a pet you
-    /// drew doesn't have; the acorn cap is for the small ones.
+    /// drew doesn't have; the acorn cap is for the small ones. The dragon's
+    /// three small heads take a hat on the middle one, and no glasses or headset.
     func fits(_ wearer: Wearer) -> Bool {
         if self == .acornCap { return wearer.looksLike == "hamster" || wearer.looksLike == "rabbit" }
+        let dragon = !wearer.isOwn && wearer.looksLike == "dragon"
         switch slot {
-        case .hat: return self != .headset || !wearer.isOwn
-        case .face: return !wearer.isOwn
+        case .hat: return self != .headset || (!wearer.isOwn && !dragon)
+        case .face: return !wearer.isOwn && !dragon
         case .collar: return wearer.hasNeck
         }
     }
@@ -303,8 +305,9 @@ enum WardrobeArt {
 
     /// The headset: the headphones' band and cups at their spot, in grey on
     /// dark fur and near-black otherwise, with a mic from the lowest cup
-    /// forward under the chin and a red tip.
-    static func headset(_ phones: [String], left: Int, top: Int, darkFur: Bool) -> [WornPixel] {
+    /// forward under the chin and a red tip. `size` is the mic's thickness,
+    /// 2 for finer art.
+    static func headset(_ phones: [String], left: Int, top: Int, darkFur: Bool, size: Int = 1) -> [WornPixel] {
         let colour: Character = darkFur ? "G" : "k"
         var pixels: [WornPixel] = []
         for (y, line) in phones.enumerated() {
@@ -312,12 +315,15 @@ enum WardrobeArt {
         }
         guard let bottom = pixels.map(\.y).max(), let last = phones.last else { return pixels }
         let cup = pixels.filter { $0.y == bottom }.map(\.x)
-        // Cups on both ends of the bottom row: seen from the front, so the
+        // Cups in both halves of the bottom row: seen from the front, so the
         // mic comes off the left cup; from the side, off the one cup.
-        let front = last.first != "." && last.last != "."
+        let front = cup.min()! - left < last.count / 2 && cup.max()! - left >= last.count / 2
         let start = front ? cup.min()! : cup.max()!
-        pixels.append(WornPixel(x: start + 1, y: bottom + 1, colour: colour))
-        pixels.append(WornPixel(x: start + 2, y: bottom + 1, colour: "r"))
+        for along in 0..<(2 * size) {
+            for down in 1...size {
+                pixels.append(WornPixel(x: start + 1 + along, y: bottom + down, colour: along < size ? colour : "r"))
+            }
+        }
         return pixels
     }
 }

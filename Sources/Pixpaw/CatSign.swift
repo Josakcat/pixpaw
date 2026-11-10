@@ -57,9 +57,9 @@ final class CatSign {
     /// Up with its stick in the pet's front paw, at `paw`; or out of sight.
     func place(paw: CGPoint?) {
         guard let panel, text != nil else { return }
-        guard let paw else { return panel.orderOut(nil) }
+        guard let paw else { return panel.hideIfShown() }
         let size = panel.frame.size
-        panel.setFrameOrigin(CGPoint(x: (paw.x - size.width / 2).rounded(), y: paw.y.rounded()))
+        panel.moveOrigin(to: CGPoint(x: (paw.x - size.width / 2).rounded(), y: paw.y.rounded()))
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
 

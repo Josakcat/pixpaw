@@ -91,12 +91,12 @@ final class PetGIF {
         return context.makeImage()
     }
 
-    private func drawFrame(_ look: (sprite: CGImage, right: Bool, bob: CGFloat, effect: (image: CGImage, frame: CGRect)?)) -> CGImage? {
+    private func drawFrame(_ look: (sprite: CGImage, pixel: CGFloat, right: Bool, bob: CGFloat, effect: (image: CGImage, frame: CGRect)?)) -> CGImage? {
         guard let context = Self.context() else { return nil }
         if let backdrop { context.draw(backdrop, in: CGRect(origin: .zero, size: Self.stage)) }
         let window = CatSprites.catSize
         let origin = CGPoint(x: ((Self.stage.width - window.width) / 2).rounded(), y: Self.floor - 1)
-        let size = CGSize(width: CGFloat(look.sprite.width) * CatSprites.scale, height: CGFloat(look.sprite.height) * CatSprites.scale)
+        let size = CGSize(width: CGFloat(look.sprite.width) * look.pixel, height: CGFloat(look.sprite.height) * look.pixel)
         context.saveGState()
         // Feet on the floor, turned the way it faces, as on screen.
         context.translateBy(x: origin.x + window.width / 2, y: origin.y + look.bob)

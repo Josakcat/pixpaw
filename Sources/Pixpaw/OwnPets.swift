@@ -116,6 +116,19 @@ enum OwnPets {
 
     static func pet(_ kind: PetKind) -> OwnPet? { pets.first { $0.kind == kind } }
 
+    /// The colour it is drawn in most (0xRRGGBB), leaving out the dark
+    /// outline, for its bubble's sparkle.
+    static func mainColour(_ kind: PetKind) -> UInt32? {
+        guard let rows = frames[kind.artKey(.sit)], let palette = colours[kind] else { return nil }
+        var counts: [UInt32: Int] = [:]
+        for letter in rows.joined() {
+            guard let rgb = palette[letter] else { continue }
+            let light = 0.3 * Double((rgb >> 16) & 0xFF) + 0.59 * Double((rgb >> 8) & 0xFF) + 0.11 * Double(rgb & 0xFF)
+            if light > 60 { counts[rgb, default: 0] += 1 }
+        }
+        return counts.max { $0.value < $1.value }?.key
+    }
+
     /// Where the pets' own sounds are kept, in the droplet's own folder.
     static var soundFolder: URL?
 

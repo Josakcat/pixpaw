@@ -1,3 +1,4 @@
+// droppykit-lint: allow-file own-window: the scuffle's dust cloud, a click-through panel over the pet and its friend for a couple of seconds while they play-fight, never opened by itself, and closed when the pet hides and in deactivate(); under the same waiver as the pet's own panel, agreed by Droppy for the Store, 2026-11-04
 //
 //  Scuffle.swift
 //  Pixpaw
@@ -19,10 +20,14 @@ final class DustCloud {
     private let layer = CALayer()
     private var timer: Timer?
     private var frame = 0
-    private static let frames: [CGImage] = (0..<6).compactMap { draw(seed: $0) }
+    private static let frames: [CGImage] = (0..<6).compactMap { draw(seed: $0, k: 1) }
+    /// The same frames drawn twice as fine, for beside an HD pet: same points, 1.5 each.
+    private static let fineFrames: [CGImage] = (0..<6).compactMap { draw(seed: $0, k: 2) }
+    private let shown: [CGImage]
 
-    /// A cloud standing on the floor at `bottomCenter`.
-    init(bottomCenter: CGPoint) {
+    /// A cloud standing on the floor at `bottomCenter`; `fine`: drawn in HD.
+    init(bottomCenter: CGPoint, fine: Bool = false) {
+        shown = fine ? Self.fineFrames : Self.frames
         let scale = CatSprites.scale
         let size = CGSize(width: CGFloat(Self.width) * scale, height: CGFloat(Self.height) * scale)
         panel = CatPanel(contentRect: CGRect(origin: CGPoint(x: bottomCenter.x - size.width / 2, y: bottomCenter.y - 3 * scale), size: size))
@@ -32,7 +37,7 @@ final class DustCloud {
         layer.frame = view.bounds
         layer.magnificationFilter = .nearest
         layer.actions = ["contents": NSNull(), "transform": NSNull()]
-        layer.contents = Self.frames.first
+        layer.contents = shown.first
         view.layer?.addSublayer(layer)
         panel.contentView = view
     }
@@ -43,7 +48,7 @@ final class DustCloud {
             MainActor.assumeIsolated {
                 guard let self else { return }
                 self.frame += 1
-                self.layer.contents = Self.frames[self.frame % Self.frames.count]
+                self.layer.contents = self.shown[self.frame % self.shown.count]
                 // A bit of a bounce as they roll about.
                 self.layer.transform = CATransform3DMakeTranslation(CGFloat([0, 2, -1, 3, 0, -2][self.frame % 6]), CGFloat(self.frame % 2) * 3, 0)
             }
@@ -60,15 +65,17 @@ final class DustCloud {
     }
 
     /// One frame: puffs of dust jostling about, an outline, a shadow at
-    /// the bottom, and stars, paws and bits flying off.
-    private static func draw(seed: Int) -> CGImage? {
+    /// the bottom, and stars, paws and bits flying off. `k` grid pixels to
+    /// each of the classic ones: the same draws, finer; the outline stays 1.
+    private static func draw(seed: Int, k: Int) -> CGImage? {
         var random = SeededRandom(seed: UInt64(seed + 1) * 2_654_435_761)
-        let w = width, h = height
+        let w = width * k, h = height * k, kd = Double(k)
         var cloud = [[Bool]](repeating: [Bool](repeating: false, count: w), count: h)
         // Puffs along the cloud, the middle ones biggest.
         let puffs: [(x: Double, y: Double, r: Double)] = [(8, 10, 6.5), (15, 15, 8.5), (23, 17, 9.5), (31, 15, 8.5), (38, 10, 6.5), (23, 9, 8), (14, 7, 5.5), (32, 7, 5.5)]
         for puff in puffs {
-            let cx = puff.x + 4 + random.next(in: -1.6...1.6), cy = puff.y + 6 + random.next(in: -1.2...1.2), r = puff.r + random.next(in: -0.8...0.8)
+            let cx = (puff.x + 4 + random.next(in: -1.6...1.6)) * kd, cy = (puff.y + 6 + random.next(in: -1.2...1.2)) * kd
+            let r = (puff.r + random.next(in: -0.8...0.8)) * kd
             for y in 0..<h { for x in 0..<w where cloud[y][x] == false {
                 let dx = Double(x) + 0.5 - cx, dy = Double(y) + 0.5 - cy
                 if dx * dx + dy * dy <= r * r { cloud[y][x] = true }
@@ -86,8 +93,8 @@ final class DustCloud {
         } }
         // A few swirls inside.
         for _ in 0..<3 {
-            let x = Int(random.next(in: 14...38)), y = Int(random.next(in: 15...26))
-            for i in 0..<3 where cloud[y][x + i] { pixels[y * w + x + i] = shade }
+            let x = Int(random.next(in: 14...38)) * k, y = Int(random.next(in: 15...26)) * k
+            for i in 0..<3 * k where cloud[y][x + i] { pixels[y * w + x + i] = shade }
         }
         func set(_ x: Int, _ y: Int, _ color: UInt32, overCloud: Bool = true) {
             guard x >= 0, y >= 0, x < w, y < h, overCloud || !cloud[y][x] else { return }
@@ -96,39 +103,55 @@ final class DustCloud {
         // Legs flailing out of the top and the sides, one in each coat.
         for (i, coat) in [UInt32(0xF0A040), 0xA4A4B0].enumerated() {
             if random.next(in: 0...1) < 0.55 {
-                let x = Int(random.next(in: 16...36))
+                let x = Int(random.next(in: 16...36)) * k
                 guard let top = (0..<h).first(where: { cloud[$0][x] }) else { continue }
-                for d in 1...3 {
-                    set(x - 1, top - d, line); set(x, top - d, coat); set(x + 1, top - d, coat); set(x + 2, top - d, line)
+                for d in 1...3 * k {
+                    set(x - 1, top - d, line)
+                    for j in 0..<2 * k { set(x + j, top - d, coat) }
+                    set(x + 2 * k, top - d, line)
                 }
-                set(x, top - 4, line); set(x + 1, top - 4, line)
+                for j in 0..<2 * k { set(x + j, top - 3 * k - 1, line) }
             } else {
-                let y = Int(random.next(in: 14...25))
+                let y = Int(random.next(in: 14...25)) * k
                 let right = i == 1
                 guard let edge = right ? (0..<w).reversed().first(where: { cloud[y][$0] }) : (0..<w).first(where: { cloud[y][$0] }) else { continue }
                 let step = right ? 1 : -1
-                for d in 1...3 {
+                for d in 1...3 * k {
                     let x = edge + d * step
-                    set(x, y - 1, line); set(x, y, coat); set(x, y + 1, coat); set(x, y + 2, line)
+                    set(x, y - 1, line)
+                    for j in 0..<2 * k { set(x, y + j, coat) }
+                    set(x, y + 2 * k, line)
                 }
-                let tip = edge + 4 * step
-                set(tip, y, line); set(tip, y + 1, line)
+                let tip = edge + (3 * k + 1) * step
+                for j in 0..<2 * k { set(tip, y + j, line) }
             }
         }
         // Stars flying off, up and out.
-        let star: [(Int, Int)] = [(0, -1), (-1, 0), (0, 0), (1, 0), (0, 1)]
+        // HD: a finer star of the same reach, a lit centre and darker tips.
+        let star: [(Int, Int)] = k == 1 ? [(0, -1), (-1, 0), (0, 0), (1, 0), (0, 1)]
+            : (-3...3).flatMap { d in [(d, 0), (0, d)] }.filter { $0 != (0, 0) } + [(0, 0), (-1, -1), (1, -1), (-1, 1), (1, 1)]
         for i in 0..<3 {
             let side = i % 2 == 0 ? -1.0 : 1.0
-            let x = Int(27 + side * random.next(in: 18...24)), y = Int(random.next(in: 2...12))
-            for (dx, dy) in star { set(x + dx, y + dy, i == 2 ? 0xFFFFFF : 0xFFD23F, overCloud: false) }
+            let x = Int(27 + side * random.next(in: 18...24)) * k, y = Int(random.next(in: 2...12)) * k
+            let color: UInt32 = i == 2 ? 0xFFFFFF : 0xFFD23F
+            for (dx, dy) in star {
+                let lit: UInt32 = k == 1 ? color : (dx, dy) == (0, 0) ? 0xFFFFFF : abs(dx) + abs(dy) == 3 ? 0xE0A92A : color
+                set(x + dx, y + dy, lit, overCloud: false)
+            }
         }
         // A paw poking out of the top now and then.
         if seed % 3 == 1 {
-            let x = Int(random.next(in: 18...34))
-            if let top = (0..<h).first(where: { cloud[$0][x] }) {
+            let x = Int(random.next(in: 18...34)) * k
+            if let top = (0..<h).first(where: { cloud[$0][x] }), k == 1 {
                 for (dx, dy) in [(0, 1), (1, 1), (2, 1), (0, 2), (1, 2), (2, 2), (0, 3), (2, 3)] {
                     set(x + dx, top - dy, dy == 3 ? line : 0xFFFFFF)
                 }
+            } else if let top = (0..<h).first(where: { cloud[$0][x] }) {
+                // A 6 x 4 pad with its toes, then two toe tips.
+                for (dy, row) in ["o.oo.o", "owowwo", "owwwwo", "owwwwo"].enumerated() {
+                    for (dx, char) in row.enumerated() where char != "." { set(x + dx, top - 4 + dy, char == "o" ? line : 0xFFFFFF) }
+                }
+                set(x + 1, top - 5, line); set(x + 4, top - 5, line)
             }
         }
         // To RGBA, top row first, as a CGImage keeps them.

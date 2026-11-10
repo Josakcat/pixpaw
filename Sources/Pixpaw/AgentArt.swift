@@ -206,10 +206,22 @@ enum AgentArt: String {
         return drawn
     }
 
+    @MainActor private static var fineCache: [AgentArt: [CGImage]] = [:]
+
+    /// The HD frames (`FineArt.agent`, 4/3 of the grid) when `fine` and it has some.
+    @MainActor
+    func frames(fine: Bool) -> [CGImage] {
+        guard fine, let art = FineArt.agent[rawValue] else { return frames }
+        if let hit = Self.fineCache[self] { return hit }
+        let drawn = art.frames.compactMap { ToyArt.image($0, art.palette) }
+        Self.fineCache[self] = drawn
+        return drawn
+    }
+
     /// The frame for a tick of the pet's clock, a few ticks each.
     @MainActor
-    func frame(at tick: Int, every ticks: Int = 4) -> CGImage? {
-        let frames = frames
+    func frame(at tick: Int, every ticks: Int = 4, fine: Bool = false) -> CGImage? {
+        let frames = frames(fine: fine)
         return frames.isEmpty ? nil : frames[(tick / ticks) % frames.count]
     }
 

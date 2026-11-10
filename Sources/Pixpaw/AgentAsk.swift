@@ -177,14 +177,14 @@ final class AskCard {
     /// Over the pet's head, its tail at `head`; or out of sight.
     func place(head: CGPoint?) {
         guard let panel, ask != nil else { return }
-        guard let head else { return panel.orderOut(nil) }
+        guard let head else { return panel.hideIfShown() }
         let size = panel.frame.size
         var origin = CGPoint(x: (head.x - size.width / 2).rounded(), y: head.y.rounded())
         if let area = NSScreen.screens.first(where: { NSMouseInRect(head, $0.frame, false) })?.visibleFrame {
             origin.x = min(max(origin.x, area.minX + 4), area.maxX - size.width - 4)
             origin.y = min(origin.y, area.maxY - size.height)
         }
-        panel.setFrameOrigin(origin)
+        panel.moveOrigin(to: origin)
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
 

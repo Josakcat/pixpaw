@@ -43,10 +43,13 @@ final class FetchBall {
     private(set) var position: CGPoint = .zero
 
     /// `image`: what is thrown, the tennis ball when nil; `onClick`: it is
-    /// clicked while it waits on the floor.
-    init(image: CGImage? = nil, onClick: @escaping @MainActor () -> Void) {
+    /// clicked while it waits on the floor; `points`: per pixel of `image`
+    /// (an HD toy's are half the usual).
+    init(image: CGImage? = nil, points: CGFloat = CatSprites.scale, onClick: @escaping @MainActor () -> Void) {
+        // The tennis ball has only the usual pixels.
+        let points = image == nil ? CatSprites.scale : points
         let image = image ?? Self.ball
-        size = CGSize(width: CGFloat(image?.width ?? 7) * CatSprites.scale, height: CGFloat(image?.height ?? 7) * CatSprites.scale)
+        size = CGSize(width: CGFloat(image?.width ?? 7) * points, height: CGFloat(image?.height ?? 7) * points)
         panel = CatPanel(contentRect: CGRect(origin: .zero, size: size))
         view = BallView(frame: CGRect(origin: .zero, size: size))
         view.wantsLayer = true
@@ -67,7 +70,7 @@ final class FetchBall {
 
     func place(_ point: CGPoint) {
         position = point
-        panel.setFrameOrigin(point)
+        panel.moveOrigin(to: point)
         if !panel.isVisible { panel.orderFrontRegardless() }
     }
 

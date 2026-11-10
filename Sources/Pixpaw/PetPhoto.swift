@@ -41,8 +41,9 @@ enum PetPhoto {
 
         // The pet, sitting, twenty times its pixel size, feet on the floor.
         if let sprite = CatSprites.shared.image(.sit, coat: cat.coat, hat: cat.hat, collar: cat.collar, glasses: cat.glasses,
-                                                headphones: cat.wearsHeadphones, costume: cat.costume, kind: cat.kind) {
-            let scale: CGFloat = 20
+                                                headphones: cat.wearsHeadphones, costume: cat.costume, kind: cat.kind, fine: true) {
+            // Twenty times the 20 x 16 art's pixel, so HD art comes out the same size.
+            let scale = 20 * CatSprites.shared.pixelSize(cat.kind, coat: cat.coat) / CatSprites.scale
             let size = CGSize(width: CGFloat(sprite.width) * scale, height: CGFloat(sprite.height) * scale)
             context.interpolationQuality = .none
             context.draw(sprite, in: CGRect(x: (CGFloat(width) - size.width) / 2, y: floorY - 6, width: size.width, height: size.height))

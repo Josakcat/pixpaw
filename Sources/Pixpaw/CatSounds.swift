@@ -107,6 +107,9 @@ final class CatSounds {
         case .dino:
             voice = Voice(calls: [Self.rawr(pitch: 1), Self.rawr(pitch: 1.2)].map(sound),
                           content: sound(Self.purrSamples()), chew: sound(Self.chewSamples()))
+        case .dragon:
+            voice = Voice(calls: [Self.tripleRawr(pitch: 1), Self.tripleRawr(pitch: 1.1)].map(sound),
+                          content: sound(Self.purrSamples(pitch: 0.7)), chew: sound(Self.chewSamples()))
         case .dog:
             voice = Voice(calls: [Self.bark(pitch: 1, times: 2), Self.bark(pitch: 1.15, times: 1)].map(sound),
                           content: sound(Self.pantSamples()), chew: sound(Self.chewSamples()))
@@ -187,7 +190,8 @@ final class CatSounds {
     }
 
     /// A low rumble pulsing about 25 times a second, louder on the in-breath.
-    private static func purrSamples() -> [Float] {
+    /// `pitch` below 1 lowers the rumble (the dragon's three chests).
+    private static func purrSamples(pitch: Double = 1) -> [Float] {
         let duration = 1.3
         let count = Int(duration * sampleRate)
         var samples = [Float](repeating: 0, count: count)
@@ -195,7 +199,7 @@ final class CatSounds {
         for i in 0..<count {
             let t = Double(i) / sampleRate
             noise = noise * 0.97 + Float.random(in: -1...1) * 0.03
-            let rumble = 0.5 * sin(2 * .pi * 48 * t) + 0.3 * sin(2 * .pi * 96 * t) + Double(noise) * 6
+            let rumble = 0.5 * sin(2 * .pi * 48 * pitch * t) + 0.3 * sin(2 * .pi * 96 * pitch * t) + Double(noise) * 6
             let pulse = pow(0.5 + 0.5 * sin(2 * .pi * 25 * t), 2)
             let breath = t < 0.6 ? 1.0 : 0.7
             let envelope = min(1, t / 0.1) * min(1, (duration - t) / 0.2)
@@ -285,6 +289,18 @@ final class CatSounds {
             noise = noise * 0.9 + Double.random(in: -1...1) * 0.1
             let envelope = min(1, t / 0.05) * min(1, (duration - t) / 0.18)
             samples[i] = Float((value * growl + noise * 1.5) * envelope * 0.22)
+        }
+        return samples
+    }
+
+    /// "Rawr-rawr-rawr": the dinosaur's rawr from three heads, high, middle
+    /// and low, each starting about 80 ms after the last and overlapping.
+    private static func tripleRawr(pitch: Double) -> [Float] {
+        let heads = [1.25, 1.0, 0.8].map { rawr(pitch: $0 * pitch) }
+        let offset = Int(0.08 * sampleRate)
+        var samples = [Float](repeating: 0, count: (heads.map(\.count).max() ?? 0) + offset * (heads.count - 1))
+        for (n, head) in heads.enumerated() {
+            for (i, value) in head.enumerated() { samples[n * offset + i] += value * 0.7 }
         }
         return samples
     }

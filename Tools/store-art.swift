@@ -1118,7 +1118,7 @@ func worn(_ ctx: CGContext, _ kind: String, _ frame: String, coat: String = "ora
     for item in wearing {
         switch item.slot {
         case .face:
-            let eyes = WardrobeArt.eyes(in: rows, eye: kind == "parrot" ? "K" : "e")
+            let eyes = WardrobeArt.eyes(in: rows, eye: kind == "parrot" ? "K" : kind == "dragon" ? "E" : "e")
             for p in WardrobeArt.glasses(item, eyes: eyes, darkFur: darkFur) {
                 if let c = CatArt.accessoryColors[p.colour] { overlay.append((p.x, p.y, c)) }
             }

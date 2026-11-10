@@ -102,6 +102,7 @@ enum CatWords {
         CatLine(text: by.isEmpty ? "Writing it up…" : "Writing it up with \(by)…", symbol: "text.append", seconds: 4)
     }
     static let notesReady = CatLine(text: "Meeting notes are on the shelf!", symbol: "doc.text.fill", seconds: 5)
+    static let notesNotShelved = CatLine(text: "Notes saved in Documents › Pixpaw Meetings, but I couldn't reach your shelf.", symbol: "exclamationmark.triangle.fill", seconds: 6)
     static let notesWithoutSummary = CatLine(text: "The summary didn't come, but the transcript is on the shelf.", symbol: "doc.text", seconds: 6)
     static let notAllowed = CatLine(text: "Not allowed. It's still waiting for you.", symbol: "touchid", seconds: 3)
     /// Capturing the whole page in the browser, and what can stop it.
@@ -184,6 +185,7 @@ enum CatWords {
         case .rabbit: "Thump thump! I'm up."
         case .shark: "Chomp! I'm up."
         case .pig: "Oink oink! I'm up."
+        case .dragon: "Rawr rawr rawr! We're up."
         }
     }
     @MainActor static func purr(_ kind: PetKind) -> String {
@@ -201,6 +203,7 @@ enum CatWords {
         case .rabbit: "*happy binky*"
         case .shark: "Blub… nice."
         case .pig: "*happy snort*"
+        case .dragon: "Three heads, one snack."
         }
     }
 

@@ -1,6 +1,6 @@
 # Pixpaw 🐾
 
-A pixel cat (or bee, parrot, dinosaur, dog, hamster or chicken) that lives on
+A pixel cat (or bee, parrot, dinosaur, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig or dragon) that lives on
 your desktop and talks to you. A Droplet for
 [Droppy](https://getdroppy.app), built with
 [DroppyKit](https://getdroppy.app/docs/droppykit).
@@ -53,14 +53,14 @@ your desktop and talks to you. A Droplet for
 - The shelf widget counts your days together, pets, meals and games.
 - On Droppy's lock screen: what you'll want to know when you come back. An agent that needs you, the focus or break clock with its ring, a long command, how your agents got on, or else what your pet is up to.
 - A gauge in the menu bar as full as the emptiest window of your coding agents' plans (a raised hand while one needs you). Click it for Claude Code's, Antigravity's and Codex's five hours and week, each with a bar that turns amber at 20% and red at 10% and when it resets (and, at your pace, when it runs dry if that comes first: the five hours by the last hour, the week by the last day), and what your agents are up to. A question your agent asks on your pet's card can be answered from there too. Each AI has a section of its own, in its own color and mark, Antigravity with a line per model group. The same is a page of the shelf widget, AI Usage left: click the gauge at its top. Read from what the status line, the Antigravity plugin and the hooks save on this Mac; turn it off under Settings → AI agents.
-- Six coats, and an optional friend of any kind that sits with it, plays tag, and plays rock, paper, scissors for make-believe coins. Each has a character of its own: competitive, loves a bet, playful, sleepy, calm or thrifty.
+- Six coats, and every built-in pet drawn in finer 40 × 32 pixels on the desktop (Settings → Pixel size → Chunky (classic) brings back the original look; the notch keeps the classic pixels), and an optional friend of any kind that sits with it, plays tag, and plays rock, paper, scissors for make-believe coins. Each has a character of its own: competitive, loves a bet, playful, sleepy, calm or thrifty.
 - Hold a dragged file over it and drop it: it carries the file to Droppy's shelf.
 - Your to-do list on a little sign: add notes with Control-Option-N, it holds up the first until you click it done (a star), then the next. A note with a time ("in 10 min", "at 5pm") brings it over to remind you, and a countdown ("Trip to Japan · 12 days") rides along under it.
 - Captures a whole web page for you, in Safari, Chrome, Arc, Edge, Brave or Vivaldi: it scrolls the page top to bottom, joins the screens into one tall PNG and carries it to Droppy's shelf. Needs the browser to allow JavaScript from Apple Events (Safari: Settings → Developer; the others: View → Developer), and Screen Recording for Droppy.
-- Plays fetch: it runs after a tennis ball and brings it back, and now and then play-fights its friend in a cartoon cloud of dust. Each animal has its own games in the Play menu and a toy of its own: a toy mouse, a frisbee, a carrot, a watermelon… (a cat won't fetch; a dog will).
+- Plays fetch: it runs after a tennis ball and brings it back, and now and then play-fights its friend in a cartoon cloud of dust. Each animal has its own games in the Play menu and a toy of its own: a toy mouse, a frisbee, a carrot, a watermelon, a roasted marshmallow… (a cat won't fetch; a dog will).
 - Not a cat person? Pick a bee (flies anywhere), a parrot (perches and flies
   between perches), a shark (swims through the air), a dinosaur, a dog, a
-  hamster, a chicken, a giraffe, a hippo, a rabbit or a pig, each with its own sounds. Switch from the portrait on the shelf or in Settings.
+  hamster, a chicken, a giraffe, a hippo, a rabbit, a pig or a three-headed dragon (it flies when it goes somewhere), each with its own sounds and its own speech-bubble effect (Settings → Bubble effects turns them off). Switch from the portrait on the shelf or in Settings.
 - Talk to it: press Control-Option-T (or Talk to me in its menu) and say
   "come here", "feed", "focus for 25 minutes", "play lofi", "note buy milk" or
   "how much usage is left". Heard with Apple's on-device speech recognition,
@@ -137,7 +137,9 @@ your desktop and talks to you. A Droplet for
 | ![A pig](Assets/Screenshot-24.png) | ![A bigger Wardrobe](Assets/Screenshot-25.png) |
 | ![A home for naps](Assets/Screenshot-26.png) | ![What can I do?](Assets/Screenshot-27.png) |
 | ![Answer your agents](Assets/Screenshot-28.png) | ![Your pet's card, one click away](Assets/Screenshot-29.png) |
-| ![A light while agents work](Assets/Screenshot-30.png) | |
+| ![A light while agents work](Assets/Screenshot-30.png) | ![Crown on the run](Assets/Screenshot-31.png) |
+| ![Fire in the speech bubble](Assets/Screenshot-32.png) | ![Every pet, its own bubble](Assets/Screenshot-33.png) |
+| ![Classic or HD](Assets/Screenshot-34.png) | ![Colours after real animals](Assets/Screenshot-35.png) |
 
 Everything runs on your Mac unless you choose Claude for meeting summaries
 (the transcript goes to Anthropic) or CI after a push (your `gh` command asks
@@ -302,11 +304,11 @@ also has a field for your own words: your answer to a question, like Claude's
 ## Links for scripts and Shortcuts
 
 `droppy://droplet/pixpaw/<action>` (or `droppy-playground://…`): `show`, `hide`,
-`come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|stop` (`play?toy=hands`: rock, paper, scissors with its friend), `wear?hat=…&collar=…&glasses=…`,
+`come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|marshmallow|stop` (`play?toy=hands`: rock, paper, scissors with its friend), `wear?hat=…&collar=…&glasses=…`,
 `quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
 `note?text=…`, `join` (your next video call), `countdown?title=…&date=2026-12-24`,
 `focus?minutes=25` or `focus?stop` (a focus session, without lofi), `meeting` (stops meeting notes; starting them, like Talk to me, lofi and a page capture, takes a click in Pixpaw), `gif` (five seconds of your pet as a GIF), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `agent?name=…&state=tool-done&tool=Bash&outcome=ok|failed` and `agent?name=…&state=helper&event=start|done&id=…` (used by the hooks for long commands and helpers), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
-`character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark`.
+`character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark|pig|dragon`.
 
 ## Art
 

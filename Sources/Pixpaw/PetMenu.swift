@@ -18,7 +18,7 @@ enum PetMenuAction: String, CaseIterable {
     case feed, treat, nap, wake, playGame = "playGame:", playHands, stopPlaying
     case focus, stretch, lofi, pauseLofi, askSign, dropSign
     case meetingNotes, openNotes, putHomeAway
-    case photo, recordGIF, capturePage, wearItem = "wearItem:", openWardrobe
+    case photo, recordGIF, capturePage, wearItem = "wearItem:", openWardrobe, setColour = "setColour:", setPixels = "setPixels:"
 }
 
 /// A shortcut as the user set it on Droppy's Shortcuts page.
@@ -130,7 +130,15 @@ struct PetMenuState {
     var scrollingCapture = false
     var wholePage = false
     var places: [Place] = []
+    /// Its coats or colourways, the one it has on marked worn.
+    var colours: [Place.Thing] = []
     var stars = 0
+    /// Whether the pet is drawn in the old chunky pixels, not the finer ones.
+    var classicPixels = false
+    /// Whether this pet has finer art at all; no Pixel size without it.
+    var hasFineArt = false
+    /// The menu is the friend's: Pixel size changes both pets.
+    var isFriend = false
 }
 
 enum PetMenu {
@@ -222,7 +230,21 @@ enum PetMenu {
         }
         let wardrobe = submenu("Wardrobe", "tshirt", badge: "\(state.stars) ★",
                                places + [.separator, PetMenuEntry(title: "Open Wardrobe…", action: .openWardrobe)])
-        groups.append(PetMenuGroup(title: nil, items: [submenu("Capture", "camera", captures), wardrobe]))
+        // How it looks together: its colour beside what it wears.
+        var look = [wardrobe]
+        if !state.colours.isEmpty {
+            look.insert(submenu("Colour", "paintpalette", state.colours.map {
+                PetMenuEntry(title: $0.title, action: .setColour, represented: $0.id, checked: $0.worn)
+            }), at: 0)
+        }
+        if state.hasFineArt {
+            var sizes = [PetMenuEntry(title: "Fine (HD)", action: .setPixels, represented: "fine", checked: !state.classicPixels),
+                         PetMenuEntry(title: "Chunky (classic)", action: .setPixels, represented: "classic", checked: state.classicPixels)]
+            if state.isFriend { sizes += [.separator, PetMenuEntry(title: "For both pets", enabled: false)] }
+            look.append(submenu("Pixel size", "square.grid.3x3", sizes))
+        }
+        groups.append(PetMenuGroup(title: "Look", items: look))
+        groups.append(PetMenuGroup(title: nil, items: [submenu("Capture", "camera", captures)]))
         return groups
     }
 }
