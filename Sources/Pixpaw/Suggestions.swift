@@ -15,11 +15,14 @@ import Foundation
 
 enum PetSuggestionKind: String, CaseIterable {
     case meeting, ci, server, agent, pomodoro, meetingNotes, screenshot, download
+    /// The first-day hello: pick its colour.
+    case hello
 }
 
 /// A button a suggestion offers.
 enum PetSuggestionAction: String, CaseIterable {
     case toShelf, showInFinder, join, takeNotes, agents, openServer, openCI, focusAgain, stretch, openNotes
+    case pickColour
 
     /// On the card's button.
     func button(port: Int? = nil) -> String {
@@ -34,6 +37,7 @@ enum PetSuggestionAction: String, CaseIterable {
         case .focusAgain: "Focus again"
         case .stretch: "Stretch with me"
         case .openNotes: "Open the meeting notes"
+        case .pickColour: "Pick my colour"
         }
     }
 
@@ -57,7 +61,7 @@ enum PetSuggestionAction: String, CaseIterable {
         switch self {
         case .toShelf: "tray.and.arrow.up"
         case .showInFinder: "folder"
-        case .join: "video.fill"
+        case .join: "video"
         case .takeNotes: "waveform.badge.mic"
         case .agents: "sparkles"
         case .openServer: "safari"
@@ -65,6 +69,7 @@ enum PetSuggestionAction: String, CaseIterable {
         case .focusAgain: "timer"
         case .stretch: "figure.cooldown"
         case .openNotes: "doc.text"
+        case .pickColour: "paintpalette"
         }
     }
 }
@@ -98,6 +103,7 @@ enum PetSuggestions {
         switch kind {
         case .screenshot: 3 * 60
         case .download, .pomodoro: 5 * 60
+        case .hello: 10 * 60
         case .agent: 10 * 60
         case .meetingNotes: 15 * 60
         case .meeting, .server, .ci: nil
@@ -127,6 +133,10 @@ enum PetSuggestions {
 
     static func meetingNotes(at: Date) -> PetSuggestion {
         PetSuggestion(kind: .meetingNotes, title: "Meeting notes ready", at: at, until: at + lasts(.meetingNotes)!, actions: [.openNotes])
+    }
+
+    static func hello(at: Date) -> PetSuggestion {
+        PetSuggestion(kind: .hello, title: "Make me yours", at: at, until: at + lasts(.hello)!, actions: [.pickColour])
     }
 
     static func server(_ port: Int, at: Date) -> PetSuggestion {
@@ -185,7 +195,7 @@ enum PetSuggestions {
             if minutes > 0 { return "\(suggestion.title) in \(minutes) min" }
             let ago = Int((now.timeIntervalSince(start) / 60).rounded(.down))
             return ago < 1 ? "\(suggestion.title) now" : "\(suggestion.title) began \(ago) min ago"
-        case .server, .ci:
+        case .server, .ci, .hello:
             return suggestion.title
         default:
             let ago = Int(now.timeIntervalSince(suggestion.at) / 60)

@@ -33,7 +33,7 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
     var place: String?
     /// The answers, first the likeliest; one is written back as it is.
     var options: [String]
-    /// What it says aloud, when that is on.
+    /// Spoken text from older hooks; kept so their files still load (never read aloud).
     var spoken: String?
     /// Whether the hook takes a typed answer: "answer" (your own answer to
     /// its question) or "instead" (no, and what to do instead).
@@ -218,7 +218,7 @@ struct AskCardView: View {
         let risk = ask.risk
         VStack(alignment: .leading, spacing: 6) {
             Label(ask.place.map { "\(ask.agent) · \($0)" } ?? ask.agent, systemImage: "hand.raised.fill")
-                .font(.system(size: 10.5, weight: .semibold, design: .rounded))
+                .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color(white: 0.35))
             if let risk {
                 Label("Careful: \(risk.prefix(1).lowercased() + risk.dropFirst())", systemImage: "exclamationmark.triangle.fill")
@@ -297,7 +297,7 @@ struct AskCardView: View {
             }
             Button(keys.contains(0) ? "Answer in \(ask.agent) instead  ⌥0" : "Answer in \(ask.agent) instead") { answer(AgentAsk.skip) }
                 .buttonStyle(.plain)
-                .font(.system(size: 10, weight: .medium, design: .rounded))
+                .font(.system(size: 11, weight: .medium, design: .rounded))
                 .foregroundStyle(Color(white: 0.45))
         }
         .foregroundStyle(Color(white: 0.1))

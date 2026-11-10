@@ -2,23 +2,27 @@
 
 ## [Unreleased]
 
-## [2.0.0] - 2026-11-09
+## [2.0.0] - 2026-11-10
 
 Everything new since 1.12.0: your pet, redrawn.
 
 ### Added
-- ✨ HD pets: every built-in pet is in finer pixels on the desktop, redrawn at 40 × 32: the cat in every coat, with your photo's colours and folded ears too, and every other animal. Its home, props and wardrobe match too, festival decorations aside. Pixel size → Chunky (classic) brings back the old look; the notch stays classic.
-- 🐉 A three-headed dragon: dark and fierce on the desktop with a bronze edge that shows on a dark wallpaper, caramel in the notch, with a red, a gold and a turquoise horn to tell its heads apart. It flies when it goes somewhere, wears a hat on its middle head, roars three at once, plays with a roasted marshmallow and naps in a red-rock cave with a pile of gold. It breathes its speech bubbles alight.
-- 🎨 Every pet comes in colours of its own, after real animals: a husky or a black lab, a scarlet macaw or an African grey, a Berkshire pig, a great white, a Komodo dragon and more, in HD and classic pixels. Pick one from the swatches on the shelf, Colour in the pet's menu or Settings; its friend gets its own. Each pet keeps its own look until you choose.
-- 💬 Every pet's speech bubble comes up its own way: paw prints, a wagging bone, honey drips, feathers, stomp dust and more, settling with an edge in its colour; your own pets sparkle. Settings → Bubble effects turns them off.
+- ✨ HD pets: every built-in pet redrawn in finer pixels on the desktop, the cat in every coat (photo colours and folded ears too). Home, props and wardrobe too. Pixel size → Chunky brings back the classic look; the notch stays classic.
+- 🐉 A three-headed dragon: a red, a gold and a turquoise horn. It flies, wears a hat on its middle head, roars three at once, plays with a roasted marshmallow and naps on a pile of gold.
+- 🎨 Every pet comes in colours after real animals: a husky, a scarlet macaw, a Komodo dragon and more. Pick one from the swatches on the shelf, Colour in the pet's menu or Settings; its friend gets its own (never your colour by default); a colour link sets it too.
+- 💬 Every pet's speech bubble comes up its own way: paw prints, a wagging bone, honey drips, feathers and more. Settings → Bubble effects turns them off.
+- 📝 Meeting notes: a live transcript while it listens; after Stop, tell your pet how to sum it up (e.g. “in Thai”) or press Enter for the usual notes.
+- 💻 While it takes notes your pet sits by the notch at its laptop, unless Droppy's own Meetings shows the call.
+- 👋 A first hello (click, hold, drag), VoiceOver, Reduce Motion, and Pixpaw settings… in the menu.
+- 🏠 Home decorations that fit each pet (a cat's fish dish, a hamster's wheel): eight things bought with earned stars (Decorate in the pet's menu, or preview first in Settings › Home). Stars never go down.
 
 ### Changed
 - 🗂️ The pet's menu has a Look group: Colour beside Wardrobe.
 - 🔲 Pixel size, Fine (HD) or Chunky (classic), is in the pet's menu and card too.
-- 🃏 A darker card: the card, its submenus and the What can I do? box stay readable over a light desktop or a window behind them (Droppy's theme).
+- 🃏 A darker card with short tile labels; submenus and What can I do? stay readable.
 
 ### Fixed
-- 👒 Settings, Wardrobe: the list of things to wear no longer opens and closes by itself while the page is open; its pictures follow Pixel size.
+- 👒 Wardrobe: the list of things to wear no longer opens and closes by itself; its pictures follow Pixel size.
 - 🃏 A long card or submenu fits the screen and scrolls.
 - 🔒 The lock screen row hides only while Droppy's Agents is on.
 

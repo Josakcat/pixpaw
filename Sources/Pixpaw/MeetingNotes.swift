@@ -147,6 +147,8 @@ final class RollingTranscriber {
     private(set) var lines: [MeetingLine] = []
     /// What it's making out now, for the pet to show.
     var hearing: ((String) -> Void)?
+    /// Each line as it's kept, for the live transcript.
+    var kept: ((MeetingLine) -> Void)?
 
     init(language: MeetingLanguage, you: Bool, startedAt: Date) throws {
         guard let recognizer = SFSpeechRecognizer(locale: language.locale), recognizer.supportsOnDeviceRecognition else {
@@ -204,8 +206,10 @@ final class RollingTranscriber {
     private func keep() {
         let text = partial.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        lines.append(MeetingLine(at: segmentStarted.timeIntervalSince(startedAt), you: you, text: text))
+        let line = MeetingLine(at: segmentStarted.timeIntervalSince(startedAt), you: you, text: text)
+        lines.append(line)
         partial = ""
+        kept?(line)
     }
 
     /// A pause of a second and a half ends the line; so does a long one.
@@ -311,6 +315,10 @@ final class MeetingRecorder {
     /// What is being heard: the microphone, the Mac's sound, or both.
     private(set) var hearsMicrophone = false
     private(set) var hearsOthers = false
+    /// For the live transcript, on main: what a side is making out now
+    /// (`you`, the words), and each line as it ends.
+    var onHearing: ((Bool, String) -> Void)?
+    var onLine: ((MeetingLine) -> Void)?
 
     init(language: MeetingLanguage, title: String?) throws {
         self.language = language
@@ -336,6 +344,7 @@ final class MeetingRecorder {
                 input.removeTap(onBus: 0)
                 throw MeetingProblem.noMicrophone
             }
+            listen(to: mine)
             mine.start()
             self.mine = mine
             hearsMicrophone = true
@@ -345,6 +354,7 @@ final class MeetingRecorder {
         let system = SystemAudio(feed: theirs.input)
         do {
             try await system.start()
+            listen(to: theirs)
             theirs.start()
             self.theirs = theirs
             self.system = system
@@ -353,6 +363,12 @@ final class MeetingRecorder {
             hearsOthers = false
             guard hearsMicrophone else { throw MeetingProblem.noMacSound }
         }
+    }
+
+    private func listen(to transcriber: RollingTranscriber) {
+        let you = transcriber.you
+        transcriber.hearing = { [weak self] text in self?.onHearing?(you, text) }
+        transcriber.kept = { [weak self] line in self?.onLine?(line) }
     }
 
     /// Stops listening; everything said, in order. The Mac's sound stops
@@ -396,14 +412,17 @@ enum MeetingNotes {
         }.joined(separator: "\n")
     }
 
-    static func prompt(_ transcript: String, language: MeetingLanguage) -> String {
-        """
+    static func prompt(_ transcript: String, language: MeetingLanguage, angle: String? = nil) -> String {
+        let angle = angle?.trimmingCharacters(in: .whitespacesAndNewlines).prefix(200) ?? ""
+        let shaped = angle.isEmpty ? "" : " The reader asked for these notes to be shaped this way: \"\(angle)\". "
+            + "Follow it, including any different language, length or format it asks for, but still use only what is in the transcript."
+        return """
         Below is the transcript of a meeting, made by speech recognition, so some words may be misheard. \
         Lines marked "You" are the person taking the notes; "Others" are the rest of the call. \
         Write meeting notes in \(language == .thai ? "Thai" : "English"), in Markdown, with these second-level (##) headings: \
         Summary (three to five sentences), Decisions, Action items (who does what, by when if said), Open questions. \
         Leave out a heading with nothing under it. Use only what is in the transcript; don't make anything up. \
-        Reply with the notes only.
+        Reply with the notes only.\(shaped)
 
         Transcript:
         \(transcript)
@@ -411,26 +430,31 @@ enum MeetingNotes {
     }
 
     /// The summary from the model you picked. Slow: minutes for a long meeting.
-    static func summarize(_ transcript: String, language: MeetingLanguage, model: NoteModel, name: String) async throws -> String {
+    static func summarize(_ transcript: String, language: MeetingLanguage, model: NoteModel, name: String,
+                          angle: String? = nil) async throws -> String {
         switch model {
         case .none:
             return ""
         case .apple:
             guard #available(macOS 26, *) else { throw MeetingProblem.noCommand(model.title) }
-            return try await apple(transcript, language: language)
+            return try await apple(transcript, language: language, angle: angle)
         case .claude:
             guard let command = model.command else { throw MeetingProblem.noCommand(model.title) }
-            let prompt = prompt(transcript, language: language)
-            return try await Task.detached(priority: .utility) {
-                try run(model, command: command, model: name, prompt: prompt)
-            }.value
+            let prompt = prompt(transcript, language: language, angle: angle)
+            // Cancelled (deactivate): the command is ended, not left to finish.
+            let running = RunningProcess()
+            return try await withTaskCancellationHandler {
+                try await Task.detached(priority: .utility) {
+                    try run(model, command: command, model: name, prompt: prompt, running: running)
+                }.value
+            } onCancel: { running.cancel() }
         }
     }
 
     /// Apple's model on the Mac: it reads only a few pages at a time, so a
     /// long meeting is summed up a part at a time and the parts together.
     @available(macOS 26, *)
-    private static func apple(_ transcript: String, language: MeetingLanguage) async throws -> String {
+    private static func apple(_ transcript: String, language: MeetingLanguage, angle: String?) async throws -> String {
         let model = SystemLanguageModel.default
         guard model.supportsLocale(language.locale) else { throw MeetingProblem.appleNoLanguage(language.title) }
         var parts: [String] = []
@@ -444,22 +468,24 @@ enum MeetingNotes {
         }
         if !part.isEmpty { parts.append(part) }
         guard parts.count > 1 else {
-            return try await LanguageModelSession().respond(to: prompt(transcript, language: language)).content
+            return try await LanguageModelSession().respond(to: prompt(transcript, language: language, angle: angle)).content
         }
         var notes: [String] = []
         for (index, part) in parts.enumerated() {
+            try Task.checkCancellation()
             let session = LanguageModelSession()
             let asked = "This is part \(index + 1) of \(parts.count) of a meeting transcript. In a few bullet points, note what was said, decided and who will do what.\n\n\(part)"
             notes.append(try await session.respond(to: asked).content)
         }
-        return try await LanguageModelSession().respond(to: prompt(notes.joined(separator: "\n\n"), language: language)
+        return try await LanguageModelSession().respond(to: prompt(notes.joined(separator: "\n\n"), language: language, angle: angle)
             .replacingOccurrences(of: "Below is the transcript of a meeting", with: "Below are notes on each part of a meeting")).content
     }
 
     /// Claude's command, run in an empty folder with no tools (`--tools ""`)
     /// and no settings, hooks or MCP servers: it reads the prompt and
     /// answers, and nothing else.
-    private nonisolated static func run(_ which: NoteModel, command: URL, model: String, prompt: String) throws -> String {
+    private nonisolated static func run(_ which: NoteModel, command: URL, model: String, prompt: String,
+                                          running: RunningProcess) throws -> String {
         let folder = FileManager.default.temporaryDirectory.appendingPathComponent("pixpaw-notes-\(UUID().uuidString.prefix(8))", isDirectory: true)
         try? FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         defer { try? FileManager.default.removeItem(at: folder) }
@@ -480,7 +506,7 @@ enum MeetingNotes {
         process.standardOutput = output
         process.standardError = errors
         process.standardInput = input == nil ? FileHandle.nullDevice : stdin
-        try process.run()
+        try running.start(process)
         if let input {
             try? stdin.fileHandleForWriting.write(contentsOf: Data(input.utf8))
             try? stdin.fileHandleForWriting.close()
@@ -504,7 +530,8 @@ enum MeetingNotes {
     }
 
     /// The notes as a Markdown file in `folder`; its address.
-    static func save(title: String?, startedAt: Date, minutes: Int, summary: String, by: String?, transcript: String) throws -> URL {
+    static func save(title: String?, startedAt: Date, minutes: Int, summary: String, by: String?, transcript: String,
+                     angle: String? = nil) throws -> URL {
         var calendar = Calendar(identifier: .gregorian)
         calendar.timeZone = .current
         let day = calendar.dateComponents([.year, .month, .day, .hour, .minute], from: startedAt)
@@ -516,7 +543,10 @@ enum MeetingNotes {
         format.locale = Locale(identifier: "en_US_POSIX")
         format.dateFormat = "d MMM yyyy, HH:mm"
         var text = "# \(name)\n\n\(format.string(from: startedAt)) · \(max(1, minutes)) min\n\n"
-        if !summary.isEmpty { text += summary + "\n\n" + (by.map { "_Summed up by \($0)._\n\n" } ?? "") }
+        if !summary.isEmpty {
+            text += summary + "\n\n" + (by.map { "_Summed up by \($0)._\n\n" } ?? "")
+            if let angle, !angle.isEmpty { text += "_Angle: \(angle)_\n\n" }
+        }
         text += "## Transcript\n\n" + (transcript.isEmpty ? "_Nothing was heard._" : transcript) + "\n"
         try FileManager.default.createDirectory(at: folder, withIntermediateDirectories: true)
         var file = folder.appendingPathComponent("\(stamp) \(safe).md")
@@ -527,6 +557,27 @@ enum MeetingNotes {
         }
         try text.write(to: file, atomically: true, encoding: .utf8)
         return file
+    }
+}
+
+/// The summary's command, so cancelling the summary can end it.
+final class RunningProcess: @unchecked Sendable {
+    private let lock = NSLock()
+    private var process: Process?
+    private var cancelled = false
+
+    /// Runs it, unless the summary was already cancelled.
+    func start(_ process: Process) throws {
+        try lock.withLock {
+            guard !cancelled else { throw CancellationError() }
+            try process.run()
+            self.process = process
+        }
+    }
+
+    func cancel() {
+        let process = lock.withLock { cancelled = true; return self.process }
+        if let process, process.isRunning { process.terminate() }
     }
 }
 

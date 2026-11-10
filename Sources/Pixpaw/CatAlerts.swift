@@ -119,7 +119,7 @@ enum CatWords {
         }
     }
     static func countdownDay(_ title: String) -> CatLine {
-        CatLine(text: "\(title) is today! 🎉", symbol: "party.popper.fill", seconds: 6)
+        CatLine(text: "\(title) is today!", symbol: "party.popper.fill", seconds: 6)
     }
     static func noteStreak(_ days: Int) -> CatLine {
         CatLine(text: "\(days) days in a row of getting things done!", symbol: "flame.fill", seconds: 4)

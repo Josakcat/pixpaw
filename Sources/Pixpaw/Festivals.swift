@@ -36,13 +36,13 @@ enum Festival: String, CaseIterable, Identifiable {
     var greeting: CatLine {
         switch self {
         case .newYear: CatLine(text: "Happy New Year!", symbol: "sparkles", seconds: 3)
-        case .chineseNewYear: CatLine(text: "Happy Chinese New Year! 🧧", symbol: "sparkles", seconds: 3)
+        case .chineseNewYear: CatLine(text: "Happy Chinese New Year!", symbol: "sparkles", seconds: 3)
         case .loyKrathong: CatLine(text: "Happy Loy Krathong!", symbol: "moon.stars.fill", seconds: 3)
         case .valentines: CatLine(text: "Happy Valentine's Day!", symbol: "heart.fill", seconds: 3)
         case .songkran: CatLine(text: "Happy Songkran! Splash!", symbol: "drop.fill", seconds: 3)
         case .halloween: CatLine(text: "Happy Halloween! Boo!", symbol: "moon.stars.fill", seconds: 3)
         case .christmas: CatLine(text: "Merry Christmas!", symbol: "snowflake", seconds: 3)
-        case .birthday: CatLine(text: "Happy birthday! 🎉", symbol: "birthday.cake.fill", seconds: 4)
+        case .birthday: CatLine(text: "Happy birthday!", symbol: "birthday.cake.fill", seconds: 4)
         }
     }
 
@@ -195,6 +195,12 @@ final class FestivalOverlay {
     // MARK: Decorations
 
     private static func decorate(_ layer: CALayer, for festival: Festival, size: CGSize) {
+        // Reduce Motion: nothing falls, drifts or bursts. The pet's festival
+        // hat stays on, and one still prop stands in the corner.
+        if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            stillProp(in: layer, for: festival, size: size)
+            return
+        }
         switch festival {
         case .halloween: ghosts(in: layer, size: size)
         case .newYear: fireworks(in: layer, size: size)
@@ -208,6 +214,26 @@ final class FestivalOverlay {
         case .loyKrathong: krathongs(in: layer, size: size)
         case .chineseNewYear: redLanterns(in: layer, size: size)
         }
+    }
+
+    /// One still picture near the bottom corner, for Reduce Motion.
+    private static func stillProp(in layer: CALayer, for festival: Festival, size: CGSize) {
+        let image: CGImage?
+        switch festival {
+        case .halloween: image = CatSprites.shared.image(.ghost)
+        case .valentines: image = CatSprites.shared.image(.heart)
+        case .loyKrathong: image = CatSprites.shared.image(.krathong)
+        case .chineseNewYear: image = CatSprites.shared.image(.redLantern)
+        case .newYear, .christmas, .songkran, .birthday: image = nil
+        }
+        guard let image else { return }
+        let sprite = CALayer()
+        sprite.contents = image
+        sprite.magnificationFilter = .nearest
+        sprite.bounds = CGRect(x: 0, y: 0, width: CGFloat(image.width) * 4, height: CGFloat(image.height) * 4)
+        sprite.position = CGPoint(x: size.width - 60, y: 60)
+        sprite.opacity = 0.9
+        layer.addSublayer(sprite)
     }
 
     /// Ghosts drifting across the screen on wavy paths, at different

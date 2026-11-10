@@ -21,6 +21,10 @@ let late = NotchMoment.short(.lateNight, "Late…", at: t0)
 check(NotchDirector.pick([], showing: nil, lastShortEnded: nil, now: t0) == nil, "nothing wants the row: nothing shows")
 check(NotchDirector.pick([done, ask, command], showing: nil, lastShortEnded: nil, now: t0) == ask, "an agent asking outranks everything")
 check(NotchDirector.pick([command, focus], showing: nil, lastShortEnded: nil, now: t0) == focus, "focus outranks a long command")
+let notes = NotchMoment(scene: .meetingNotes, text: "Notes 5m", until: nil)
+check(NotchDirector.pick([notes, focus, command], showing: nil, lastShortEnded: nil, now: t0) == notes, "meeting notes outrank focus and commands")
+check(NotchDirector.pick([notes, ask], showing: nil, lastShortEnded: nil, now: t0) == ask, "an agent asking outranks meeting notes")
+check(NotchDirector.pick([notes], showing: nil, lastShortEnded: t0.addingTimeInterval(-30), now: t0) == notes, "meeting notes ignore the gap")
 check(NotchDirector.pick([done, snag], showing: nil, lastShortEnded: nil, now: t0) == snag, "a snag outranks done")
 check(NotchDirector.pick([done, command], showing: nil, lastShortEnded: nil, now: t0) == command, "a long command outranks done")
 check(NotchDirector.pick([late, done], showing: nil, lastShortEnded: nil, now: t0) == done, "late night comes last")
@@ -41,7 +45,7 @@ check(NotchDirector.dropsWhenHidden(done), "a short one hidden by Droppy is drop
 check(!NotchDirector.dropsWhenHidden(ask), "a long one hidden by Droppy waits")
 check(!NotchDirector.dropsWhenHidden(nil), "nothing up: nothing to drop")
 
-check(NotchMomentKind.allCases.filter(\.onByDefault).count == 4 && !NotchMomentKind.lateNight.onByDefault, "every moment on by default but late nights")
+check(NotchMomentKind.allCases.filter(\.onByDefault).count == 5 && !NotchMomentKind.lateNight.onByDefault, "every moment on by default but late nights")
 check(Set(NotchScene.allCases.map(\.kind)) == Set(NotchMomentKind.allCases), "every switch has a scene")
 
 // The light in the wings.

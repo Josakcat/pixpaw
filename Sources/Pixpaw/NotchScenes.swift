@@ -40,6 +40,7 @@ enum NotchMomentKind: String, CaseIterable, Identifiable {
     case agentFinished
     case longCommands
     case focus
+    case meetingNotes
     case lateNight
 
     var id: String { rawValue }
@@ -50,6 +51,7 @@ enum NotchMomentKind: String, CaseIterable, Identifiable {
         case .agentFinished: "An agent finishes or hits a snag"
         case .longCommands: "Long commands and CI"
         case .focus: "Your pet's focus timer"
+        case .meetingNotes: "Taking meeting notes"
         case .lateNight: "Late-night nudge"
         }
     }
@@ -60,6 +62,7 @@ enum NotchMomentKind: String, CaseIterable, Identifiable {
 /// What the row shows, most pressing first.
 enum NotchScene: Int, CaseIterable, Comparable {
     case agentAsks
+    case meetingNotes
     case focus
     case agentSnag
     case longCommand
@@ -70,6 +73,7 @@ enum NotchScene: Int, CaseIterable, Comparable {
         switch self {
         case .agentAsks: .agentAsks
         case .focus: .focus
+        case .meetingNotes: .meetingNotes
         case .agentSnag, .agentDone: .agentFinished
         case .longCommand: .longCommands
         case .lateNight: .lateNight
@@ -83,7 +87,7 @@ enum NotchScene: Int, CaseIterable, Comparable {
         case .agentDone: 6
         case .agentSnag: 10
         case .lateNight: 8
-        case .agentAsks, .focus, .longCommand: nil
+        case .agentAsks, .meetingNotes, .focus, .longCommand: nil
         }
     }
 
@@ -206,6 +210,7 @@ struct NotchGlow: Equatable {
     static let command: UInt32 = 0x8FB8FF
     static let focus: UInt32 = 0xB79CFF
     static let night: UInt32 = 0x8E9BD6
+    static let notes: UInt32 = 0xFF8FB3
 
     /// The light for a moment beside the notch.
     static func moment(_ moment: NotchMoment) -> NotchGlow {
@@ -213,6 +218,7 @@ struct NotchGlow: Equatable {
         switch moment.scene {
         case .agentAsks: return NotchGlow(color: asking, rhythm: .blink(period: 1.4), lightsPet: true, since: nil)
         case .focus: return NotchGlow(color: focus, rhythm: .steady(0.3), lightsPet: true, since: nil)
+        case .meetingNotes: return NotchGlow(color: notes, rhythm: .steady(0.3), lightsPet: true, since: nil)
         case .agentSnag: return NotchGlow(color: snag, rhythm: .flashTwice, lightsPet: true, since: since)
         case .longCommand: return NotchGlow(color: command, rhythm: .breathe(period: 4, low: 0.25, high: 0.55), lightsPet: true, since: nil)
         case .agentDone: return NotchGlow(color: done, rhythm: .flashOnce, lightsPet: true, since: since)

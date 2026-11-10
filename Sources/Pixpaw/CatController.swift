@@ -138,8 +138,18 @@ final class CatController: ObservableObject {
     @Published var homeOn = true { didSet { if homeOn != oldValue { refreshHome() } } }
     /// The home stands all the time, as it did before 1.12.
     @Published var keepsHomeOut = false { didSet { if keepsHomeOut != oldValue { refreshHome(); updateHomeFold() } } }
-    /// Where you last dragged the house: its left edge, kept between launches.
+    /// Where you last dragged the house: its left edge (the home's own, not
+    /// a decoration's beside it), kept between launches.
     private(set) var homeX: CGFloat?
+    /// Home decorations: what's bought, the stars spent on them (the lifetime
+    /// `points` never drop) and what stands where. One set for every pet.
+    @Published private(set) var decorOwned: Set<HomeDecor> = []
+    @Published private(set) var starsSpent = 0
+    @Published private(set) var homeDecor = HomeDecorSet()
+    /// Stars there are to spend on decorations.
+    var wallet: Int { DecorShop.wallet(points: points, spent: starsSpent) }
+    /// How far the home's panel reaches left of the home itself: the left slot.
+    private var homeLead: CGFloat = 0
     @Published private(set) var homeShowing = false
     private var homePanel: CatPanel? { didSet { homeShowing = homePanel != nil } }
     private var homeLayer: CALayer?
@@ -235,6 +245,10 @@ final class CatController: ObservableObject {
     var hasNotes: (() -> Bool)?
     var onNotes: (() -> Void)?
     var onOpenNotes: (() -> Void)?
+    /// The live transcript: brings it back, and whether it's hidden now
+    /// (only while taking notes).
+    var onShowTranscript: (() -> Void)?
+    var transcriptHidden: (() -> Bool)?
     /// Talk to me, in its menu, while that's on.
     var canTalk: (() -> Bool)?
     /// The key the user bound to one of the droplet's shortcuts ("talk",
@@ -252,6 +266,10 @@ final class CatController: ObservableObject {
     var onFocus: (() -> Void)?
     /// Opens Settings on the Wardrobe page.
     var onOpenWardrobe: (() -> Void)?
+    /// Pixpaw's page in Droppy's Settings.
+    var onOpenSettings: (() -> Void)?
+    /// You petted, opened the card or dragged it: for the first-day hello.
+    var onGesture: ((FirstHello.Step) -> Void)?
     /// The menu's Colour: a coat or colourway by its id.
     var onColour: ((String) -> Void)?
     /// The menu's Pixel size: true for the old chunky pixels.
@@ -540,6 +558,7 @@ final class CatController: ObservableObject {
         self.pets = pets
         self.lastFed = lastFed
         refreshHunger()
+        bubble.mayAnnounce = { [weak self] in self?.quietReason == nil }
     }
 
     var isVisible: Bool { panel != nil }
@@ -623,6 +642,9 @@ final class CatController: ObservableObject {
         if let line = CatWords.stretched.randomElement() { say(CatLine(text: line, symbol: "star.fill")) }
         onPersist?()
     }
+
+    /// System Settings › Accessibility › Display › Reduce motion.
+    static var reduceMotion: Bool { NSWorkspace.shared.accessibilityDisplayShouldReduceMotion }
 
     /// The cat's own remarks, when it is chatty.
     private func remark(_ text: String) {
@@ -829,7 +851,7 @@ final class CatController: ObservableObject {
         onStarsEarned?()
         if starDay.stars >= StarSource.dailyTotal, !starDay.announcedCap {
             starDay.announcedCap = true
-            say(CatLine(text: "That's all the stars for today ⭐ See you tomorrow!", symbol: "star.fill", seconds: 3))
+            say(CatLine(text: "That's all the stars for today. See you tomorrow!", symbol: "star.fill", seconds: 3))
             onPersist?()
         }
     }
@@ -1193,18 +1215,32 @@ final class CatController: ObservableObject {
 
     // MARK: Home
 
-    /// Where it sleeps: in the doorway, on the branch, in the water.
+    /// Where it sleeps: in front of the doorway (on the doormat, half the
+    /// mat's height up, when there is one), on the branch, in the water.
     private var homeDoor: CGPoint? {
         guard let frame = homePanel?.frame, let spot = CatArt.homeSpots[kind.actsLike.rawValue] else { return nil }
-        return CGPoint(x: frame.minX + CGFloat(spot.0) * CatSprites.scale, y: frame.minY + CGFloat(spot.1) * CatSprites.scale)
+        let rug = napsInFront && homeDecor.front != nil ? (CatArt.decor[HomeDecor.rug.rawValue]?.count ?? 0) / 2 : 0
+        return CGPoint(x: frame.minX + homeLead + CGFloat(spot.0) * CatSprites.scale, y: frame.minY + CGFloat(spot.1 + rug) * CatSprites.scale)
     }
 
-    /// The home is drawn over it while it sleeps: a box, bars, water.
-    private var homeCovers: Bool { CatArt.homeSpots[kind.actsLike.rawValue]?.2 ?? true }
+    /// A doorway on the floor (a box, a kennel, a coop, a cave, a reef): it
+    /// naps at full size in front of it, on the doormat or the ground; inside,
+    /// the pet filled the opening edge to edge.
+    private var napsInFront: Bool {
+        guard let spot = CatArt.homeSpots[kind.actsLike.rawValue] else { return false }
+        return spot.2 && spot.1 == 0
+    }
 
+    /// The home is drawn over it while it sleeps: bars, a hive, water.
+    private var homeCovers: Bool { (CatArt.homeSpots[kind.actsLike.rawValue]?.2 ?? true) && !napsInFront }
+
+    /// The home and a slot each side for what stands there.
     private var homeSize: CGSize {
-        CGSize(width: CGFloat(CatArt.homeWidth) * CatSprites.scale, height: CGFloat(CatArt.homeHeight) * CatSprites.scale)
+        CGSize(width: CGFloat(decorLayout.width(home: CatArt.homeWidth)) * CatSprites.scale,
+               height: CGFloat(CatArt.homeHeight) * CatSprites.scale)
     }
+
+    private var decorLayout: HomeDecorLayout { HomeDecorLayout(homeDecor, slot: CatArt.decorSlotWidth) }
 
     /// Takes the house down when the stars or the setting say so, and puts
     /// it up when it is kept out; otherwise it comes out only for a nap.
@@ -1238,9 +1274,12 @@ final class CatController: ObservableObject {
         // On the floor of the screen it was dragged to, or of the pet's.
         let screen = homeX.flatMap { x in NSScreen.screens.first { $0.frame.minX <= x && x < $0.frame.maxX } }
         let floor = floorSurface(near: screen.map { CGPoint(x: homeX ?? 0, y: $0.visibleFrame.minY) } ?? position)
-        let x = HomeRules.placeX(saved: screen == nil ? nil : homeX, petMinX: position.x, petWidth: CatSprites.catSize.width,
+        let lead = CGFloat(decorLayout.left) * CatSprites.scale
+        let x = HomeRules.placeX(saved: screen == nil ? nil : homeX.map { $0 - lead }, petMinX: position.x, petWidth: CatSprites.catSize.width,
                                  homeWidth: size.width, floorMinX: floor.minX, floorMaxX: floor.maxX)
         home.setFrameOrigin(CGPoint(x: x, y: floor.y))
+        homeLead = lead
+        view.trailingInset = CGFloat(decorLayout.right) * CatSprites.scale
         homePanel = home
         homeLayer = layer
         home.orderFrontRegardless()
@@ -1324,11 +1363,69 @@ final class CatController: ObservableObject {
     }
 
     /// Its own style of home; the doorway open while it sleeps inside, and
-    /// the house in front of it then, behind it the rest of the time.
+    /// the house in front of it then, behind it the rest of the time (and
+    /// while it naps in front of the doorway, which stays dark).
     private func drawHome() {
         guard let homePanel, let panel else { return }
-        homeLayer?.contents = CatSprites.shared.home(kind, occupied: asleepAtHome, fine: drawsFine)
+        homeLayer?.contents = CatSprites.shared.home(kind, occupied: asleepAtHome && !napsInFront, fine: drawsFine, decor: homeDecor)
         homePanel.order(asleepAtHome && homeCovers ? .above : .below, relativeTo: panel.windowNumber)
+    }
+
+    /// The home grows or shrinks for what stands beside it; the home itself
+    /// stays put on the floor, and a pet asleep inside with it.
+    private func layoutHome() {
+        guard let homePanel, let view = homePanel.contentView as? HomeView else { return drawHome() }
+        let size = homeSize
+        let bodyX = homePanel.frame.minX + homeLead
+        homeLead = CGFloat(decorLayout.left) * CatSprites.scale
+        let floor = floorSurface(near: CGPoint(x: homePanel.frame.midX, y: homePanel.frame.minY))
+        let x = min(max(bodyX - homeLead, floor.minX), max(floor.minX, floor.maxX - size.width))
+        homePanel.setFrame(CGRect(x: x, y: homePanel.frame.minY, width: size.width, height: size.height), display: false)
+        view.frame = CGRect(origin: .zero, size: size)
+        view.trailingInset = CGFloat(decorLayout.right) * CatSprites.scale
+        if let homeLayer {
+            homeLayer.bounds = CGRect(origin: .zero, size: size)
+            homeLayer.position = CGPoint(x: size.width / 2, y: 0)
+        }
+        if asleepAtHome, let door = homeDoor {
+            position = door
+            place()
+        }
+        drawHome()
+    }
+
+    /// Buys a decoration with stars and puts it in the first free spot; false
+    /// when it is owned already, the stars are short or there's no home yet.
+    @discardableResult
+    func buy(_ item: HomeDecor) -> Bool {
+        guard hasHome, !isFriend,
+              let purchase = DecorShop.buy(item, points: points, spent: starsSpent, owned: decorOwned, placed: homeDecor) else { return false }
+        starsSpent = purchase.spent
+        decorOwned = purchase.owned
+        homeDecor = purchase.placed
+        layoutHome()
+        say(CatLine(text: item.thanks(for: kind.actsLike.rawValue), symbol: "house.fill"))
+        onPersist?()
+        return true
+    }
+
+    /// Puts an owned decoration in a spot (off any other), or nil empties
+    /// the spot; it stays owned either way.
+    func place(_ item: HomeDecor?, in spot: HomeDecor.Spot) {
+        if let item, !decorOwned.contains(item) { return }
+        let placed = homeDecor.placing(item, in: spot)
+        guard placed != homeDecor else { return }
+        homeDecor = placed
+        layoutHome()
+        onPersist?()
+    }
+
+    /// Read from preferences when the droplet starts.
+    func loadDecor(owned: Set<HomeDecor>, spent: Int, placed: HomeDecorSet) {
+        decorOwned = owned
+        starsSpent = max(0, spent)
+        homeDecor = placed
+        layoutHome()
     }
 
     /// Arrived at the door: in it goes, for a nap.
@@ -1355,7 +1452,7 @@ final class CatController: ObservableObject {
         let floor = floorSurface(near: CGPoint(x: homePanel.frame.midX, y: homePanel.frame.minY))
         let x = min(max(homePanel.frame.minX + dx, floor.minX), floor.maxX - homePanel.frame.width)
         homePanel.setFrameOrigin(CGPoint(x: x, y: floor.y))
-        homeX = x
+        homeX = x + homeLead
         if asleepAtHome, let door = homeDoor {
             position = door
             place()
@@ -1993,6 +2090,10 @@ final class CatController: ObservableObject {
         if plan == .tag {
             enter(.happy)
             buddy?.celebrate()
+        } else if plan == .scuffle, Self.reduceMotion {
+            // Reduce Motion: no dust cloud, the two just sit together.
+            enter(.sitting)
+            say(CatLine(text: "✦"))
         } else if plan == .scuffle, let other = buddy {
             startScuffle(with: other)
         } else if plan == .hands, let other = buddy {
@@ -2086,7 +2187,7 @@ final class CatController: ObservableObject {
             return
         }
         // Now and then, off to climb the side of the screen.
-        if canClimb, Int.random(in: 0..<14) == 0 {
+        if canClimb, !Self.reduceMotion, Int.random(in: 0..<14) == 0 {
             goClimb()
             return
         }
@@ -2991,7 +3092,9 @@ final class CatController: ObservableObject {
             next = .held1
         }
         if mood != .held { legSwing = 0 }
-        if next != frame { frame = next }
+        // Held down a moment: it crouches, so a hold feels different from a click.
+        let shown = holdCrouch && mood != .held ? CatFrame.crouch1 : next
+        if shown != frame { frame = shown }
         // A bounce to the beat; to lofi, a slow nod.
         bob = (mood == .sitting && musicPlaying && (tick / (lofiVibe ? 9 : 5)) % 2 == 1) ? CatSprites.scale * (lofiVibe ? 1 : 2) : 0
         // A key went down: it taps along, a pixel up and back.
@@ -3059,7 +3162,7 @@ final class CatController: ObservableObject {
         guard let catLayer, let effectLayer else { return }
         let special = agentEffect()
         let effectShowing = special != nil || reaction != nil || mood == .happy || mood == .sleeping || (mood == .sitting && (isHungry || musicPlaying || dizzyTicks > 0 || yawnTicks > 0 || focusing || agentWorking || typing || busyMac)) || (mood == .walking && busyMac)
-        let look = "\(CatSprites.shared.version)|\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(glasses?.rawValue ?? "")|\(wearsHeadphones || lofiVibe)|\(costume ?? "")|\(legSwing)|\(atLaptop)|\(mood == .climbing ? climbSide ?? 0 : 0)"
+        let look = "\(CatSprites.shared.version)|\(kind.rawValue)|\(hat?.rawValue ?? "")|\(collar?.rawValue ?? "")|\(glasses?.rawValue ?? "")|\(wearsHeadphones || lofiVibe)|\(costume ?? "")|\(legSwing)|\(atLaptop)|\(mood == .climbing ? climbSide ?? 0 : 0)|\(asleepAtHome)"
         if let drawn, drawn.frame == frame, drawn.coat == coat, drawn.right == facesRight, drawn.bob == bob,
            drawn.look == look, !effectShowing, effectLayer.opacity == 0 {
             return
@@ -3067,7 +3170,7 @@ final class CatController: ObservableObject {
         drawn = (frame, coat, facesRight, bob, look)
         if propsVersion != CatSprites.shared.version { redrawProps() }
         let sprite = CatSprites.shared.image(frame, coat: coat, hat: hat, collar: collar, glasses: glasses, headphones: wearsHeadphones || lofiVibe, costume: costume, kind: kind,
-                                                 swing: legSwing, laptop: atLaptop, fine: true, friend: isFriend)
+                                                 swing: legSwing, laptop: atLaptop, fine: true, friend: isFriend, rim: !asleepAtHome)
         let pixel = CatSprites.shared.pixelSize(kind, coat: coat)
         spriteHeight = sprite.map { CGFloat($0.height) * pixel } ?? spriteHeight
         catLayer.contents = sprite
@@ -3189,6 +3292,15 @@ final class CatController: ObservableObject {
 
     // MARK: Mouse on the cat
 
+    /// Pressed and held for a moment, not yet a drag or the card.
+    private var holdCrouch = false
+
+    fileprivate func setHoldCrouch(_ on: Bool) {
+        guard holdCrouch != on else { return }
+        holdCrouch = on
+        animate()
+    }
+
     fileprivate func mouseDown(at screenPoint: CGPoint) {
         dragOffset = CGPoint(x: screenPoint.x - position.x, y: screenPoint.y - position.y)
         pressPoint = screenPoint
@@ -3291,6 +3403,7 @@ final class CatController: ObservableObject {
 
     /// Put down after being carried.
     private func letGo() {
+        onGesture?(.drag)
         // Shaken back and forth: it lands seeing stars.
         if shakes.count >= 4 {
             dizzyTicks = Int(Self.fps * 3.5)
@@ -3300,7 +3413,8 @@ final class CatController: ObservableObject {
         position = clamp(position, near: CGPoint(x: position.x + CatSprites.catSize.width / 2, y: position.y))
         let fling = throwSpeed()
         dragTrail = []
-        if hypot(fling.dx, fling.dy) > Self.throwThreshold {
+        // Under Reduce Motion a throw just drops it where it is: no flight, no bounce.
+        if hypot(fling.dx, fling.dy) > Self.throwThreshold, !Self.reduceMotion {
             // Let go mid-swing: it flies off the way it was going.
             startFalling()
             flingSpeed = fling.dx
@@ -3336,7 +3450,14 @@ final class CatController: ObservableObject {
     }
 
     /// A click, or a stroke with the pointer: a purr and a pleased moment.
+    /// VoiceOver's Pet action: the same as a click on it.
+    func petByVoiceOver() {
+        petted()
+        animate()
+    }
+
     private func petted() {
+        onGesture?(.pet)
         pets += 1
         CatSounds.shared.play(.purr, voice: kind)
         earn(.pet)
@@ -3528,8 +3649,11 @@ final class HomeView: NSView {
         return button
     }()
 
+    /// How far the house's own right edge is in from the view's: what stands on its right.
+    var trailingInset: CGFloat = 0 { didSet { closeButton.frame = closeRect } }
+
     /// Top right, inside the house's own rectangle.
-    private var closeRect: CGRect { CGRect(x: bounds.maxX - 20, y: bounds.maxY - 20, width: 18, height: 18) }
+    private var closeRect: CGRect { CGRect(x: bounds.maxX - trailingInset - 20, y: bounds.maxY - 20, width: 18, height: 18) }
 
     override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
 
@@ -3736,6 +3860,8 @@ final class CatView: NSView {
 
     /// Hold on the cat for half a second to get its card.
     private var pressTimer: Timer?
+    /// 0.15 s into a hold: the pet crouches.
+    private var crouchTimer: Timer?
     private var pressStart: CGPoint = .zero
     /// The card was open when this press began (its click-away closed it
     /// a moment ago), so the long press closes it rather than reopening it.
@@ -3753,6 +3879,19 @@ final class CatView: NSView {
         }
         RunLoop.main.add(timer, forMode: .common)
         pressTimer = timer
+        crouchTimer?.invalidate()
+        let crouch = Timer(timeInterval: 0.15, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated { self?.controller?.setHoldCrouch(true) }
+        }
+        RunLoop.main.add(crouch, forMode: .common)
+        crouchTimer = crouch
+    }
+
+    /// The hold is over (let go, dragged, or the card opened): stand up again.
+    private func endHold() {
+        crouchTimer?.invalidate()
+        crouchTimer = nil
+        MainActor.assumeIsolated { controller?.setHoldCrouch(false) }
     }
 
     override func mouseDragged(with event: NSEvent) {
@@ -3761,6 +3900,7 @@ final class CatView: NSView {
         if hypot(now.x - pressStart.x, now.y - pressStart.y) > 4 {
             pressTimer?.invalidate()
             pressTimer = nil
+            endHold()
         }
         MainActor.assumeIsolated { controller?.mouseDragged(to: now) }
     }
@@ -3768,11 +3908,13 @@ final class CatView: NSView {
     override func mouseUp(with event: NSEvent) {
         pressTimer?.invalidate()
         pressTimer = nil
+        endHold()
         MainActor.assumeIsolated { controller?.mouseUp() }
     }
 
     private func longPress() {
         pressTimer = nil
+        endHold()
         guard let controller else { return }
         MainActor.assumeIsolated { controller.cancelPress() }
         toggleCard(wasOpen: cardOpenAtPress)
@@ -3783,7 +3925,14 @@ final class CatView: NSView {
     func toggleCard(wasOpen: Bool? = nil) {
         MainActor.assumeIsolated {
             // The press that closed it (its click-away) doesn't reopen it.
-            if wasOpen ?? (PetCard.shared.isOpen || PetCard.shared.justClosed) { PetCard.shared.close() } else { openCard() }
+            if wasOpen ?? (PetCard.shared.isOpen || PetCard.shared.justClosed) {
+                PetCard.shared.close()
+            } else {
+                openCard()
+                controller?.onGesture?(.card)
+                // One light tap on the trackpad as the card opens.
+                if PetCard.shared.isOpen { NSHapticFeedbackManager.defaultPerformer.perform(.alignment, performanceTime: .now) }
+            }
         }
     }
 
@@ -3791,16 +3940,18 @@ final class CatView: NSView {
         guard let controller, let state = menuState() else { return }
         // The card, over the pet: the menu's own items, the same actions;
         // its ⋯ button pops up the menu itself.
-        let (name, status, stars) = MainActor.assumeIsolated {
+        let (name, status, stars, face) = MainActor.assumeIsolated {
             (controller.kind.title, controller.isAsleep ? "Asleep" : controller.isHungry ? "Hungry" : controller.focusing ? "Focusing" : "Doing fine",
-             controller.wardrobeStars)
+             controller.wardrobeStars, CatSprites.shared.menuImage(controller.kind, coat: controller.coat, points: 2))
         }
         let groups = PetMenu.groups(state)
         guard let frame = window?.frame else {
             popUpMenu(groups)
             return
         }
-        let model = PetCardModel(PetCardLayout(groups, suggestions: state.suggestions), name: name, status: status, stars: stars)
+        var model = PetCardModel(PetCardLayout(groups, suggestions: state.suggestions), name: name, status: status, stars: stars,
+                                 picture: decorPicture)
+        model.face = face
         MainActor.assumeIsolated {
             let style = controller.cardStyle?() ?? (look: PetCardLook.droppy, level: 0.5)
             PetCard.shared.show(model, over: frame, target: self, look: style.look, level: style.level) { [weak controller] text in
@@ -3814,6 +3965,7 @@ final class CatView: NSView {
     override func rightMouseDown(with event: NSEvent) {
         pressTimer?.invalidate()
         pressTimer = nil
+        endHold()
         MainActor.assumeIsolated { controller?.cancelPress() }
         toggleCard()
     }
@@ -3834,10 +3986,36 @@ final class CatView: NSView {
     override func isAccessibilityElement() -> Bool { true }
     override func accessibilityRole() -> NSAccessibility.Role? { .button }
     override func accessibilityLabel() -> String? { MainActor.assumeIsolated { controller?.kind.title } }
+    /// What it's up to: "Napping", "Hungry".
+    override func accessibilityValue() -> Any? {
+        let status: String? = MainActor.assumeIsolated { controller?.statusTitle }
+        return status
+    }
+    override func accessibilityCustomActions() -> [NSAccessibilityCustomAction]? {
+        [NSAccessibilityCustomAction(name: "Pet") { [weak self] in MainActor.assumeIsolated { self?.controller?.petByVoiceOver() }; return true },
+         NSAccessibilityCustomAction(name: "Feed") { [weak self] in MainActor.assumeIsolated { self?.controller?.feed() }; return true },
+         NSAccessibilityCustomAction(name: "Play") { [weak self] in
+             MainActor.assumeIsolated {
+                 guard let controller = self?.controller else { return }
+                 controller.play(controller.kind.actsLike.games.first ?? .yarn)
+             }
+             return true
+         },
+         NSAccessibilityCustomAction(name: "Open card") { [weak self] in self?.openCard(); return self != nil }]
+    }
     override func accessibilityPerformPress() -> Bool { openCard(); return true }
     override func accessibilityPerformShowMenu() -> Bool { popUpMenu(); return true }
 
-    private func makeMenu(_ groups: [PetMenuGroup]) -> NSMenu { .pet(groups, target: self) }
+    private func makeMenu(_ groups: [PetMenuGroup]) -> NSMenu { .pet(groups, target: self, picture: decorPicture) }
+
+    /// A decoration's row picture for the menu and the card, in the pet's
+    /// Pixel size (HD or classic); cached by CatSprites, so a reopened
+    /// menu draws nothing new.
+    private func decorPicture(_ id: String) -> CGImage? {
+        guard let item = HomeDecor(rawValue: id) else { return nil }
+        let (fine, look) = MainActor.assumeIsolated { (controller?.drawsFine ?? false, controller?.kind.actsLike.rawValue) }
+        return CatSprites.shared.decorIcon(item, fine: fine, look: look)
+    }
 
     /// What the pet's menu shows right now, read off the pet.
     private func menuState() -> PetMenuState? {
@@ -3867,6 +4045,14 @@ final class CatView: NSView {
             state.asleep = controller.isAsleep
             state.home = controller.hasHome && controller.homeOn
             state.homeOut = controller.homeShowing
+            if controller.hasHome, !controller.isFriend {
+                state.wallet = controller.wallet
+                let look = controller.kind.actsLike.rawValue
+                state.decor = HomeDecor.allCases.map { item in
+                    PetMenuState.Decor(title: item.title(for: look), id: item.rawValue, price: item.price, spots: item.spots.map(\.rawValue),
+                                       placed: controller.homeDecor.spot(of: item)?.rawValue, owned: controller.decorOwned.contains(item))
+                }
+            }
             state.games = controller.kind.actsLike.games.map { .init(title: $0.title, symbol: $0.symbol, id: $0.rawValue) }
             state.friend = controller.buddy != nil
             state.playing = controller.toyKind != nil || controller.fetching
@@ -3882,6 +4068,7 @@ final class CatView: NSView {
             state.takesNotes = controller.onNotes != nil
             state.notes = controller.notesLabel?()
             state.notesKept = controller.hasNotes?() ?? false
+            state.transcriptHidden = controller.transcriptHidden?() ?? false
             state.scrollingCapture = tools.contains(.captureScrolling)
             state.wholePage = !state.scrollingCapture && PageCapture.browserIsOpen
             // A place it has nothing drawn for (a dog's neck) is left out.
@@ -3928,6 +4115,7 @@ final class CatView: NSView {
     }
     @objc private func meetingNotes() { MainActor.assumeIsolated { controller?.onNotes?() } }
     @objc private func openNotes() { MainActor.assumeIsolated { controller?.onOpenNotes?() } }
+    @objc private func showTranscript() { MainActor.assumeIsolated { controller?.onShowTranscript?() } }
     @objc private func talk() { MainActor.assumeIsolated { controller?.onTalk?() } }
     @objc private func ask() { MainActor.assumeIsolated { controller?.onAsk?("") } }
     @objc private func runSuggestion(_ sender: NSMenuItem) {
@@ -3940,6 +4128,18 @@ final class CatView: NSView {
     @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
     @objc private func putHomeAway() { MainActor.assumeIsolated { controller?.putHomeAway() } }
     @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }
+    /// "left=lamp", or "left=" to take it off.
+    @objc private func placeDecor(_ sender: NSMenuItem) {
+        guard let value = sender.representedObject as? String else { return }
+        let parts = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
+        guard let spot = parts.first.flatMap(HomeDecor.Spot.init(rawValue:)) else { return }
+        let item = parts.count > 1 ? HomeDecor(rawValue: parts[1]) : nil
+        MainActor.assumeIsolated { controller?.place(item, in: spot) }
+    }
+    @objc private func buyDecor(_ sender: NSMenuItem) {
+        guard let item = (sender.representedObject as? String).flatMap(HomeDecor.init(rawValue:)) else { return }
+        MainActor.assumeIsolated { _ = controller?.buy(item) }
+    }
     @objc private func playGame(_ sender: NSMenuItem) {
         guard let game = (sender.representedObject as? String).flatMap(PetGame.init(rawValue:)) else { return }
         MainActor.assumeIsolated { controller?.play(game) }
@@ -3953,6 +4153,7 @@ final class CatView: NSView {
         MainActor.assumeIsolated { controller?.wear(item, in: slot) }
     }
     @objc private func openWardrobe() { MainActor.assumeIsolated { controller?.onOpenWardrobe?() } }
+    @objc private func openSettings() { MainActor.assumeIsolated { controller?.onOpenSettings?() } }
     @objc private func setPixels(_ sender: NSMenuItem) {
         let classic = sender.representedObject as? String == "classic"
         MainActor.assumeIsolated { controller?.onClassicPixels?(classic) }

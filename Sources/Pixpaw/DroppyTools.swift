@@ -43,8 +43,8 @@ enum DroppyTool: String, CaseIterable {
         case .todaysMeetings, .joinMeeting: "video"
         case .captureScrolling: "camera.viewfinder"
         case .playPause: "playpause"
-        case .nextTrack: "forward.fill"
-        case .previousTrack: "backward.fill"
+        case .nextTrack: "forward"
+        case .previousTrack: "backward"
         case .pomodoro: "timer"
         case .agents: "sparkles"
         }

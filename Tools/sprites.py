@@ -17,7 +17,7 @@ import zlib
 from pathlib import Path
 
 from fine_extras import (FINE_ACCESSORIES, FINE_ACCESSORY_COLORS, FINE_AGENT, FINE_EFFECTS, FINE_EFFECT_COLORS,
-                         FINE_HOME_COLORS, FINE_HOMES, FINE_TOYS)
+                         FINE_DECOR, FINE_HOME_COLORS, FINE_HOMES, FINE_TOYS)
 
 W, H = 20, 16
 
@@ -728,6 +728,605 @@ HOME_COLORS = dict(o="2a1e1a", d="2e2226", r="c94f45", R="9c3a33", w="f3e3c4", W
                    a="f7f4ec", A="d8d2c4", l="7fc4e8", L="4f9cc8")
 
 
+# Home decorations, bought with stars: things that stand beside the home (a 20 x 16
+# slot left or right of it, bottom row on the floor) or the doormat in front of the
+# doorway. Letters of HOME_COLORS only, drawn like homes.png. Order = price order.
+DECOR_SLOT_W, DECOR_SLOT_H = 20, 16
+DECOR = {
+    'rug': [
+        '..oooooooooooooooooooo..',
+        'yorrwrrwrrwrrwrrwrrwrroy',
+        'yoRRRRRRRRRRRRRRRRRRRRoy',
+        '..oooooooooooooooooooo..',
+    ],
+    'plant': [
+        '...oo..oo...',
+        '..oggoogGo..',
+        '.oggGoogGGo.',
+        'oggggogggGGo',
+        'ogGgggggoGGo',
+        'oggGgGggGGGo',
+        '.ooggGGgGGo.',
+        '..oooGGGoo..',
+        '.oooooooooo.',
+        '.orrrrrrrRo.',
+        '.oRRRRRRRRo.',
+        '..orrrrrRo..',
+        '..orrrrrRo..',
+        '...oooooo...',
+    ],
+    'bowls': [
+        '..ocCcCo.....oooo...',
+        '.obbbbbBo..ollllLo..',
+        '.oaabbbBo..oarrrRo..',
+        '..obbbBo....orrRo...',
+        '...oooo......ooo....',
+    ],
+    'cushion': [
+        '..oooooooooooo..',
+        '.oppppppppppppo.',
+        'oppppppPppppppPo',
+        'opppppPPPpppppPo',
+        'oPPPPPPPPPPPPPPo',
+        'y.oooooooooooo.y',
+    ],
+    'lamp': [
+        '...oooo...',
+        '..owwwWo..',
+        '..owwwWo..',
+        '.owwwwwWo.',
+        '.owwwwwWo.',
+        'oonnnnnnoo',
+        '....oo....',
+        '....oo....',
+        '....oo....',
+        '....oo....',
+        '....oo....',
+        '....oo....',
+        '....oo....',
+        '...okKo...',
+        '..okkkKo..',
+        '..oooooo..',
+    ],
+    'basket': [
+        '......oo.......',
+        '.....orro.oo...',
+        '....orrwRoyyo..',
+        '....oRrRRoYyo..',
+        '.oooooooooooooo',
+        '.ocCcCcCcCcCcCo',
+        '.oCcCcCcCcCcCCo',
+        '.ocCcCcCcCcCcCo',
+        '..oCCCCCCCCCCo.',
+        '...oooooooooo..',
+    ],
+    'books': [
+        'oooooooooooo',
+        'okkkkkkkkkKo',
+        'oKoooooooKKo',
+        'oKorobogoKKo',
+        'oKorobogoKKo',
+        'oKoRoBoGoKKo',
+        'okkkkkkkkkKo',
+        'oKooooo.oKKo',
+        'oKoyopoooKKo',
+        'oKoyopotoKKo',
+        'oKoYoPoToKKo',
+        'okkkkkkkkkKo',
+        'oKKKKKKKKKKo',
+        'oo........oo',
+    ],
+    'mailbox': [
+        '........oo..',
+        '...oooooyyo.',
+        '..orrrrrRyo.',
+        '.orrrrrrRoo.',
+        '.orwwwwrRRo.',
+        '.orrrrrrRRo.',
+        '.oRRRRRRRRo.',
+        '..ooooooooo.',
+        '.....okKo...',
+        '.....okKo...',
+        '.....okKo...',
+        '.....okKo...',
+        '....ookKoo..',
+        '...ogGgGGgo.',
+    ],
+}
+
+# Each pet's own version of a decoration (`HomeDecor.variants` in Swift): same slot, price
+# and save key, drawn the way that animal really lives. "<slot>.<kind>"; Seed dish/cup
+# and Hay rack/feeder share one picture. Drafted in pixpaw-extras/home-decor/species.
+DECOR.update({
+    'plant.cat': [
+        '..o...o..o..',
+        '.ogo.oGo.go.',
+        '.ogo.ogo.go.',
+        'o.go.og.ogGo',
+        'og.gogGogGo.',
+        '.ogggGgGgGo.',
+        '.oooooooooo.',
+        '.owwwwwwwWo.',
+        '.owwwwwwwWo.',
+        '..oWWWWWWo..',
+        '...oooooo...',
+    ],
+    'bowls.cat': [
+        '....ocCcCcCco.......',
+        '..oobbbbbbbbboo..oo.',
+        '.obabbbbbbbbbbBooBo.',
+        '..oobbbbbbbbBoo..oo.',
+        '....ooooooooo.......',
+    ],
+    'cushion.cat': [
+        '..oooo....oooo..',
+        '.oppppoooopppPo.',
+        'oppppPwwwwPpppPo',
+        'oPppppppppppppPo',
+        'oPPPPPPPPPPPPPPo',
+        '.oooooooooooooo.',
+    ],
+    'basket.cat': [
+        '.oooooooooo.',
+        '.opppppppPo.',
+        '.oPPPPPPPPo.',
+        '..oooooooo..',
+        '....ocCo.o..',
+        '....oCco.o..',
+        '....ocCo.o..',
+        '....oCcooyo.',
+        '....ocCooYo.',
+        '....oCco.oo.',
+        '....ocCo....',
+        '....oCco....',
+        'oooooooooooo',
+        'opppppppppPo',
+        'oooooooooooo',
+    ],
+    'plant.bee': [
+        '.ooo....ooo.',
+        'opypo..obybo',
+        '.ooo....ooo.',
+        '..g..ooo.g..',
+        '..g.owywog..',
+        '..g..ooo.g..',
+        '.Gg...g..gG.',
+        '..g..Gg..g..',
+        '.oooooooooo.',
+        '.orrrrrrrRo.',
+        '.oRRRRRRRRo.',
+        '..orrrrrRo..',
+        '..orrrrrRo..',
+        '...oooooo...',
+    ],
+    'bowls.bee': [
+        '..oo...oo..oo..',
+        '.osSollsSollsSo',
+        'oblllllllllllBo',
+        '.obbbbbbbbbbBo.',
+        '..ooooooooooo..',
+    ],
+    'books.bee': [
+        'oooooooooooo',
+        'okkkkkkkkkKo',
+        'okyYoyYoyYKo',
+        'okoyYonYoyKo',
+        'okyYoyYoyYKo',
+        'okoyYoyYoyKo',
+        'oknYoyYoyYKo',
+        'okoyYoyYoyKo',
+        'okyYoyYonYKo',
+        'okoyYoyYoyKo',
+        'okyYoyYoyYKo',
+        'okkkkkkkkkKo',
+        'oKKKKKKKKKKo',
+        'oo........oo',
+    ],
+    'bowls.seed': [
+        '..oykayykayo..',
+        '.oyaykyakykyo.',
+        'obbbbbbbbbbbBo',
+        '.obbbbbbbbbBo.',
+        '..oooooooooo..',
+    ],
+    'cushion.parrot': [
+        '.oooooooooooooo.',
+        '.okkkkkkkkkkkKo.',
+        '.oKo.o....o.oKo.',
+        '.oKo.y....y.oKo.',
+        '.oKo.y....y.oKo.',
+        '.oKo.y....y.oKo.',
+        '.oKo.y....y.oKo.',
+        '.oKo.y....y.oKo.',
+        '.oKo.oooooo.oKo.',
+        '.oKo.okkkKo.oKo.',
+        '.oKo.oooooo.oKo.',
+        '.oKo........oKo.',
+        'ooKoo......ooKoo',
+        'okkkKo....okkkKo',
+        'oooooo....oooooo',
+    ],
+    'basket.parrot': [
+        '..ooo.ooo.ooo..',
+        '..oro.obo.oyo..',
+        '..oRo.oBo.oYo..',
+        '.oooooooooooooo',
+        '.ocCcCcCcCcCcCo',
+        '.oCcCcCcCcCcCCo',
+        '.ocCcCcCcCcCcCo',
+        '..oCCCCCCCCCCo.',
+        '...oooooooooo..',
+    ],
+    'plant.dino': [
+        '......oo......',
+        '..o..ogGo..o..',
+        '.ogo.ogGo.ogo.',
+        'ogGgoogGoogGgo',
+        '..oogGgGgGoo..',
+        '.ogGgogGogGgo.',
+        'ogGo.oGgGo.oGo',
+        '.oo..oGgo..oo.',
+        '..oooooooooo..',
+        '..osssssssSo..',
+        '..osSsssssSo..',
+        '...oSSSSSSo...',
+        '...oooooooo...',
+    ],
+    'basket.dino': [
+        '...oo....oo....',
+        '..otto..otto...',
+        '..otTo..otTo...',
+        '.ocCcCcCcCcCco.',
+        'ocCCcCcCcCcCcCo',
+        'oCcCcCcCcCcCcCo',
+        '.oCCCCCCCCCCCo.',
+        '..ooooooooooo..',
+    ],
+    'books.dino': [
+        'oooooooooooo',
+        'okkkkkkkkkKo',
+        'oKddddddddKo',
+        'oKaddddddaKo',
+        'oKaaaaaaaaKo',
+        'oKaddddddaKo',
+        'okkkkkkkkkKo',
+        'oKdoodooddKo',
+        'oKocCoyYodKo',
+        'oKoCcoyyodKo',
+        'oKdoodooddKo',
+        'okkkkkkkkkKo',
+        'oKKKKKKKKKKo',
+        'oo........oo',
+    ],
+    'bowls.dog': [
+        '....ocCcCcCo........',
+        '..obbbbbbbbbBo......',
+        '..oawbbbwbbbBo.oo.oo',
+        '...obbbbbbbBo.oaaaao',
+        '....oooooooo...oo.oo',
+    ],
+    'cushion.dog': [
+        '.oooooooooooooo.',
+        'obbbboooooobbbBo',
+        'obBbowwwwwWobbBo',
+        'obbbbbbbbbbbbbBo',
+        'oBBBBBBBBBBBBBBo',
+        '.oooooooooooooo.',
+    ],
+    'basket.dog': [
+        '..oo.......oo..',
+        '.oaaoooooooaao.',
+        '.oaaaaaaaaaaAo.',
+        '.oaAoooooooAAo.',
+        '.oooooooooooooo',
+        '.ocCcCcCcCcCcCo',
+        '.oCcCcCcCcCcCCo',
+        '.ocCcCcCcCcCcCo',
+        '..oCCCCCCCCCCo.',
+        '...oooooooooo..',
+    ],
+    'cushion.hamster': [
+        '.....oooo.....',
+        '...oocCcCoo...',
+        '..ocCcCcCcCo..',
+        '.ocCcCcCcCcCo.',
+        '.okkoddddokKo.',
+        '.okkoddddokKo.',
+        '.okkoddddokKo.',
+        '.oKKoddddoKKo.',
+        '.oooooooooooo.',
+    ],
+    'lamp.hamster': [
+        '...oooo...',
+        '..oaaaAo..',
+        '..olllLo..',
+        '..olalLo..',
+        '..olllLo..',
+        '..olllLo..',
+        '..oLLLLo..',
+        '...osSo...',
+        '..oosSoo..',
+        '..okkkKo..',
+        '..okkkKo..',
+        '..okkkKo..',
+        '.okkkkkKo.',
+        '.oooooooo.',
+    ],
+    'basket.hamster': [
+        '....ooooooo....',
+        '..oosssssssoo..',
+        '.osSo.....oSSo.',
+        '.osoo..o..ooSo.',
+        'osSo...o...oSSo',
+        'oso.ooooooo.oSo',
+        'osSo...o...oSSo',
+        '.osoo..o..ooSo.',
+        '.osSo.....oSSo.',
+        '..ooSSSSSSSoo..',
+        '....ooooooo....',
+        '......oKo......',
+        '.....okKKo.....',
+        '....ooooooo....',
+    ],
+    'bowls.chicken': [
+        '..oooooooo..',
+        '..osssssSo..',
+        '..oyyyyyYo..',
+        '..oyYyyyYo..',
+        '..oyyyYyYo..',
+        '..oyyyyyYo..',
+        '..oyYyyyYo..',
+        '..osssssSo..',
+        '.ooyoyyoyoo.',
+        'oyYyyyyYyyYo',
+        'osssssssssSo',
+        '.oooooooooo.',
+    ],
+    'cushion.chicken': [
+        '.oooooooooooooo.',
+        '.okkkkkkkkkkkKo.',
+        '.okoddddddddoKo.',
+        '.okoddaaddddoKo.',
+        '.okoyyaAyyyyoKo.',
+        '.okoyYyyyYyyoKo.',
+        '.okkkkkkkkkkkKo.',
+        '.oKKKKKKKKKKKKo.',
+        '.oooooooooooooo.',
+    ],
+    'basket.chicken': [
+        '..oo...oo..oo..',
+        '.oaao.oaWo.oaao',
+        '.oaAo.oWWo.oaAo',
+        '.oooooooooooooo',
+        '.ocCcCcCcCcCcCo',
+        '.oCcCcCcCcCcCCo',
+        '.ocCcCcCcCcCcCo',
+        '..oCCCCCCCCCCo.',
+        '...oooooooooo..',
+    ],
+    'plant.giraffe': [
+        '.oooooooooooo.',
+        'oggGggGggGggGo',
+        'oGgGGgGgGGgGGo',
+        '.oooKoooKoooo.',
+        '....oKoKo.....',
+        '.....oKko.....',
+        '.....okKo.....',
+        '.....okKo.....',
+        '.....okKo.....',
+        '.....okKo.....',
+        '.....okKo.....',
+        '.....okKo.....',
+        '....okkKKo....',
+        '...oooooooo...',
+        '...osssssSo...',
+        '...oooooooo...',
+    ],
+    'bowls.giraffe': [
+        '.oooooooo.',
+        '.oppppppPo',
+        '.oppppPPPo',
+        '.oPPPPPPPo',
+        'oooooooooo',
+        'okkkkkkkKo',
+        'oooooooooo',
+    ],
+    'hay.rack': [
+        '..oyoyyoyoyo..',
+        '.oyYyyYyyYyyo.',
+        'okkkkkkkkkkkKo',
+        'okoyoyoyoyoyKo',
+        'okoYoyoYoyoYKo',
+        'okoyoYoyoYoyKo',
+        'okkkkkkkkkkkKo',
+        '.oKo......oKo.',
+        '.oKo......oKo.',
+        'oyyyyYyyyYyyyo',
+        '.oooooooooooo.',
+    ],
+    'hay.feeder': [
+        '..oyoyyoyo..',
+        '.oyYyyYyyYo.',
+        'okkkkkkkkkKo',
+        'okoyoYoyoYKo',
+        'okoYoyoYoyKo',
+        '.okkkkkkkKo.',
+        '....okKo....',
+        '....okKo....',
+        '....okKo....',
+        '....okKo....',
+        '....okKo....',
+        '....okKo....',
+        '....okKo....',
+        '...okkKKo...',
+        '..okkkkKKo..',
+        '..oooooooo..',
+    ],
+    'plant.hippo': [
+        '...o....o...',
+        '..ogo..ogo..',
+        '..ogo.oGgo.o',
+        '.ogGoogGgoog',
+        '.ogGgogGgogG',
+        'oggGggGgggGo',
+        'oGgGgGgGgGGo',
+        '.oooooooooo.',
+    ],
+    'bowls.hippo': [
+        '..oooooooo..',
+        '.orrrrrrrRo.',
+        'orkrrrkrrrRo',
+        'orrrkrrrkrRo',
+        'oaaaaaaaaaAo',
+        'oGgGgGgGgGGo',
+        '.oooooooooo.',
+    ],
+    'basket.hippo': [
+        '....ok.........',
+        '..oooKooo......',
+        '.oyYyyYyYo.....',
+        'oyYyyYyyYYo.ok.',
+        'oyYyyYyyYYooooo',
+        'oyYyyYyyYYoyYYo',
+        '.oYYYYYYYoyYYYo',
+        '..ooooooo.ooooo',
+    ],
+    'cushion.rabbit': [
+        '....oooooooo....',
+        '..occCcCcCcCco..',
+        '.occCcCcCcCcCCo.',
+        'oddddcCcCcCcCCCo',
+        'oddddCcCcCcCCCCo',
+        'oddddCCCCCCCCCCo',
+        'oooooooooooooooo',
+    ],
+    'basket.rabbit': [
+        '...oooo...',
+        '.oocCcCoo.',
+        '.ocCooCco.',
+        'ocCoCcoCCo',
+        'oCcoCCoCco',
+        'ocCoCcoCCo',
+        '.oCcooCCo.',
+        '.ooCCCCoo.',
+        '...oooo...',
+    ],
+    'plant.shark': [
+        '..o......o..',
+        '.ogo....ogo.',
+        '.oGgo...oGo.',
+        '..ogGo.ogo..',
+        '...oGo.oGgo.',
+        '..ogo...oGo.',
+        '.oGgo..ogo..',
+        '.ogGo..oGgo.',
+        '..oGgo..oGo.',
+        '...ogo.ogGo.',
+        '..oGgo.oGo..',
+        '..oooooooo..',
+        '.occccccCCo.',
+        'oooooooooooo',
+    ],
+    'basket.shark': [
+        '...ooooooooo...',
+        '..okkkkkkkkKo..',
+        '.okkkkkkkkkkKo.',
+        '.oyyyyyyyyyyYo.',
+        '.okkkkkoookkKo.',
+        '.oyyyyyoYoyyYo.',
+        '.okkkkkkokkkKo.',
+        '.okkkkkkkkkkKo.',
+        '.oyyyyyyyyyyYo.',
+        '.oooooooooooo..',
+    ],
+    'books.shark': [
+        '.oo..oo..oo.',
+        'oppo.opo.opo',
+        'opPo.oPo.oPo',
+        '.oPpoopooPo.',
+        '..oPpPpPpo..',
+        '...oPpPPo...',
+        '....oPPo....',
+        '....oPpo....',
+        '..oooooooo..',
+        '.ossssssSSo.',
+        'osSssssSSSSo',
+        'oooooooooooo',
+    ],
+    'mailbox.shark': [
+        '..ooooooooo.....',
+        '.olawwwwwllLoo..',
+        'olllWWWWWlllLkKo',
+        '.oLLLLLLLLLLoo..',
+        '..ooooooooooo...',
+        'occcccccccccccCo',
+        'oooooooooooooooo',
+    ],
+    'bowls.pig': [
+        'oooooooooooooooooooo',
+        'osyyCyyCyyyCyyCyyySo',
+        'ossssssssssssssssSSo',
+        '.oSSSSSSSSSSSSSSSSo.',
+        '.oo..............oo.',
+    ],
+    'cushion.pig': [
+        '....oooooooo....',
+        '..ooyYyyyYyyoo..',
+        '.oyyYyyYyyyYyyo.',
+        'oyYyyyYyyYyyyYyo',
+        'oYYYYYYYYYYYYYYo',
+        '.oooooooooooooo.',
+    ],
+    'basket.pig': [
+        '..oo..ooo...o..',
+        '.ogGo.ogGgo.oko',
+        '.oro..oGgGo.oro',
+        '.oro..ooooo.oRo',
+        '.oooooooooooooo',
+        '.okkkkkkkkkkkKo',
+        '.oKKKKKKKKKKKKo',
+        '.okkkkkkkkkkkKo',
+        '.oKKKKKKKKKKKKo',
+        '.oooooooooooooo',
+    ],
+    'cushion.dragon': [
+        '......oooo......',
+        '....ooyYyyoo....',
+        '..ooyyYyyrYyoo..',
+        '.oyYyyyYybyyYyo.',
+        'oyyYyYyyyYyyYYYo',
+        'oooooooooooooooo',
+    ],
+    'lamp.dragon': [
+        '....oo....',
+        '...oyyo...',
+        '..oynyyo..',
+        '.oyynnyro.',
+        '.oryynyro.',
+        '.orrrrrRo.',
+        'oossssssoo',
+        '.osssssSo.',
+        '..oSSSSo..',
+        '....oo....',
+        '....oo....',
+        '....oo....',
+        '....oo....',
+        '...osSo...',
+        '..osssSo..',
+        '..oooooo..',
+    ],
+    'basket.dragon': [
+        '...o......o....',
+        '..obo....opo...',
+        '..obBo..opPo.o.',
+        '.obbBo.opPPoogo',
+        '.obBBoooopPPoGo',
+        'ossssssssssssSo',
+        '.ooooooooooooo.',
+    ],
+})
+
+
 def load_homes():
     path = ART / "homes.png"
     width, height, pixels = read_png(path)
@@ -1213,13 +1812,17 @@ FINE = {
         },
     ),
     "dragon": dict(
-        # Dark and fierce, drawn in pixpaw-extras/hd-pets/dragon-fierce (opt2), with
-        # c a 1-pixel bronze rim round the outside so it reads on a dark desktop.
-        # The notch keeps the caramel 20 x 16 dragon. A hat on the middle head only:
-        # no eye boxes, no headphones, as for the 20 x 16 dragon.
-        colours=dict(o="171211", F="392e28", f="58463a", h="806650", S="3e231d", s="5c322a", k="b08a44", v="6e5534",
-                     w="8f7044", R="7a1f24", A="b8333a", r="e5484d", Y="8a6618", M="156a63", m="2fc1b5", d="0e0a09",
-                     e="ff5a1a", E="ffc04a", g="ff8a1a", G="fff3a0", x="f4ead2", c="6e4428"),
+        # Drawn in pixpaw-extras/hd-pets/dragon-fierce (opt2), coloured caramel like the
+        # 20 x 16 dragon (ux-v2 option B) so it is one character in both styles and reads
+        # on black, the notch and light; c, the outer rim, is the dark outline.
+        # A hat on the middle head only: no eye boxes, no headphones, as for the 20 x 16 dragon.
+        colours=dict(o="3a2214", F="b5733f", f="d9975f", h="ecb987", S="8f5530", s="b5733f", k="fbebc8", v="d9bd86",
+                     w="f0d9a8", R="7a1f24", A="b8333a", r="e5484d", Y="8a6618", M="156a63", m="2fc1b5", d="2a160c",
+                     e="ff5a1a", E="ffc04a", g="ff8a1a", G="fff3a0", x="f4ead2", c="3a2214"),
+        # The hexes Art/fine/dragon.png is painted in (the dark first draft): only used to
+        # read the sheet into letters, so the art stays as drawn.
+        drawn=dict(o="171211", F="392e28", f="58463a", h="806650", S="3e231d", s="5c322a", k="b08a44", v="6e5534",
+                   w="8f7044", d="0e0a09", c="6e4428"),
         tall=set(),
         anchors={
             **{f: (19.5, 2, None, None) for f in ("sit", "blink", "happy", "walk1", "walk3", "groom1", "eat1", "eat2", "held1", "held2")},
@@ -1307,7 +1910,8 @@ def load_fine_sheet(look, spec):
     width, height, pixels = read_png(path)
     assert (width, height) == (FINE_CELL * len(FRAME_ORDER), FINE_CELL), \
         f"{path}: should be {FINE_CELL * len(FRAME_ORDER)} x {FINE_CELL}, is {width} x {height}"
-    letters = {tuple(int(v[i:i + 2], 16) for i in (0, 2, 4)): k for k, v in spec["colours"].items()}
+    letters = {tuple(int(v[i:i + 2], 16) for i in (0, 2, 4)): k
+               for k, v in {**spec["colours"], **spec.get("drawn", {})}.items()}
     frames = {}
     for n, name in enumerate(FRAME_ORDER):
         w, h = (16 * FINE_SCALE, FINE_CELL) if name in spec["tall"] else (W * FINE_SCALE, H * FINE_SCALE)
@@ -1418,6 +2022,16 @@ def fine_coat(spec, coat):
 
 
 def check():
+    for name, rows in DECOR.items():
+        assert all(len(r) == len(rows[0]) for r in rows), f"decor {name}: ragged"
+        assert name == "rug" or len(rows[0]) <= DECOR_SLOT_W, f"decor {name}: wider than its slot"
+        assert len(rows) <= DECOR_SLOT_H, f"decor {name}: taller than its slot"
+    # The doormat, a little wider than the pet asleep on it, centred under it, inside every home's width.
+    for kind, (x, _, _) in HOME_SPOTS.items():
+        left = x + (W - len(DECOR["rug"][0])) // 2
+        assert 0 <= left and left + len(DECOR["rug"][0]) <= HOME_W, f"the doormat sticks out of {kind}'s home"
+        assert {c for r in rows for c in r} <= set(HOME_COLORS) | {"."}, f"decor {name}: a letter not in HOME_COLORS"
+    assert len(DECOR["rug"]) <= 4, "the doormat stays 4 rows, under the feet of a pet asleep a few rows up"
     # Every coat has to be able to paint the cat.
     for name, rows in FRAMES.items():
         for i, r in enumerate(rows):
@@ -1530,6 +2144,12 @@ def swift():
         out.append("        ],")
     out += ["    ]", "", "    /// d is the doorway: dark while the home is empty.", "    static let homeColors: [Character: UInt32] = ["]
     out += [f'        "{k}": 0x{v},' for k, v in HOME_COLORS.items()]
+    out += ["    ]", "", "    /// Home decorations by `HomeDecor` raw value, in `homeColors`; bottom row on the floor.",
+            f"    static let decorSlotWidth = {DECOR_SLOT_W}", "    static let decor: [String: [String]] = ["]
+    for name, rows in DECOR.items():
+        out.append(f'        "{name}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
     out += ["    ]", "", "    /// Palette per coat: outline, fur, stripe, white, pink, eye.",
             "    static let coats: [String: [Character: UInt32]] = ["]
     for coat, pal in list(COATS.items()) + list(KIND_COLORS.items()):
@@ -1638,6 +2258,12 @@ def fine_swift():
         out.append("        ],")
     out += ["    ]", "", "    static let homeColors: [Character: UInt32] = ["]
     out += [f'        "{k}": 0x{v},' for k, v in {**HOME_COLORS, **FINE_HOME_COLORS}.items()]
+    out += ["    ]", "", "    /// HD home decorations: `CatArt.decor` at twice the grid, in `homeColors`.",
+            "    static let decor: [String: [String]] = ["]
+    for name, rows in FINE_DECOR.items():
+        out.append(f'        "{name}": [')
+        out += [f'            "{r}",' for r in rows]
+        out.append("        ],")
     out += ["    ]", "}", ""]
     dest = Path(__file__).resolve().parent.parent / "Sources/Pixpaw/CatSprites.fine.generated.swift"
     dest.write_text("\n".join(out))

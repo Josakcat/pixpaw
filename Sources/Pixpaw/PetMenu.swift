@@ -17,8 +17,9 @@ enum PetMenuAction: String, CaseIterable {
     case talk, ask, droppyTool = "droppyTool:", runSuggestion = "runSuggestion:"
     case feed, treat, nap, wake, playGame = "playGame:", playHands, stopPlaying
     case focus, stretch, lofi, pauseLofi, askSign, dropSign
-    case meetingNotes, openNotes, putHomeAway
+    case meetingNotes, showTranscript, openNotes, putHomeAway, placeDecor = "placeDecor:", buyDecor = "buyDecor:"
     case photo, recordGIF, capturePage, wearItem = "wearItem:", openWardrobe, setColour = "setColour:", setPixels = "setPixels:"
+    case openSettings
 }
 
 /// A shortcut as the user set it on Droppy's Shortcuts page.
@@ -36,6 +37,9 @@ struct PetMenuShortcut: Equatable {
 struct PetMenuEntry: Equatable {
     var title = ""
     var symbol: String?
+    /// A home decoration's id ("lamp"): its own art is the row's picture,
+    /// in place of `symbol`. A key, not an image, so the model stays a value.
+    var picture: String?
     var action: PetMenuAction?
     /// What the action reads off its sender.
     var represented: String?
@@ -111,6 +115,19 @@ struct PetMenuState {
     /// The home comes out for naps.
     var home = false
     var homeOut = false
+    /// Home decorations: one row each, in price order.
+    struct Decor: Equatable {
+        let title: String
+        let id: String
+        let price: Int
+        let spots: [String]
+        /// Where it stands now ("left", "right", "front"), nil when off the floor.
+        var placed: String?
+        var owned = false
+    }
+    var decor: [Decor] = []
+    /// Stars there are to spend on them.
+    var wallet = 0
     var games: [Choice] = []
     var friend = false
     var playing = false
@@ -127,6 +144,8 @@ struct PetMenuState {
     var takesNotes = false
     var notes: String?
     var notesKept = false
+    /// Taking notes with the live transcript hidden (×, or off in Settings).
+    var transcriptHidden = false
     var scrollingCapture = false
     var wholePage = false
     var places: [Place] = []
@@ -164,14 +183,14 @@ enum PetMenu {
 
         // Ask me: talking to it, typing to it, and Droppy's own tools.
         var ask: [PetMenuEntry] = []
-        if state.talks { ask.append(item("Talk to me", "mic.fill", .talk, shortcut: state.talkKey)) }
+        if state.talks { ask.append(item("Talk to me", "mic", .talk, shortcut: state.talkKey)) }
         ask.append(item("What can I do?…", "magnifyingglass", .ask, shortcut: state.askKey))
         if !state.droppy.isEmpty {
-            ask.append(submenu("Droppy", "drop.fill", state.droppy.map { item($0.title, $0.symbol, .droppyTool, represented: $0.id) }))
+            ask.append(submenu("Droppy", "drop", state.droppy.map { item($0.title, $0.symbol, .droppyTool, represented: $0.id) }))
         }
         groups.append(PetMenuGroup(title: "Ask me", items: ask))
 
-        var care = [item("Feed", "fork.knife", .feed, badge: state.hungry ? "Hungry" : nil), item("Give a treat", "fish.fill", .treat)]
+        var care = [item("Feed", "fork.knife", .feed, badge: state.hungry ? "Hungry" : nil), item("Give a treat", "fish", .treat)]
         if !state.home { care.append(state.asleep ? item("Wake up", "sun.max", .wake) : item("Nap", "moon.zzz", .nap)) }
         // Only the games this one plays, its own toy first.
         var toys = state.games.map { item($0.title, $0.symbol, .playGame, represented: $0.id) }
@@ -203,20 +222,22 @@ enum PetMenu {
         if state.join { meetings.append(item("Join the next meeting", "video", .droppyTool, represented: "joinMeeting")) }
         if state.todaysMeetings { meetings.append(item("Today's meetings", "calendar", .droppyTool, represented: "todaysMeetings")) }
         if state.takesNotes {
-            meetings.append(state.notes != nil ? item("Stop meeting notes", "stop.circle.fill", .meetingNotes, badge: state.notes)
+            meetings.append(state.notes != nil ? item("Stop meeting notes", "stop.circle", .meetingNotes, badge: state.notes)
                             : item("Take meeting notes", "waveform.badge.mic", .meetingNotes))
+            if state.notes != nil, state.transcriptHidden { meetings.append(item("Show live transcript", "captions.bubble", .showTranscript)) }
             if state.notesKept, state.notes == nil { meetings.append(item("Open the last meeting notes", "doc.text", .openNotes)) }
         }
         if !meetings.isEmpty { groups.append(PetMenuGroup(title: "Meetings", items: meetings)) }
 
         // Home: the nap that brings it out, and putting it away.
         if state.home {
-            var home = [state.asleep ? item("Wake up", "sun.max", .wake) : item("Nap", "house.fill", .nap)]
+            var home = [state.asleep ? item("Wake up", "sun.max", .wake) : item("Nap", "house", .nap)]
+            if let decorate = decorate(state) { home.append(decorate) }
             if state.homeOut { home.append(item("Put the home away", "house.slash", .putHomeAway)) }
             groups.append(PetMenuGroup(title: "Home", items: home))
         }
 
-        var captures = [item("Photo", "camera.fill", .photo), item("GIF", "film", .recordGIF)]
+        var captures = [item("Photo", "camera", .photo), item("GIF", "film", .recordGIF)]
         // Droppy's: you pick the window or area, and it scrolls it.
         if state.scrollingCapture { captures.append(item("Scrolling capture", "camera.viewfinder", .capturePage)) }
         else if state.wholePage { captures.append(item("Whole page", "camera.viewfinder", .capturePage)) }
@@ -245,7 +266,45 @@ enum PetMenu {
         }
         groups.append(PetMenuGroup(title: "Look", items: look))
         groups.append(PetMenuGroup(title: nil, items: [submenu("Capture", "camera", captures)]))
+        // Always last: the way to everything else, in Droppy's Settings.
+        groups.append(PetMenuGroup(title: nil, items: [item("Pixpaw settings…", "gearshape", .openSettings)]))
         return groups
+    }
+}
+
+extension PetMenu {
+    /// Decorate ▸ Left / Right / Doormat (what's yours to put there), then
+    /// Buy ▸ each one not yours yet; one more click on it to spend the stars.
+    static func decorate(_ state: PetMenuState) -> PetMenuEntry? {
+        guard !state.decor.isEmpty else { return nil }
+        var items: [PetMenuEntry] = []
+        for (spot, title, symbol) in [("left", "Left", "arrow.left.to.line"), ("right", "Right", "arrow.right.to.line"),
+                                      ("front", "Doormat", "rectangle.bottomhalf.filled")] {
+            let fitting = state.decor.filter { $0.owned && $0.spots.contains(spot) }
+            guard !fitting.isEmpty else { continue }
+            var things = [PetMenuEntry(title: "Nothing", action: .placeDecor, represented: "\(spot)=",
+                                       checked: !fitting.contains { $0.placed == spot })]
+            things += fitting.map { PetMenuEntry(title: $0.title, picture: $0.id, action: .placeDecor, represented: "\(spot)=\($0.id)",
+                                                 checked: $0.placed == spot) }
+            items.append(PetMenuEntry(title: title, symbol: symbol, children: things))
+        }
+        let shop = state.decor.filter { !$0.owned }
+        if !shop.isEmpty {
+            // Owned things carry over to every pet, drawn as its own version.
+            var buy = [PetMenuEntry(title: "To spend: \(state.wallet) ★", enabled: false),
+                       PetMenuEntry(title: "Changes with your pet", enabled: false), .separator]
+            buy += shop.map { thing in
+                let short = thing.price - state.wallet
+                guard short <= 0 else { return PetMenuEntry(title: "\(thing.title) · \(short) ★ more", picture: thing.id, enabled: false) }
+                return PetMenuEntry(title: "\(thing.title) · \(thing.price) ★", picture: thing.id, children: [
+                    PetMenuEntry(title: "Buy for \(thing.price) ★", action: .buyDecor, represented: thing.id),
+                    PetMenuEntry(title: "Leaves \(state.wallet - thing.price) ★ to spend", enabled: false),
+                ])
+            }
+            if !items.isEmpty { items.append(.separator) }
+            items.append(PetMenuEntry(title: "Buy", symbol: "cart", children: buy))
+        }
+        return PetMenuEntry(title: "Decorate", symbol: "sofa", badge: "\(state.wallet) ★", children: items)
     }
 }
 
@@ -275,12 +334,37 @@ struct PetCardLayout {
         ask = first { $0.action == .ask }
         rightNow = suggestions.first
         let onTop = Set((rightNow?.buttons ?? []).map(\.id))
+        // A row that says what a Right now button already says ("Stretch
+        // with me") would be the same thing twice.
+        let onTopTitles = Set((rightNow?.buttons ?? []).flatMap { [$0.button, $0.menu] })
         let shown = tiles + [talk, ask].compactMap { $0 }
+        // A big button's action is never a row too, whatever its title or
+        // badge reads by then ("Stop focus" is the Focus button).
+        let tileActions = Set(tiles.compactMap(\.action))
         groups = menu.compactMap { group in
             let items = group.items.filter { item in
                 !shown.contains(item) && !(item.action == .runSuggestion && item.represented.map(onTop.contains) == true)
+                    && !(item.action.map(tileActions.contains) == true && item.children == nil)
+                    && !onTopTitles.contains(item.title)
             }
             return items.isEmpty ? nil : PetMenuGroup(title: group.title, items: items)
+        }
+    }
+
+    /// A big button's label: one or two short words, so it fits the 77pt
+    /// tile at 11pt. The full title stays its VoiceOver label and the row's.
+    static func tileTitle(_ entry: PetMenuEntry) -> String {
+        switch entry.action {
+        case .feed: "Feed"
+        case .nap: "Nap"
+        case .wake: "Wake up"
+        case .focus:
+            entry.title == "Stop focus" ? "Stop focus" : entry.title == "Skip the break" ? "Skip break"
+                : entry.title == "Focusing with Droppy" ? "Focusing" : "Focus"
+        case .lofi: "Lofi"
+        case .pauseLofi: "Pause lofi"
+        case .askSign: "Note"
+        default: entry.title.count <= 10 ? entry.title : String(entry.title.prefix(while: { $0 != " " }))
         }
     }
 

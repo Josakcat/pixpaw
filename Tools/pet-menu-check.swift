@@ -36,6 +36,13 @@ func everything(home: Bool, asleep: Bool = false) -> PetMenuState {
     s.asleep = asleep
     s.home = home
     s.homeOut = home
+    if home {
+        s.wallet = 150
+        s.decor = [.init(title: "Doormat rug", id: "rug", price: 60, spots: ["front"], placed: "front", owned: true),
+                   .init(title: "Potted plant", id: "plant", price: 80, spots: ["left", "right"], placed: nil, owned: true),
+                   .init(title: "Floor lamp", id: "lamp", price: 140, spots: ["left", "right"]),
+                   .init(title: "Mailbox", id: "mailbox", price: 220, spots: ["left", "right"])]
+    }
     s.games = [.init(title: "Yarn", symbol: "circle.dotted", id: "yarn")]
     s.friend = true
     s.playing = true
@@ -85,11 +92,12 @@ checkSame(droppyFocus, "Droppy's Pomodoro")
 
 // The menu's groups and order.
 let full = PetMenu.groups(everything(home: true))
-check(full.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "Look", "—"], "menu groups in order")
+check(full.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "Look", "—", "—"], "menu groups in order")
 let look = full.first { $0.title == "Look" }
 check(look?.items.map(\.title) == ["Colour", "Wardrobe", "Pixel size"], "Colour beside Wardrobe, then Pixel size")
-check(full.last?.items.map(\.title) == ["Capture"], "Capture after the separator")
-check(PetMenu.groups(PetMenuState()).map { $0.title ?? "—" } == ["Ask me", "Care", "Work", "Look", "—"], "no Right now, Meetings or Home when empty")
+check(full.dropLast().last?.items.map(\.title) == ["Capture"], "Capture after the separator")
+check(full.last?.items.map(\.title) == ["Pixpaw settings…"], "Pixpaw settings… last of all")
+check(PetMenu.groups(PetMenuState()).map { $0.title ?? "—" } == ["Ask me", "Care", "Work", "Look", "—", "—"], "no Right now, Meetings or Home when empty")
 check(PetMenu.groups(PetMenuState()).first { $0.title == "Look" }?.items.map(\.title) == ["Wardrobe"], "no colours (a pet you drew), no Colour, no fine art, no Pixel size")
 var friendMenu = everything(home: false)
 friendMenu.isFriend = true
@@ -104,15 +112,18 @@ check(colours.map(\.title) == ["Golden", "Husky"] && colours[0].checked && !colo
 let noHome = PetMenu.groups(everything(home: false))
 let card = PetCardLayout(noHome, suggestions: everything(home: false).suggestions)
 check(card.tiles.map(\.title) == ["Feed", "Play", "Nap", "Stop focus", "Play lofi", "Add a note…"], "six big buttons in order")
+check(card.tiles.map(PetCardLayout.tileTitle) == ["Feed", "Play", "Nap", "Stop focus", "Lofi", "Note"], "short tile labels")
+check(!card.groups.flatMap(\.items).contains { $0.action == .focus }, "Stop focus is the big button, not a Work row too")
+check(PetCardLayout.tileTitle(PetMenuEntry(title: "Focusing with Droppy", action: .focus)) == "Focusing", "Droppy's Pomodoro tile is short")
 check(card.tiles.first?.badge == "Hungry" && card.tiles[3].badge == "25 min" && card.tiles[4].badge == "YouTube", "badges on the big buttons")
 check(card.talk?.shortcut?.text == "⌃⌥T" && card.ask?.shortcut?.text == "⌃⌥/", "the header's buttons carry the user's keys")
 check(card.rightNow?.line == "Screenshot just now", "Right now: the first suggestion")
 check(card.groups.first?.title == "Right now" && card.groups.first?.items.map(\.title) == ["See why pixpaw's CI failed"],
       "the other suggestions stay as Right now rows")
 let homeCard = PetCardLayout(full, suggestions: [])
-check(homeCard.tiles.contains { $0.title == "Nap" && $0.symbol == "house.fill" }, "with a home, Nap is the home's: short, with the home icon")
-check(homeCard.groups.first { $0.title == "Home" }?.items.map(\.title) == ["Put the home away"], "Put the home away stays a row")
-check(homeCard.groups.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "Look", "—"], "card groups with a home")
+check(homeCard.tiles.contains { $0.title == "Nap" && $0.symbol == "house" }, "with a home, Nap is the home's: short, with the home icon")
+check(homeCard.groups.first { $0.title == "Home" }?.items.map(\.title) == ["Decorate", "Put the home away"], "Decorate and Put the home away stay rows")
+check(homeCard.groups.map { $0.title ?? "—" } == ["Right now", "Ask me", "Care", "Work", "Meetings", "Home", "Look", "—", "—"], "card groups with a home")
 let pomodoro = PetCardLayout(PetMenu.groups(droppyFocus), suggestions: [])
 check(pomodoro.tiles[3].title == "Focusing with Droppy" && !pomodoro.tiles[3].enabled, "Droppy's Pomodoro: the Focus button is off on both")
 
@@ -124,8 +135,48 @@ check(hats.map(\.title) == ["No hat", "Party hat", "", "Next: Beanie, 15 ★ to 
       "Head: worn ticked, next switched off")
 check(wardrobe.children![1].children!.first?.checked == true, "Face: nothing worn ticks No glasses")
 
+// Decorate: in the Home group, just before Look; pickers of what's yours, then Buy.
+let decorate = full.first { $0.title == "Home" }!.items.first { $0.title == "Decorate" }!
+check(decorate.badge == "150 ★", "Decorate shows the stars to spend")
+check(decorate.children!.map(\.title) == ["Left", "Right", "Doormat", "", "Buy"], "pickers for the spots something owned fits, then Buy")
+let left = decorate.children![0].children!
+check(left.map(\.title) == ["Nothing", "Potted plant"] && left[0].checked && left[1].represented == "left=plant", "Left: owned side things, Nothing ticked")
+check(decorate.children![2].children!.map(\.title) == ["Nothing", "Doormat rug"] && decorate.children![2].children![1].checked, "Doormat: the rug ticked")
+let shop = decorate.children![4].children!
+check(shop.map(\.title) == ["To spend: 150 ★", "Changes with your pet", "", "Floor lamp · 140 ★", "Mailbox · 70 ★ more"],
+      "Buy: only what's not owned, price or what's short, and that each looks like the pet's own")
+check(!shop[0].enabled && !shop[1].enabled && !shop[4].enabled && shop[4].children == nil, "short one switched off")
+check(shop[3].children?.first?.action == .buyDecor && shop[3].children?.first?.represented == "lamp"
+      && shop[3].children?[1].title == "Leaves 10 ★ to spend", "buying takes one more click: the confirm")
+// Each decoration row carries its own art (by id); the other rows keep their symbols.
+check(left[0].picture == nil && left[1].picture == "plant" && left[1].symbol == nil, "Left: the plant row shows the plant's art")
+check(shop[0].picture == nil && shop[3].picture == "lamp" && shop[4].picture == "mailbox", "Buy: every item row shows its art, short ones too")
+check(shop[3].children!.allSatisfy { $0.picture == nil }, "the confirm flyout is unchanged: no big preview in the menu")
+check(decorate.picture == nil && decorate.symbol == "sofa", "Decorate keeps its symbol")
+let decorCard = PetCardLayout(full, suggestions: [])
+check(decorCard.groups.flatMap(\.items).first { $0.title == "Decorate" } == decorate, "the card's Decorate is the menu's, pictures and all")
+var nothingOwned = everything(home: true)
+nothingOwned.decor = nothingOwned.decor.map { var d = $0; d.owned = false; d.placed = nil; return d }
+check(PetMenu.decorate(nothingOwned)?.children?.map(\.title) == ["Buy"], "nothing owned: only Buy")
+check(PetMenu.groups(everything(home: false)).allSatisfy { $0.items.allSatisfy { $0.title != "Decorate" } }, "no home, no Decorate")
+
 // The shortcut, spelled as the menu draws it.
 check(PetMenuShortcut(key: "k", shift: true, command: true).text == "⇧⌘K", "shortcut text")
+
+// Live transcript: only while taking notes with it hidden, right under Stop.
+var recording = PetMenuState()
+recording.takesNotes = true
+recording.notes = "12 min"
+func meetingTitles(_ s: PetMenuState) -> [String] {
+    PetMenu.groups(s).first { $0.title == "Meetings" }?.items.map(\.title) ?? []
+}
+check(meetingTitles(recording) == ["Stop meeting notes"], "no Show live transcript while it's up")
+recording.transcriptHidden = true
+check(meetingTitles(recording) == ["Stop meeting notes", "Show live transcript"], "Show live transcript under Stop when hidden")
+var idle = PetMenuState()
+idle.takesNotes = true
+idle.transcriptHidden = true
+check(!meetingTitles(idle).contains("Show live transcript"), "no Show live transcript when not taking notes")
 
 print(failures == 0 ? "\nAll good." : "\n\(failures) failed.")
 exit(failures == 0 ? 0 : 1)

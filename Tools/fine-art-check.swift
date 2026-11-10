@@ -217,6 +217,17 @@ for (name, rows) in FineArt.homes.sorted(by: { $0.key < $1.key }) {
     check(rows.joined().allSatisfy { $0 == "." || FineArt.homeColors[$0] != nil }, "home \(name): every letter coloured")
     check(rows.joined().contains("d") == (CatArt.homes[name] ?? []).joined().contains("d"), "home \(name): has its doorway")
 }
+// Decorations as row icons (CatSprites.decorIcon): both sizes fit its 48 x 32 canvas
+// uncut, classic at 2 bitmap pixels an art pixel (1 pt), HD at 1 (half a point).
+for (name, rows) in CatArt.decor.sorted(by: { $0.key < $1.key }) {
+    let fine = FineArt.decor[name] ?? []
+    check(!fine.isEmpty, "decor \(name): has HD art")
+    check(rows.count * 2 <= 32 && (rows.first?.count ?? 99) * 2 <= 48, "decor \(name): classic icon fits 48 x 32 at 2x")
+    check(fine.count <= 32 && (fine.first?.count ?? 99) <= 48, "decor \(name): HD icon fits 48 x 32 at 1x")
+    // Settings' large icon (96 x 64): every item at the same whole factor, classic 4, HD 2.
+    check(min(96 / (rows.first?.count ?? 99), 64 / max(rows.count, 1)) >= 4, "decor \(name): classic large icon at 4x")
+    check(min(96 / (fine.first?.count ?? 99), 64 / max(fine.count, 1)) >= 2, "decor \(name): HD large icon at 2x")
+}
 
 print(failures == 0 ? "all fine-art checks pass" : "\(failures) failed")
 exit(failures == 0 ? 0 : 1)

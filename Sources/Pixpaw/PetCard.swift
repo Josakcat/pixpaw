@@ -21,6 +21,8 @@ struct PetCardItem: Identifiable {
     let id = UUID()
     let title: String
     let symbol: String?
+    /// A decoration's own art, drawn in place of `symbol` (scale 2).
+    var picture: CGImage?
     var action: Selector?
     /// What the action reads off its sender, as a menu item's would.
     var represented: String?
@@ -31,15 +33,21 @@ struct PetCardItem: Identifiable {
     var checked = false
     var isSeparator = false
     var children: [PetCardItem]?
+    /// A big button's short label; `title` stays what VoiceOver reads.
+    var tileTitle: String?
 
     static let separator = PetCardItem(title: "", symbol: nil, isSeparator: true)
 
     /// An item of the pet's menu, submenus included.
-    init(_ entry: PetMenuEntry) {
+    init(_ entry: PetMenuEntry) { self.init(entry, picture: { _ in nil }) }
+
+    /// The same, with `picture` drawing an entry's decoration art.
+    init(_ entry: PetMenuEntry, picture: (String) -> CGImage?) {
         if entry.isSeparator { self = .separator; return }
         self.init(title: entry.title, symbol: entry.symbol, action: entry.action.map { NSSelectorFromString($0.rawValue) },
                   represented: entry.represented, badge: entry.badge, shortcut: entry.shortcut?.text,
-                  enabled: entry.enabled, checked: entry.checked, children: entry.children?.map(PetCardItem.init))
+                  enabled: entry.enabled, checked: entry.checked, children: entry.children?.map { PetCardItem($0, picture: picture) })
+        self.picture = entry.picture.flatMap(picture)
     }
 
     init(title: String, symbol: String?, action: Selector? = nil, represented: String? = nil, badge: String? = nil, shortcut: String? = nil,
@@ -93,8 +101,9 @@ private final class PetMenuRelay: NSObject, @unchecked Sendable {
 
 extension NSMenu {
     /// The pet's full menu, built item by item from its menu model; actions
-    /// go to `target`, the pet's view, once the menu has closed.
-    static func pet(_ groups: [PetMenuGroup], target: AnyObject) -> NSMenu {
+    /// go to `target`, the pet's view, once the menu has closed. `picture`
+    /// draws a decoration's art (scale 2) for an entry that names one.
+    static func pet(_ groups: [PetMenuGroup], target: AnyObject, picture: (String) -> CGImage? = { _ in nil }) -> NSMenu {
         func menuItem(_ entry: PetMenuEntry) -> NSMenuItem {
             if entry.isSeparator { return .separator() }
             let item = PetMenuItem(title: entry.title, action: entry.action.map { _ in #selector(PetMenuRelay.fire(_:)) },
@@ -110,7 +119,10 @@ extension NSMenu {
                 item.keyEquivalentModifierMask = mask
             }
             item.target = PetMenuRelay.shared
-            if let symbol = entry.symbol {
+            if let art = entry.picture.flatMap(picture) {
+                // Scale 2: one screen pixel a bitmap pixel on Retina, crisp.
+                item.image = NSImage(cgImage: art, size: NSSize(width: CGFloat(art.width) / 2, height: CGFloat(art.height) / 2))
+            } else if let symbol = entry.symbol {
                 item.image = NSImage(systemSymbolName: symbol, accessibilityDescription: nil)
                 item.identifier = NSUserInterfaceItemIdentifier(symbol)
             }
@@ -152,6 +164,8 @@ struct PetCardModel {
     let name: String
     let status: String
     let stars: Int
+    /// The pet's face, in its colours, before the title.
+    var face: NSImage?
     /// The header's buttons: Talk to me (when it talks), What can I do?.
     let talk: PetCardItem?
     let ask: PetCardItem?
@@ -159,7 +173,7 @@ struct PetCardModel {
     let tiles: [PetCardItem]
     let groups: [PetCardGroup]
 
-    init(_ layout: PetCardLayout, name: String, status: String, stars: Int) {
+    init(_ layout: PetCardLayout, name: String, status: String, stars: Int, picture: (String) -> CGImage? = { _ in nil }) {
         self.name = name
         self.status = status
         self.stars = stars
@@ -171,8 +185,12 @@ struct PetCardModel {
                                   PetCardItem(PetMenuEntry(title: $0.button, symbol: $0.symbol, action: .runSuggestion, represented: $0.id))
                               })
         }
-        tiles = layout.tiles.map(PetCardItem.init)
-        groups = layout.groups.map { PetCardGroup(title: $0.title, items: $0.items.map(PetCardItem.init)) }
+        tiles = layout.tiles.map { entry in
+            var tile = PetCardItem(entry)
+            tile.tileTitle = PetCardLayout.tileTitle(entry)
+            return tile
+        }
+        groups = layout.groups.map { PetCardGroup(title: $0.title, items: $0.items.map { PetCardItem($0, picture: picture) }) }
     }
 }
 
@@ -473,6 +491,11 @@ private struct PetCardView: View {
 
     private var header: some View {
         HStack(spacing: DroppySpacing.sm) {
+            if let face = model.face {
+                Image(nsImage: face)
+                    .interpolation(.none)
+                    .accessibilityHidden(true)
+            }
             VStack(alignment: .leading, spacing: 2) {
                 Text(model.name).font(.system(size: 14, weight: .semibold))
                 Text("\(model.status) · \(model.stars) ★")
@@ -506,15 +529,22 @@ private struct PetCardView: View {
                 }
             }
             .accessibilityElement(children: .combine)
-            HStack(spacing: DroppySpacing.xs) {
-                ForEach(suggestion.buttons) { item in
-                    Button { run(item, .zero) } label: {
-                        Label(item.title, systemImage: item.symbol ?? "circle").lineLimit(1)
-                    }
-                    .buttonStyle(DroppyQuietButtonStyle(size: .small))
-                    .disabled(!item.enabled)
-                }
+            // Side by side when both fit ("To the shelf", "Show in Finder"),
+            // one under the other when they don't, never cut short.
+            ViewThatFits(in: .horizontal) {
+                HStack(spacing: DroppySpacing.xs) { suggestionButtons(suggestion) }
+                VStack(alignment: .leading, spacing: DroppySpacing.xs) { suggestionButtons(suggestion) }
             }
+        }
+    }
+
+    @ViewBuilder private func suggestionButtons(_ suggestion: PetCardSuggestion) -> some View {
+        ForEach(suggestion.buttons) { item in
+            Button { run(item, .zero) } label: {
+                Label(item.title, systemImage: item.symbol ?? "circle").lineLimit(1).fixedSize()
+            }
+            .buttonStyle(DroppyQuietButtonStyle(size: .small))
+            .disabled(!item.enabled)
         }
     }
 
@@ -523,9 +553,9 @@ private struct PetCardView: View {
             Button { run(item, geo.frame(in: .global)) } label: {
                 VStack(spacing: 4) {
                     Image(systemName: item.symbol ?? "circle").font(.system(size: 17))
-                    Text(item.title).font(.system(size: 11, weight: .medium)).lineLimit(1).minimumScaleFactor(0.8)
+                    Text(item.tileTitle ?? item.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
                     if let badge = item.badge {
-                        Text(badge).font(.system(size: 10)).foregroundStyle(.secondary).lineLimit(1)
+                        Text(badge).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -594,6 +624,12 @@ private struct PetCardRow: View {
                             .foregroundStyle(accent ? AnyShapeStyle(.tint) : AnyShapeStyle(.secondary))
                     } else {
                         Color.clear.frame(width: 18, height: 1)
+                    }
+                    if let picture = item.picture {
+                        // A decoration's own art, beside the check column as the menu draws it.
+                        Image(decorative: picture, scale: 2).interpolation(.none)
+                            .opacity(item.enabled ? 1 : 0.5)
+                            .accessibilityHidden(true)
                     }
                     Text(item.title).lineLimit(1)
                     Spacer(minLength: 0)
@@ -683,7 +719,7 @@ struct PetCardPreview: View {
                         Text("Doing fine · 185 ★").font(.system(size: 10)).foregroundStyle(.secondary)
                     }
                     Spacer()
-                    Image(systemName: "mic.fill").font(.system(size: 11))
+                    Image(systemName: "mic").font(.system(size: 11))
                 }
                 HStack(spacing: 6) {
                     ForEach(["fork.knife", "gamecontroller", "moon.zzz"], id: \.self) { symbol in
@@ -692,7 +728,7 @@ struct PetCardPreview: View {
                             .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.08)))
                     }
                 }
-                Label("Droppy", systemImage: "drop.fill").font(.system(size: 11))
+                Label("Droppy", systemImage: "drop").font(.system(size: 11))
             }
             .padding(12)
             .frame(width: 190)

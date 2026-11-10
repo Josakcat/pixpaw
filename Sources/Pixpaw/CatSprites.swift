@@ -224,22 +224,22 @@ enum PetGame: String, CaseIterable {
 
     var symbol: String {
         switch self {
-        case .yarn: "circle.hexagongrid.fill"
+        case .yarn: "circle.hexagongrid"
         case .teaser: "wand.and.stars"
         case .laser: "smallcircle.filled.circle"
-        case .fetch: "tennisball.fill"
-        case .mouse: "pawprint.fill"
-        case .frisbee: "opticaldisc.fill"
-        case .bigBone: "lizard.fill"
+        case .fetch: "tennisball"
+        case .mouse: "pawprint"
+        case .frisbee: "opticaldisc"
+        case .bigBone: "lizard"
         case .seed: "allergens"
-        case .carrot: "carrot.fill"
+        case .carrot: "carrot"
         case .worm: "scribble"
-        case .bell: "bell.fill"
+        case .bell: "bell"
         case .flower: "camera.macro"
-        case .leaves: "leaf.fill"
+        case .leaves: "leaf"
         case .watermelon: "circle.bottomhalf.filled"
-        case .fish: "fish.fill"
-        case .marshmallow: "flame.fill"
+        case .fish: "fish"
+        case .marshmallow: "flame"
         }
     }
 }
@@ -378,10 +378,11 @@ final class CatSprites {
     /// bottom row. `swing` pushes the legs that many art pixels sideways;
     /// `laptop` puts one in front of it, under its head, while it works.
     /// `fine` (the desktop) draws the look's finer art when it has some;
-    /// `pixelSize` says how big its pixels are then.
+    /// `pixelSize` says how big its pixels are then. `rim` gives a near-black
+    /// coat its light outline (`isNearBlack`); off inside its home.
     func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil, glasses: CatAccessory? = nil,
                headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0, laptop: Bool = false,
-               fine: Bool = false, friend: Bool = false) -> CGImage? {
+               fine: Bool = false, friend: Bool = false, rim: Bool = true) -> CGImage? {
         let fineLook = fine ? fineLook(kind, coat: coat) : nil
         let petCoat = self.petCoat(kind, friend: friend)
         let art = fineLook.map { "\($0).\(frame.rawValue)" } ?? kind.artKey(frame)
@@ -396,7 +397,7 @@ final class CatSprites {
         // Glasses only on whoever they fit (not a pet you drew or the dragon), eyes in view.
         let wearer = Wearer(isOwn: kind.isOwn, hasNeck: kind.wearsCollars, looksLike: kind.actsLike.rawValue)
         let glasses = glasses.flatMap { $0.fits(wearer) ? $0 : nil }
-        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(glasses?.rawValue ?? "-").\(headphones).\(swing).\(laptop).\(factor).\(petCoat?.id ?? "-")"
+        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(glasses?.rawValue ?? "-").\(headphones).\(swing).\(laptop).\(factor).\(petCoat?.id ?? "-").\(rim)"
         if let hit = cache[key] { return hit }
         // Finer art has its folded ears drawn.
         let folded = foldedEars && kind == .cat && fineLook == nil
@@ -473,9 +474,41 @@ final class CatSprites {
         for pixel in overlay where pixel.y + pad < grid.count {
             grid[pixel.y + pad][pixel.x] = pixel.rgb
         }
+        if rim, Self.isNearBlack(kind, coat: coat, petCoat: petCoat) { grid = Self.rim(grid) }
         let image = Self.render(grid)
         cache[key] = image
         return image
+    }
+
+    /// Coats nearly as dark as the notch, which get a light rim to read on it.
+    static let nearBlackCoats: Set<String> = [
+        "dog.blackLab", "rabbit.black", "hamster.blackBear", "chicken.australorp", "pig.berkshire",
+    ]
+    static let rimColour: UInt32 = 0x6A6A7A
+
+    static func isNearBlack(_ kind: PetKind, coat: CatCoat, petCoat: PetCoat?) -> Bool {
+        if kind.isOwn { return false }
+        if kind.hasCoats { return coat == .black }
+        return petCoat.map { nearBlackCoats.contains("\(kind.rawValue).\($0.id)") } ?? false
+    }
+
+    /// A 1-pixel light rim on the empty pixels beside the silhouette, inside
+    /// the frame so the pet keeps its size and its feet stay on the bottom
+    /// row. Done once per cached image, not per frame drawn. The renderer
+    /// can't tell what is behind the pet on the desktop, so it is on except
+    /// inside its home (`rim: false`), where it would outline the walls.
+    private static func rim(_ grid: [[UInt32?]]) -> [[UInt32?]] {
+        var out = grid
+        for y in grid.indices {
+            for x in grid[y].indices where grid[y][x] == nil {
+                let touches = (y > 0 && x < grid[y - 1].count && grid[y - 1][x] != nil)
+                    || (y + 1 < grid.count && x < grid[y + 1].count && grid[y + 1][x] != nil)
+                    || (x > 0 && grid[y][x - 1] != nil)
+                    || (x + 1 < grid[y].count && grid[y][x + 1] != nil)
+                if touches { out[y][x] = rimColour }
+            }
+        }
+        return out
     }
 
     /// The cat's ears folded down: each pointed ear (a tip over outline,
@@ -537,12 +570,98 @@ final class CatSprites {
     /// The character's home; with someone asleep inside, the doorway is
     /// left open so the pet behind shows through it. `fine`: the HD home,
     /// twice the grid, for a pet that `drawsFine`.
-    func home(_ kind: PetKind, occupied: Bool, fine: Bool = false) -> CGImage? {
-        let key = "home.\(fine ? "fine." : "")\(kind.actsLike.rawValue).\(occupied)"
+    ///
+    /// `decor` stands beside it (a slot each side only while something is
+    /// there) and the doormat lies in front of the doorway, where a pet with
+    /// a doorway on the floor naps on it, drawn over the home.
+    /// Each thing is drawn as the pet's own version (`HomeDecor.artKey(for:)`).
+    func home(_ kind: PetKind, occupied: Bool, fine: Bool = false, decor: HomeDecorSet = HomeDecorSet()) -> CGImage? {
+        // Keyed on what decides the art: the look the home and each thing are
+        // drawn as (a pet you drew acting like a dog is the dog's), not the pet.
+        let look = kind.actsLike.rawValue
+        let things = HomeDecor.Spot.allCases.map { decor[$0].map { $0.artKey(for: look) } ?? "-" }.joined(separator: ",")
+        let key = "home.\(fine ? "fine." : "")\(look).\(occupied).\(things)"
         if let hit = cache[key] { return hit }
-        guard let rows = (fine ? FineArt.homes : CatArt.homes)[kind.actsLike.rawValue] else { return nil }
+        guard let rows = (fine ? FineArt.homes : CatArt.homes)[look] else { return nil }
         let colors = fine ? FineArt.homeColors : CatArt.homeColors
-        let image = Self.render(rows.map { row in row.map { occupied && $0 == "d" ? nil : colors[$0] } })
+        let home = rows.map { row in row.map { occupied && $0 == "d" ? nil : colors[$0] } }
+        guard !decor.isEmpty else {
+            let image = Self.render(home)
+            cache[key] = image
+            return image
+        }
+        let art = fine ? FineArt.decor : CatArt.decor
+        let grid = fine ? FineArt.scale : 1
+        let slot = CatArt.decorSlotWidth * grid
+        let layout = HomeDecorLayout(decor, slot: slot)
+        let width = home.first?.count ?? 0, height = home.count
+        var picture = [[UInt32?]](repeating: [UInt32?](repeating: nil, count: layout.width(home: width)), count: height)
+        func paste(_ item: HomeDecor, x: Int) {
+            guard let rows = art[item.artKey(for: look)] ?? art[item.rawValue] else { return }
+            let top = height - rows.count
+            for (dy, row) in rows.enumerated() {
+                for (dx, letter) in row.enumerated() {
+                    let px = x + dx, py = top + dy
+                    guard let colour = colors[letter], py >= 0, px >= 0, px < picture[py].count else { continue }
+                    picture[py][px] = colour
+                }
+            }
+        }
+        for spot in [HomeDecor.Spot.left, .right] {
+            guard let item = decor[spot], let itemWidth = (art[item.artKey(for: look)] ?? art[item.rawValue])?.first?.count else { continue }
+            paste(item, x: layout.sideX(spot, itemWidth: itemWidth, home: width, slot: slot, gap: grid))
+        }
+        for (y, row) in home.enumerated() {
+            for (x, colour) in row.enumerated() where colour != nil { picture[y][layout.left + x] = colour }
+        }
+        if let rug = decor.front, let rugWidth = (art[rug.artKey(for: look)] ?? art[rug.rawValue])?.first?.count,
+           let spot = CatArt.homeSpots[look] {
+            paste(rug, x: layout.frontX(itemWidth: rugWidth, spotX: spot.0 * grid, frameWidth: CatArt.width * grid))
+        }
+        let image = Self.render(picture)
+        cache[key] = image
+        return image
+    }
+
+    /// One decoration on its own (a row's picture), as `look`'s version (`PetKind.actsLike`).
+    func decor(_ item: HomeDecor, fine: Bool, look: String? = nil) -> CGImage? {
+        let name = item.artKey(for: look)
+        let key = "decor.\(fine ? "fine." : "")\(name)"
+        if let hit = cache[key] { return hit }
+        let art = fine ? FineArt.decor : CatArt.decor
+        guard let rows = art[name] ?? art[item.rawValue] else { return nil }
+        let image = Self.render(rows, palette: fine ? FineArt.homeColors : CatArt.homeColors)
+        cache[key] = image
+        return image
+    }
+
+    /// Pixels of a decoration's menu icon: 24 x 16 pt at 2 pixels a point,
+    /// so an NSMenu row keeps its usual height.
+    static let decorIconPixels = (width: 48, height: 32)
+    /// Pixels of a decoration's Settings icon: twice the menu's, 48 x 32 pt
+    /// at 2 pixels a point (1 pt an HD art pixel, 2 pt a classic one).
+    static let decorIconLargePixels = (width: 96, height: 64)
+
+    /// A decoration as a row's small picture (menus, the card, Settings):
+    /// its art scaled up by whole pixels (nearest neighbour) to fit the
+    /// canvas, standing on its bottom edge, centred. In the menu's 48 x 32,
+    /// classic art comes out at 1 pt an art pixel and HD at half that, so
+    /// Pixel size shows in the icon too; `large` (Settings) doubles both.
+    /// Show it at scale 2. Rendered once per size, cached.
+    func decorIcon(_ item: HomeDecor, fine: Bool, large: Bool = false, look: String? = nil) -> CGImage? {
+        let key = "decorIcon.\(large ? "large." : "")\(fine ? "fine." : "")\(item.artKey(for: look))"
+        if let hit = cache[key] { return hit }
+        guard let art = decor(item, fine: fine, look: look), art.width > 0, art.height > 0 else { return nil }
+        let (width, height) = large ? Self.decorIconLargePixels : Self.decorIconPixels
+        let factor = max(1, min(width / art.width, height / art.height))
+        let drawWidth = min(width, art.width * factor), drawHeight = min(height, art.height * factor)
+        guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
+                                      space: CGColorSpace(name: CGColorSpace.sRGB)!,
+                                      bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
+        context.interpolationQuality = .none
+        // Core Graphics counts up from the bottom: y 0 is the bottom edge.
+        context.draw(art, in: CGRect(x: (width - drawWidth) / 2, y: 0, width: drawWidth, height: drawHeight))
+        let image = context.makeImage()
         cache[key] = image
         return image
     }

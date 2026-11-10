@@ -2,8 +2,8 @@
   "id": "pixpaw",
   "name": "Pixpaw",
   "version": "2.0.0",
-  "summary": "A pixel cat that lives on your desktop and talks to you",
-  "description": "A little pixel pet lives on your desktop, now in finer HD pixels: a cat, or a bee, parrot, dinosaur, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig or a three-headed dragon, or one you draw yourself in any pixel editor, sounds and all. Every pet's speech bubble comes up its own way. It wanders the bottom of the screen or the whole screen, rides along on your windows, climbs the walls, bounces when you throw it, purrs when you stroke it and eats from a bowl you put down.\n\nIt tells you things in a speech bubble: notifications, calendar events (click it to join the call), song changes it dances to, headphones, the battery, the volume, and screenshots it poses for. It holds your notes and countdowns on a little sign, carries files you drop on it to Droppy's shelf, reminds you to take breaks and stretches with you, keeps you company in Pomodoro rounds, and nudges you back if you wander off to YouTube.\n\nIt works along with your coding agents. When Claude Code or Google Antigravity starts, finishes or fails, it says so, with how much of your plan is left; a tag at its side shows what the agent is doing (\"Editing App.tsx\", \"Running npm test\"); scheduled runs come over with their results. When Claude Code asks to run something or asks you a question, your pet brings it over, reads it out and holds up the answers on a card: click one, or press Option-1.\n\nEvery animal has a toy of its own and its own games: a frisbee for the dog, a carrot for the rabbit, fetch for those who fetch, and the odd play-fight with a friend in a cartoon cloud of dust. Earn stars for hats, collars and, at 500, a home of its own. Take its photo or a five-second GIF to share, and capture a whole web page in one tall picture. Ghosts on Halloween, fireworks at New Year, snow at Christmas and more on the real dates. Hold on it for a card of big buttons; where Droppy already has a tool (its notes, tasks, clipboard, meetings, capture or Pomodoro), your pet runs Droppy's for you. Everything runs on your Mac unless you choose Claude for meeting summaries or CI after a push.",
+  "summary": "A pixel pet that lives on your desktop and helps out",
+  "description": "A little pixel pet lives on your desktop, now in finer HD pixels: a cat, or a bee, parrot, dinosaur, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig or a three-headed dragon, or one you draw yourself in any pixel editor, sounds and all. Every pet's speech bubble comes up its own way. It wanders the bottom of the screen or the whole screen, rides along on your windows, climbs the walls, bounces when you throw it, purrs when you stroke it and eats from a bowl you put down.\n\nIt tells you things in a speech bubble: notifications, calendar events (click it to join the call), song changes it dances to, headphones, the battery, the volume, and screenshots it poses for. It holds your notes and countdowns on a little sign, carries files you drop on it to Droppy's shelf, reminds you to take breaks and stretches with you, keeps you company in Pomodoro rounds, and nudges you back if you wander off to YouTube.\n\nIt works along with your coding agents. When Claude Code or Google Antigravity starts, finishes or fails, it says so, with how much of your plan is left; a tag at its side shows what the agent is doing (\"Editing App.tsx\", \"Running npm test\"); scheduled runs come over with their results. When Claude Code asks to run something or asks you a question, your pet brings it over and holds up the answers on a card: click one, or press Option-1.\n\nEvery animal has a toy of its own and its own games: a frisbee for the dog, a carrot for the rabbit, fetch for those who fetch, and the odd play-fight with a friend in a cartoon cloud of dust. Earn stars for hats, collars and, at 500, a home of its own. Take its photo or a five-second GIF to share, and capture a whole web page in one tall picture. Ghosts on Halloween, fireworks at New Year, snow at Christmas and more on the real dates. Hold on it for a card of big buttons; where Droppy already has a tool (its notes, tasks, clipboard, meetings, capture or Pomodoro), your pet runs Droppy's for you. Everything runs on your Mac unless you choose Claude for meeting summaries or CI after a push.",
   "category": "System",
   "kit": {
     "abi": 1,
@@ -41,6 +41,14 @@
     "license": "MIT"
   },
   "screenshots": [
+    "Screenshot-36.png",
+    "Screenshot-37.png",
+    "Screenshot-38.png",
+    "Screenshot-39.png",
+    "Screenshot-40.png",
+    "Screenshot-41.png",
+    "Screenshot-42.png",
+    "Screenshot-43.png",
     "Screenshot-1.png",
     "Screenshot-2.png",
     "Screenshot-3.png",

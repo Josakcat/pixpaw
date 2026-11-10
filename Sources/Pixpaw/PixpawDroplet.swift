@@ -37,6 +37,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let notesLanguage = "meetingNotesLanguage"
         static let notesHearOthers = "meetingNotesHearOthers"
         static let notesSource = "meetingNotesSource"
+        static let askMeetingAngle = "askMeetingAngle"
+        static let liveTranscript = "meetingNotesLiveTranscript"
+        static let transcriptOrigin = "meetingNotesTranscriptOrigin"
+        static let meetingAngles = "meetingAngles"
         static let hooksHeard = "hooksHeard"
         static let foldedEars = "foldedEars"
         static let classicPixels = "classicPixels"
@@ -50,6 +54,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let morning = "goodMorning"
         static let morningGreeted = "goodMorningGreeted"
         static let welcomeBack = "welcomeBack"
+        /// The first-day hello has been shown (or this was never a fresh install).
+        static let helloSeen = "helloSeen"
         static let lateNights = "lateNights"
         static let lateNightTold = "lateNightTold"
         static let chases = "followsCursor"
@@ -95,7 +101,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let answersAsks = "agentAsks"
         static let tellsScheduled = "tellsScheduled"
         static let scheduledOnSign = "scheduledOnSign"
-        static let readsAsksAloud = "agentAsksAloud"
         static let touchIDForRisky = "touchIDForRisky"
         static let showsAgentTools = "agentTools"
         static let lofiSource = "lofiSource"
@@ -146,6 +151,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let homeWhenQuiet = "homeWhenQuiet"
         /// The house's left edge on the floor; below zero until it has one.
         static let homeX = "homeX"
+        /// Home decorations: stars spent on them (`points` never drops), what's
+        /// owned ("rug,lamp") and what stands where ("left=lamp,front=rug").
+        static let starsSpent = "starsSpent"
+        static let decorOwned = "decorOwned"
+        static let homeDecor = "homeDecor"
         static let focusMinutes = "focusMinutes"
         static let ownPets = "ownPets"
     }
@@ -211,7 +221,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// An agent's questions come to the pet, with buttons to answer.
     @Published private(set) var answersAsks = true
     /// And it reads them out.
-    @Published private(set) var readsAsksAloud = true
     @Published private(set) var touchIDForRisky = true
     /// Touch ID is up for a risky one: no second prompt over it.
     private var confirmingRisky = false
@@ -316,8 +325,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func toggleWidgetPlans() { widgetShowsPlans.toggle() }
     private var askShownAt = Date.distantPast
     private var aliveAt = Date.distantPast
-    private let voice = AVSpeechSynthesizer()
     private let notePrompt = NotePrompt()
+    /// Its own panel, so asking how to sum up never closes a note being typed.
+    private let anglePrompt = NotePrompt()
+    /// What meeting notes hears, while it hears it.
+    private let liveTranscript = LiveTranscript()
     /// The "What can I do?" box, and how often each of its commands was run
     /// (the pet's and Droppy's catalog commands only, never what search found).
     private let askBox = AskBox()
@@ -364,12 +376,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var meetingTimer: Timer?
     @Published private(set) var takingNotes = false
     @Published private(set) var summingUp = false
+    /// Writing up the meeting just stopped; cancelled in deactivate().
+    private var summaryTask: Task<Void, Never>?
+    /// A stopped meeting whose notes file isn't written yet; deactivate saves it.
+    private var unsavedNotes: (title: String?, startedAt: Date, minutes: Int, transcript: String)?
     @Published private(set) var notesProblem: String?
     @Published private(set) var lastNotes: URL?
     @Published private(set) var notesModel = NoteModel.apple
     @Published private(set) var notesModelName = ""
     @Published private(set) var notesLanguage = MeetingLanguage.likely
     @Published private(set) var notesSource = MeetingSource.both
+    @Published private(set) var asksMeetingAngle = true
+    @Published private(set) var showsLiveTranscript = true
+    /// The last three ways the user asked for notes to be summed up, newest first.
+    private var meetingAngles: [String] = []
     /// Antigravity's models, once asked (`agy models`).
     private var focusTimer: Timer?
     private var health: ReminderCoach?
@@ -386,6 +406,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var festivalsOn = true
     @Published private(set) var festivalsHidden: Set<Festival> = []
     private let festivals = FestivalOverlay()
+    /// The first-day hello: three bubbles teaching click, hold and drag.
+    private lazy var hello = FirstHello(
+        say: { [weak self] in self?.cat?.say($0) },
+        cardOnClick: { [weak self] in self?.cardOpening == .click },
+        offerColour: { [weak self] in self?.suggest(PetSuggestions.hello(at: Date())) })
     /// Your birthday, for confetti and a party hat on the day.
     @Published private(set) var birthdayOn = false
     @Published private(set) var birthdayMonth = 1
@@ -435,6 +460,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     public func activate(host: DropletHost) throws {
         self.host = host
+        // Nothing saved yet, not even the character: a first install.
+        let freshInstall = host.preferences.value(forKey: Key.kind, as: String.self) == nil
+            && !host.preferences.value(forKey: Key.helloSeen, default: false)
         usesDroppyTools = host.preferences.value(forKey: Key.usesDroppyTools, default: true)
         cardOpening = PetCardOpening(rawValue: host.preferences.value(forKey: Key.cardOpening, default: "hold")) ?? .hold
         cardLook = PetCardLook(rawValue: host.preferences.value(forKey: Key.cardLook, default: "droppy")) ?? .droppy
@@ -460,6 +488,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         // Before the choice of three, a switch for hearing the others too.
         notesSource = MeetingSource(rawValue: prefs.value(forKey: Key.notesSource, default: ""))
             ?? (prefs.value(forKey: Key.notesHearOthers, default: true) ? .both : .microphone)
+        asksMeetingAngle = prefs.value(forKey: Key.askMeetingAngle, default: true)
+        showsLiveTranscript = prefs.value(forKey: Key.liveTranscript, default: true)
+        liveTranscript.savedOrigin = { [weak self] in
+            guard let xy = self?.host?.preferences.value(forKey: Key.transcriptOrigin, as: [Double].self), xy.count == 2 else { return nil }
+            return CGPoint(x: xy[0], y: xy[1])
+        }
+        liveTranscript.saveOrigin = { [weak self] origin in
+            self?.host?.preferences.setValue([Double(origin.x), Double(origin.y)], forKey: Key.transcriptOrigin)
+        }
+        meetingAngles = prefs.value(forKey: Key.meetingAngles, as: [String].self) ?? []
         hooksHeard = (prefs.value(forKey: Key.hooksHeard, as: [String: Double].self) ?? [:]).mapValues(Date.init(timeIntervalSince1970:))
         petCoats = prefs.value(forKey: Key.petCoats, as: [String: String].self) ?? [:]
         CatSprites.shared.petCoats = petCoats
@@ -495,6 +533,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             prefs.setValue(cat.keepsHomeOut, forKey: Key.homeKeptOut)
         }
         homeWhenQuiet = prefs.value(forKey: Key.homeWhenQuiet, default: true)
+        let decorOwned = DecorShop.owned(saved: prefs.value(forKey: Key.decorOwned, default: ""))
+        cat.loadDecor(owned: decorOwned, spent: prefs.value(forKey: Key.starsSpent, default: 0),
+                      placed: HomeDecorSet(saved: prefs.value(forKey: Key.homeDecor, default: ""), owned: decorOwned))
         cat.onPersist = { [weak self] in self?.persist() }
         cat.onPhoto = { [weak self] in self?.takePhoto() }
         cat.onCapturePage = { [weak self] in self?.captureByHand() }
@@ -521,6 +562,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         cat.hasNotes = { [weak self] in self?.lastNotes != nil }
         cat.onNotes = { [weak self] in self?.toggleMeetingNotes() }
+        cat.onShowTranscript = { [weak self] in self?.showLiveTranscript() }
+        cat.transcriptHidden = { [weak self] in
+            guard let self, self.meeting != nil else { return false }
+            return !self.liveTranscript.isShowing
+        }
         cat.onOpenNotes = { [weak self] in
             if let notes = self?.lastNotes { self?.host?.workspace.open(notes) }
         }
@@ -549,6 +595,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.daysTogether = { [weak self] in self?.daysTogether ?? 0 }
         cat.onStarsEarned = { [weak self] in self?.starsEarnedToday() }
         cat.onOpenWardrobe = { [weak self] in self?.openWardrobe() }
+        cat.onOpenSettings = { [weak self] in self?.host?.workspace.openSettings() }
+        cat.onGesture = { [weak self] in self?.hello.did($0) }
         cat.onColour = { [weak self] in self?.setColour($0) }
         cat.onClassicPixels = { [weak self] in self?.setClassicPixels($0) }
         cat.traits = social.petTraits
@@ -598,7 +646,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         answersAsks = prefs.value(forKey: Key.answersAsks, default: true)
         tellsScheduled = prefs.value(forKey: Key.tellsScheduled, default: true)
         scheduledOnSign = prefs.value(forKey: Key.scheduledOnSign, default: true)
-        readsAsksAloud = prefs.value(forKey: Key.readsAsksAloud, default: true)
         touchIDForRisky = prefs.value(forKey: Key.touchIDForRisky, default: true)
         showsAgentTools = prefs.value(forKey: Key.showsAgentTools, default: true)
         showsWaits = prefs.value(forKey: Key.showsWaits, default: true)
@@ -722,6 +769,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if prefs.value(forKey: Key.visible, default: true), !host.environment.isHarness {
             setOut(true)
         }
+        // A fresh install: the pet teaches its three gestures, once.
+        if freshInstall, isOut {
+            hello.start()
+        }
+        prefs.setValue(true, forKey: Key.helloSeen)
         festivalsOn = prefs.value(forKey: Key.festivals, default: true)
         festivalsHidden = Set(prefs.value(forKey: Key.festivalsHidden, default: "").split(separator: ",")
             .compactMap { Festival(rawValue: String($0)) })
@@ -754,14 +806,40 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     public func deactivate() {
+        hello.stop()
         PetCard.shared.close()
         stopCIWatches()
         listener.stop()
         meetingTimer?.invalidate()
         meetingTimer = nil
-        _ = meeting?.stop()
+        if let meeting {
+            let lines = meeting.stop()
+            if !lines.isEmpty {
+                unsavedNotes = (meeting.title, meeting.startedAt, meeting.minutes,
+                                MeetingNotes.transcript(lines, bothSides: meeting.hearsMicrophone && meeting.hearsOthers))
+            }
+        }
         meeting = nil
+        // Last chance for a transcript not yet on disk: one small write, no summary.
+        if let notes = unsavedNotes {
+            unsavedNotes = nil
+            do {
+                _ = try MeetingNotes.save(title: notes.title, startedAt: notes.startedAt, minutes: notes.minutes,
+                                          summary: "_Summary skipped: Pixpaw was turned off._", by: nil,
+                                          transcript: notes.transcript)
+            } catch {
+                host?.log.info("Couldn't save the meeting transcript: \(error.localizedDescription)")
+            }
+        }
+        takingNotes = false
+        liveTranscript.reset()
         notePrompt.close()
+        // A summary still to come is called off: no model or Claude runs after
+        // this, and a file already saved stays where it is.
+        summaryTask?.cancel()
+        summaryTask = nil
+        summingUp = false
+        anglePrompt.cancel()
         askBox.close()
         suggestionList = []
         gif?.cancel()
@@ -803,7 +881,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         commands = []
         serverWatch = nil
         localServer = nil
-        voice.stopSpeaking(at: .immediate)
         agents = [:]
         refreshKeepAwake()
         moodWatch?.cancel()
@@ -825,6 +902,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         out ? cat.show() : cat.hide()
         isOut = cat.isVisible
         if !isOut {
+            hello.stop()
             sendHelpersHome(now: true)
             clearBugs()
         }
@@ -833,6 +911,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         publishActivity()
         refreshAlerts()
         refreshQuietBed()
+    }
+
+    /// Settings › Say hello again: the first-day tips once more.
+    func sayHelloAgain() {
+        let wasOut = isOut
+        if !isOut { setOut(true) }
+        guard isOut else { return }
+        hello.start(after: wasOut ? 0.3 : 2)
     }
 
     func callOver() {
@@ -1011,6 +1097,27 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         host?.preferences.setValue(source.rawValue, forKey: Key.notesSource)
     }
 
+    func setAsksMeetingAngle(_ on: Bool) {
+        asksMeetingAngle = on
+        host?.preferences.setValue(on, forKey: Key.askMeetingAngle)
+    }
+
+    func setShowsLiveTranscript(_ on: Bool) {
+        showsLiveTranscript = on
+        host?.preferences.setValue(on, forKey: Key.liveTranscript)
+        if !on { liveTranscript.close() }
+    }
+
+    /// The angle as the summary takes it, nil for the usual notes; a typed
+    /// one goes to the front of the recent ones.
+    private func rememberAngle(_ angle: String?) -> String? {
+        let angle = String((angle ?? "").trimmingCharacters(in: .whitespacesAndNewlines).prefix(200))
+        guard !angle.isEmpty else { return nil }
+        meetingAngles = Array(([angle] + meetingAngles.filter { $0 != angle }).prefix(3))
+        host?.preferences.setValue(meetingAngles, forKey: Key.meetingAngles)
+        return angle
+    }
+
     func openNotesFolder() {
         try? FileManager.default.createDirectory(at: MeetingNotes.folder, withIntermediateDirectories: true)
         host?.workspace.open(MeetingNotes.folder)
@@ -1065,13 +1172,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var petAsks: [(id: String, title: String, symbol: String, keywords: [String])] {
         var asks: [(id: String, title: String, symbol: String, keywords: [String])] = [
             ("feed", "Feed \(cat?.kind.title ?? "your pet")", "fork.knife", ["food", "eat", "hungry", "dinner"]),
-            ("treat", "Give a treat", "fish.fill", ["snack"]),
+            ("treat", "Give a treat", "fish", ["snack"]),
             ("come", "Come here", "hand.wave", ["call", "over"]),
             ("nap", "Nap", "moon.zzz", ["rest", "bed"]),
             ("play", "Play", "gamecontroller", ["game", "toy", "fetch"]),
             ("stretch", "Stretch with me", "figure.cooldown", ["break", "exercise"]),
             ("askNote", "Add a note to my sign…", "signpost.right", ["note", "remind", "todo", "to-do"]),
-            ("photo", "Take a photo of me", "camera.fill", ["picture", "selfie"]),
+            ("photo", "Take a photo of me", "camera", ["picture", "selfie"]),
             ("gif", "Record a GIF", "film", ["video"]),
             ("join", "Join the next meeting", "video", ["call", "meeting", "zoom", "meet"]),
             ("usage", "How much of my plan is left", "gauge.with.dots.needle.33percent", ["usage", "quota", "limit", "claude"]),
@@ -1080,13 +1187,26 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                     : ("focus", "Focus for \(focusMinutes) min", "timer", ["pomodoro", "work", "timer"]))
         asks.append(cat?.lofiPlaying == true ? ("pauseLofi", "Pause lofi", "pause.circle", ["music", "stop"])
                     : ("lofi", "Play lofi", "headphones", ["music", "beats", "lo-fi"]))
-        asks.append(meeting != nil ? ("meetingNotes", "Stop meeting notes", "stop.circle.fill", ["meeting", "notes"])
+        asks.append(meeting != nil ? ("meetingNotes", "Stop meeting notes", "stop.circle", ["meeting", "notes"])
                     : ("meetingNotes", "Take meeting notes", "waveform.badge.mic", ["meeting", "notes", "record", "transcribe"]))
+        if meeting != nil, !liveTranscript.isShowing {
+            asks.append(("liveTranscript", "Show live transcript", "captions.bubble", ["meeting", "transcript", "captions", "live", "subtitles"]))
+        }
         if lastNotes != nil { asks.append(("openNotes", "Open the last meeting notes", "doc.text", ["meeting", "notes"])) }
         if usesDroppy(.captureScrolling) || PageCapture.browserIsOpen {
             asks.append(("capture", "Capture the whole page", "camera.viewfinder", ["screenshot", "scrolling", "page"]))
         }
-        if talks { asks.append(("talk", "Talk to me", "mic.fill", ["voice", "speak", "listen"])) }
+        if talks { asks.append(("talk", "Talk to me", "mic", ["voice", "speak", "listen"])) }
+        // Settings, Sounds and Colour all sit on Pixpaw's main page in Droppy's Settings.
+        if let cat, cat.hasHome, !cat.isFriend {
+            // Found by the current pet's own names too ("fish dish", "hamster wheel").
+            let look = cat.kind.actsLike.rawValue
+            asks.append(("decorate", "Decorate my home…", "house", ["decor", "decorate", "decorations", "buy", "stars"]
+                         + HomeDecor.allCases.map { $0.title(for: look).lowercased() }))
+        }
+        asks += [("settings", "Pixpaw settings…", "gearshape", ["settings", "preferences", "options", "setup"]),
+                 ("sounds", "Sound settings", "speaker.wave.2", ["sound", "sounds", "volume", "meow", "purr", "mute"]),
+                 ("colour", "Change my colour", "paintpalette", ["colour", "color", "coat", "look"])]
         asks.append(quietByHand ? ("quiet", "You can talk again", "bell", ["quiet", "sound"])
                     : ("quiet", "Be quiet", "bell.slash", ["quiet", "mute", "silent", "shh"]))
         return asks
@@ -1103,7 +1223,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         case let .note(note): (title, symbol) = ("Put “\(note.count > 40 ? note.prefix(39) + "…" : note)” on my sign", "signpost.right")
         case let .focus(minutes): (title, symbol) = ("Focus for \(minutes ?? focusMinutes) min", "timer")
         case let .play(game): (title, symbol) = (game.map { "Play with the \($0.title.lowercased())" } ?? "Play", "gamecontroller")
-        case .praise: (title, symbol) = ("Good \(cat?.kind.title.lowercased() ?? "pet")!", "heart.fill")
+        case .praise: (title, symbol) = ("Good \(cat?.kind.title.lowercased() ?? "pet")!", "heart")
         default:
             let id: String = switch command {
             case .come: "come"
@@ -1185,9 +1305,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             case "pauseLofi": perform(.pauseLofi)
             case "meetingNotes": toggleMeetingNotes()
             case "openNotes": if let lastNotes { host?.workspace.open(lastNotes) }
+            case "liveTranscript": showLiveTranscript()
             case "capture": captureByHand()
             case "talk": talkToPet()
             case "quiet": setQuietByHand(!quietByHand)
+            case "settings", "sounds", "colour", "decorate": host?.workspace.openSettings()
             default: break
             }
         }
@@ -1217,6 +1339,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             case .openCI: ciFailedURL != nil
             case .focusAgain: !inSession && !droppyFocusing
             case .openNotes: lastNotes != nil
+            case .pickColour: true
             }
         }
     }
@@ -1247,6 +1370,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         case .focusAgain: focusByHand()
         case .stretch: cat?.stretchWithMe()
         case .openNotes: if let lastNotes { host?.workspace.open(lastNotes) }
+        // Colour is on Pixpaw's main page in Droppy's Settings.
+        case .pickColour: host?.workspace.openSettings()
         }
         // Done with it (a server stays while it's up, as before).
         suggestionList.removeAll { $0.kind == kind && kind != .meeting || ($0.kind == .meeting && action == .join) }
@@ -1321,6 +1446,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// Droppy shows meetings itself, so the pet doesn't announce them too.
     var droppyAnnouncesMeetings: Bool { usesDroppyTools && (tools.isOn("meetings") || tools.isOn("calendar")) }
+    /// Droppy's own Meetings shows the call beside the notch itself.
+    var droppyShowsMeetings: Bool { usesDroppyTools && (tools.isOn("meetings") || tools.isOn("meeting controls")) }
 
     /// Focus from your menu, shortcut or words: Droppy's Pomodoro when there
     /// is one, the pet sitting at its laptop meanwhile (it can't tell when
@@ -1375,30 +1502,61 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     private func startMeetingNotes() async {
-        guard meeting == nil else { return }
+        guard meeting == nil, host != nil else { return }
         if !isOut { setOut(true) }
         do {
             let recorder = try MeetingRecorder(language: notesLanguage, title: cat?.joinTitle ?? MeetingLink.next()?.title)
             meeting = recorder
             takingNotes = true
+            liveTranscript.reset()
+            recorder.onHearing = { [weak liveTranscript] you, text in liveTranscript?.heard(you: you, text) }
+            recorder.onLine = { [weak liveTranscript] line in liveTranscript?.line(line) }
             try await recorder.start(notesSource)
+            // Stopped or deactivated while it was starting: let go of what it started.
+            guard meeting === recorder, host != nil else {
+                _ = recorder.stop()
+                return
+            }
+            liveTranscript.setBothSides(recorder.hearsMicrophone && recorder.hearsOthers)
+            // Only after the user started the notes, never from a link.
+            if showsLiveTranscript { openLiveTranscript() }
             cat?.say(CatWords.notesStarted(hearsOthers: recorder.hearsOthers, wanted: notesSource))
             showNotesTag()
+            publishActivity()
             meetingTimer = Timer.scheduledTimer(withTimeInterval: 30, repeats: true) { [weak self] _ in
                 MainActor.assumeIsolated {
                     guard let self, let meeting = self.meeting else { return }
                     // Three hours at most: it was forgotten.
                     if meeting.minutes >= 180 { return self.stopMeetingNotes() }
                     self.showNotesTag()
+                    self.publishActivity()
                 }
             }
         } catch {
+            guard meeting != nil else { return }
             _ = meeting?.stop()
             meeting = nil
             takingNotes = false
+            liveTranscript.reset()
+            publishActivity()
             notesProblem = error.localizedDescription
             cat?.say(CatLine(text: error.localizedDescription, symbol: "mic.slash", seconds: 6))
         }
+    }
+
+    private func openLiveTranscript() {
+        guard let meeting else { return }
+        liveTranscript.open(title: meeting.title, startedAt: meeting.startedAt, look: cardLook, level: cardGlass) { [weak self] in
+            // The menu's Stop: the same path.
+            if self?.meeting != nil { self?.toggleMeetingNotes() }
+        }
+    }
+
+    /// The pet menu's Show live transcript: back after ×, or opened now
+    /// when Settings had it off.
+    func showLiveTranscript() {
+        guard meeting != nil else { return }
+        if liveTranscript.isOpen { liveTranscript.show() } else { openLiveTranscript() }
     }
 
     private func showNotesTag() {
@@ -1415,33 +1573,58 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         let lines = meeting.stop()
         self.meeting = nil
         takingNotes = false
+        liveTranscript.reset()
         let transcript = MeetingNotes.transcript(lines, bothSides: meeting.hearsMicrophone && meeting.hearsOthers)
         let model = lines.isEmpty ? .none : notesModel
+        unsavedNotes = lines.isEmpty ? nil : (meeting.title, meeting.startedAt, meeting.minutes, transcript)
         let name = notesModelName
         let language = notesLanguage
         let by = model == .none ? nil : model == .apple ? "Apple Intelligence" : [model.title.components(separatedBy: " (").first ?? "", name].filter { !$0.isEmpty }.joined(separator: " ")
         summingUp = model != .none
+        publishActivity()
         if model != .none {
             cat?.say(CatWords.summingUp(by ?? ""))
             let tag = AgentTool(agent: "Notes", symbol: "text.append", text: "Writing it up", lasts: 900)
             toolAt = Date().addingTimeInterval(tag.lasts)
             cat?.showTool(tag)
         }
-        Task { [weak self] in
+        // Asked at once, while the recording finishes; the answer always comes
+        // (Default, Esc or 30 seconds give nil; deactivate cancels), so this never hangs.
+        let angle: Task<String?, Never>? = model == .none || !asksMeetingAngle ? nil : Task { [weak self, anglePrompt, meetingAngles] in
+            await withCheckedContinuation { done in
+                anglePrompt.askAngle(recent: meetingAngles, onAnswer: { picked in
+                    done.resume(returning: self?.rememberAngle(picked))
+                }, onCancel: { done.resume(returning: nil) })
+            }
+        }
+        summaryTask?.cancel()
+        summaryTask = Task { [weak self] in
             await meeting.stopped?.value
+            let angle = await angle?.value
+            guard !Task.isCancelled else { return }
             var summary = ""
             var failed: String?
             if model != .none {
-                do { summary = try await MeetingNotes.summarize(transcript, language: language, model: model, name: name) }
+                do { summary = try await MeetingNotes.summarize(transcript, language: language, model: model, name: name, angle: angle) }
                 catch { failed = error.localizedDescription }
             }
-            guard let self else { return }
+            // Deactivated meanwhile: a late summary is dropped.
+            guard let self, !Task.isCancelled else { return }
             self.summingUp = false
+            self.publishActivity()
             self.cat?.showTool(nil)
             if let failed { summary = "_\(failed)_" }
+            self.unsavedNotes = nil
             do {
-                let file = try MeetingNotes.save(title: meeting.title, startedAt: meeting.startedAt, minutes: meeting.minutes,
-                                                 summary: summary, by: failed == nil ? by : nil, transcript: transcript)
+                // Written off the main actor; the answer comes back here, on main.
+                let title = meeting.title, startedAt = meeting.startedAt, minutes = meeting.minutes
+                let summary = summary, ok = failed == nil
+                let file = try await Task.detached(priority: .utility) {
+                    try MeetingNotes.save(title: title, startedAt: startedAt, minutes: minutes,
+                                          summary: summary, by: ok ? by : nil, transcript: transcript,
+                                          angle: ok ? angle : nil)
+                }.value
+                guard !Task.isCancelled else { return }
                 self.lastNotes = file
                 self.suggest(PetSuggestions.meetingNotes(at: Date()))
                 // One line after the shelf answers, so "couldn't reach your shelf" isn't talked over.
@@ -3354,11 +3537,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         host?.preferences.setValue(on, forKey: Key.touchIDForRisky)
     }
 
-    func setReadsAsksAloud(_ on: Bool) {
-        readsAsksAloud = on
-        host?.preferences.setValue(on, forKey: Key.readsAsksAloud)
-        if !on { voice.stopSpeaking(at: .immediate) }
-    }
 
     /// A question an agent's hook left (`ask?id=…`): the pet comes over,
     /// says it and holds up the answers. One at a time; the rest wait.
@@ -3383,14 +3561,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             cat.bristle()
             countStat(.carefulAsks)
         }
+        // A question arrives through a URL, and a URL never starts speech
+        // (Store rule), so it meows or hisses but isn't read aloud.
         CatSounds.shared.play(risk == nil ? .meow : .hiss, voice: cat.kind)
-        if readsAsksAloud {
-            let said = ask.spoken ?? "\(ask.agent) needs you. \(ask.title)"
-            let speech = AVSpeechUtterance(string: risk.map { "Careful. \($0). \(said)" } ?? said)
-            speech.voice = AVSpeechSynthesisVoice(language: "en-US")
-            voice.stopSpeaking(at: .immediate)
-            voice.speak(speech)
-        }
     }
 
     /// Allowing a risky one takes Touch ID, or your Mac's password: a
@@ -3423,7 +3596,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     private func answered(_ ask: AgentAsk, with choice: String) {
         ask.answer(choice)
-        voice.stopSpeaking(at: .immediate)
         putUp(nil)
         if choice != AgentAsk.skip { cat?.say(CatWords.askAnswered(ask.agent, choice)) }
         showNextAsk()
@@ -3495,7 +3667,6 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             skipAllAsks()
         }
         if let shown = cat?.askShown, !shown.isOpen {
-            voice.stopSpeaking(at: .immediate)
             putUp(nil)
             showNextAsk()
         }
@@ -3584,7 +3755,30 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func setFriendKind(_ kind: PetKind?) {
         friendKind = kind
         host?.preferences.setValue(kind?.rawValue ?? "", forKey: Key.friendKind)
+        separateFriendColour()
         friend?.kind = friendsKind
+        friend?.coat = friendCoat
+    }
+
+    /// A friend of your pet's kind with no colour chosen yet takes the next
+    /// colourway after yours, so the two can be told apart. A colour the user
+    /// picked (a saved value) is never touched.
+    private func separateFriendColour() {
+        guard let cat, friendsKind == cat.kind else { return }
+        if cat.kind.hasCoats {
+            guard host?.preferences.value(forKey: Key.friendCoat, as: String.self) == nil else { return }
+            let all = CatCoat.allCases.filter { $0 != .photo }
+            guard let i = all.firstIndex(of: cat.coat) else { return }
+            let next = all[(i + 1) % all.count]
+            friendCoat = next
+            host?.preferences.setValue(next.rawValue, forKey: Key.friendCoat)
+        } else {
+            let all = PetCoat.choices(cat.kind)
+            guard all.count > 1, petCoats["friend." + cat.kind.rawValue] == nil,
+                  let mine = PetCoat.named(petCoats[cat.kind.rawValue], for: cat.kind),
+                  let i = all.firstIndex(where: { $0.id == mine.id }) else { return }
+            setPetCoat(all[(i + 1) % all.count], friend: true)
+        }
     }
 
     /// The friend's character: the one chosen for it, or else your pet's.
@@ -3609,6 +3803,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             return
         }
         if friend == nil {
+            separateFriendColour()
             let friend = CatController(
                 kind: friendsKind, coat: friendCoat, chasesPointer: cat.chasesPointer, roaming: cat.roaming,
                 pouncesOnDrags: cat.pouncesOnDrags, chatty: false, pets: 0,
@@ -3642,6 +3837,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             friend.onRecordGIF = cat.onRecordGIF
             friend.onFocus = cat.onFocus
             friend.onOpenWardrobe = cat.onOpenWardrobe
+            friend.onOpenSettings = cat.onOpenSettings
             friend.onColour = { [weak self] in self?.setColour($0, friend: true) }
             friend.onClassicPixels = cat.onClassicPixels
             friend.focusLabel = cat.focusLabel
@@ -3737,6 +3933,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if inSession, showsNotchMoment(.focus) {
             wants.append(NotchMoment(scene: .focus, text: focusEndsAt != nil ? "Focus" : "Break", until: nil))
         }
+        // Meeting notes come out even on a call, unless Droppy's Meetings shows it.
+        if takingNotes || summingUp, !droppyShowsMeetings, showsNotchMoment(.meetingNotes) {
+            wants.append(NotchMoment(scene: .meetingNotes, text: takingNotes ? "Notes \(meeting?.minutes ?? 0)m" : "Writing up…", until: nil))
+        }
         // Quiet, a call or a shared screen: nothing else comes out.
         guard cat?.quietReason == nil else { return wants }
         // Droppy's Agents shows them itself while the pet uses Droppy's tools.
@@ -3781,6 +3981,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         prefs.setValue(cat.homeX.map(Double.init) ?? -1, forKey: Key.homeX)
         prefs.setValue(cat.keepsHomeOut, forKey: Key.homeKeptOut)
         prefs.setValue(cat.points, forKey: Key.points)
+        prefs.setValue(cat.starsSpent, forKey: Key.starsSpent)
+        prefs.setValue(DecorShop.saved(cat.decorOwned), forKey: Key.decorOwned)
+        prefs.setValue(cat.homeDecor.saved, forKey: Key.homeDecor)
         prefs.setValue(cat.starDay, forKey: Key.starDay)
         prefs.setValue(cat.hat?.rawValue ?? "", forKey: Key.hat)
         prefs.setValue(cat.collar?.rawValue ?? "", forKey: Key.collar)
@@ -4288,7 +4491,7 @@ private struct UsageLeftPage: View {
                     Text("5 hours").frame(width: Self.columnWidth, alignment: .leading)
                     Text("Week").frame(width: Self.columnWidth, alignment: .leading)
                 }
-                .font(.system(size: 10, weight: .medium))
+                .font(.system(size: 11, weight: .medium))
                 .foregroundStyle(AdaptiveColors.notchSurfaceTertiaryText)
             }
             ForEach(PlanUsage.byAgent(droplet.planUsage)) { section($0, now: now) }
@@ -4305,7 +4508,7 @@ private struct UsageLeftPage: View {
                 let window = agent.plans.flatMap(\.windows).min { $0.left < $1.left }
                 HStack(spacing: 4) {
                     Image(systemName: look.symbol)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 11, weight: .bold))
                         .foregroundStyle(look.color)
                     if named {
                         Text(look.name)
@@ -4329,7 +4532,7 @@ private struct UsageLeftPage: View {
             row(agent.single, now: now) {
                 HStack(spacing: 4) {
                     Image(systemName: look.symbol)
-                        .font(.system(size: 9, weight: .bold))
+                        .font(.system(size: 12, weight: .bold))
                         .foregroundStyle(look.color)
                     Text(look.name)
                         .font(.system(size: 12, weight: .semibold))
@@ -4409,7 +4612,7 @@ private struct UsageLeftPage: View {
             HStack(spacing: DroppySpacing.xs) {
                 if let pace = window.paceText(now: now) {
                     Image(systemName: "timer")
-                        .font(.system(size: 10, weight: .semibold))
+                        .font(.system(size: 11, weight: .semibold))
                         .foregroundStyle(.orange)
                         .help(pace)
                 }
@@ -4417,9 +4620,9 @@ private struct UsageLeftPage: View {
                 percent(window)
                     .frame(width: 34, alignment: .trailing)
                 Text(window.label == "Week" ? "wk" : window.label)
-                    .font(.system(size: 10, weight: .medium))
+                    .font(.system(size: 11, weight: .medium))
                     .foregroundStyle(AdaptiveColors.notchSurfaceTertiaryText)
-                    .frame(width: 14, alignment: .leading)
+                    .frame(width: 16, alignment: .leading)
             }
         }
     }
@@ -4489,7 +4692,7 @@ private struct PixpawWidget: View {
             HStack(alignment: .center, spacing: DroppySpacing.md) {
                 portrait
                 VStack(alignment: .leading, spacing: DroppySpacing.xs) {
-                    Text(droplet.isOut ? cat.statusTitle : "Indoors")
+                    Text(droplet.isOut ? cat.statusTitle : "Napping in the notch")
                         .font(.system(size: context.isCompact ? 15 : 18, weight: .semibold, design: .rounded))
                         .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
                         .lineLimit(1)
@@ -4629,13 +4832,15 @@ private struct PixpawWidget: View {
     }
 
     /// "★ 37 · next: Bow at 45"
+    /// Once the home is out, what's left to spend on decorations follows.
     private var pointsLine: String {
         let today = cat.starDay.day == StarDay.today ? cat.starDay.stars : 0
+        let spend = cat.hasHome ? " · \(cat.wallet) to spend" : ""
         if let next = CatAccessory.nextByStars(after: cat.points), case .stars(let at) = next.unlock {
-            return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today · \(next.title) at \(at)"
+            return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today · \(next.title) at \(at)" + spend
         }
         guard cat.hasHome else { return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today · Home at \(CatController.homeUnlockAt)" }
-        return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today"
+        return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today" + spend
     }
 
     private var days: Int { droplet.daysTogether }
@@ -4650,7 +4855,7 @@ private struct PixpawWidget: View {
             HStack(spacing: DroppySpacing.sm) {
                 ForEach(tallies.prefix(count), id: \.0) { symbol, text in
                     HStack(spacing: 3) {
-                        Image(systemName: symbol).font(.system(size: 9, weight: .semibold))
+                        Image(systemName: symbol).font(.system(size: 11, weight: .semibold))
                         Text(text)
                     }
                 }
@@ -4674,7 +4879,7 @@ private struct PixpawWidget: View {
     private var fullnessBar: some View {
         HStack(spacing: DroppySpacing.xsm) {
             Image(systemName: "fork.knife")
-                .font(.system(size: 10, weight: .semibold))
+                .font(.system(size: 11, weight: .semibold))
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(AdaptiveColors.notchSurfaceCardFill)
@@ -4815,7 +5020,7 @@ private struct CatWingPortrait: View {
         case .agentAsks: (.crouch1, cat.costume, false)
         case .agentDone: (.happy, "partyHat", false)
         case .agentSnag: (.groom1, cat.costume, false)
-        case .longCommand: (.sit, cat.costume, true)
+        case .longCommand, .meetingNotes: (.sit, cat.costume, true)
         case .lateNight: (.sleep1, "nightcap", false)
         case .focus, nil: (cat.frame, cat.costume, cat.atLaptop)
         }
@@ -4994,6 +5199,9 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Lofi", keywords: ["lofi", "lo-fi", "music", "study", "focus", "youtube", "spotify", "apple music", "lofi girl"], anchorID: SettingsPage.focus.rawValue),
             SettingsSearchEntry(title: "Home", keywords: ["home", "house", "kennel", "hive", "nap", "sleep", "500", "unlock", "challenge"], anchorID: SettingsPage.home.rawValue),
             SettingsSearchEntry(title: "Keep the home out", keywords: ["home", "house", "always", "stand", "fold", "put away"], anchorID: SettingsPage.home.rawValue),
+            SettingsSearchEntry(title: "Decorations", keywords: ["decor", "decorate", "decorations", "rug", "doormat", "lamp", "plant", "cushion", "bowls", "basket", "bookshelf", "books", "mailbox", "buy", "spend", "stars"]
+                + Set(HomeDecor.variants.values.flatMap { $0.values.map { $0.title.lowercased() } }).sorted(),
+                anchorID: SettingsPage.home.rawValue),
             SettingsSearchEntry(title: "Go home when it should be quiet", keywords: ["home", "quiet", "call", "bed", "night", "share", "screen", "sleep"], anchorID: SettingsPage.home.rawValue),
             SettingsSearchEntry(title: "Break reminders", keywords: ["cat", "health", "stretch", "water", "eyes", "break", "reminder", "custom", "pill", "exercise"], anchorID: SettingsPage.focus.rawValue),
             SettingsSearchEntry(title: "Sounds", keywords: ["cat", "meow", "purr", "sound", "mute"]),
@@ -5025,6 +5233,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "A whole web page", keywords: ["screenshot", "full page", "safari", "chrome", "arc", "capture", "scroll", "web"], anchorID: SettingsPage.capture.rawValue),
             SettingsSearchEntry(title: "Your birthday", keywords: ["birthday", "party", "confetti", "cake"], anchorID: SettingsPage.festivals.rawValue),
             SettingsSearchEntry(title: "Good morning", keywords: ["morning", "greeting", "wake", "calendar", "stretch"], anchorID: SettingsPage.tells.rawValue),
+            SettingsSearchEntry(title: "Say hello again", keywords: ["hello", "tips", "intro", "tutorial", "how to", "gestures", "first"]),
             SettingsSearchEntry(title: "Welcome back", keywords: ["away", "return", "back", "hello", "greeting", "idle"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Late nights", keywords: ["night", "late", "bedtime", "sleep", "nightcap", "midnight"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Music", keywords: ["cat", "music", "song", "spotify", "youtube", "video", "dance", "now playing"], anchorID: SettingsPage.tells.rawValue),
@@ -5037,8 +5246,9 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Wait for CI after a push", keywords: ["ci", "github", "actions", "gh", "push", "checks", "build", "workflow"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Talk to your pet", keywords: ["voice", "talk", "speak", "say", "microphone", "speech", "dictation", "siri", "command"], anchorID: SettingsPage.talk.rawValue),
             SettingsSearchEntry(title: "Meeting notes", keywords: ["meeting", "notes", "minutes", "transcript", "summary", "summarize", "record", "call", "zoom", "meet", "teams", "microphone", "claude", "apple intelligence"], anchorID: SettingsPage.meetings.rawValue),
+            SettingsSearchEntry(title: "Show live transcript while taking notes", keywords: ["meeting", "transcript", "live", "captions", "subtitles", "words"], anchorID: SettingsPage.meetings.rawValue),
+            SettingsSearchEntry(title: "Ask how to sum it up after Stop", keywords: ["meeting", "angle", "summary style", "sum up", "how to summarise", "how to summarize", "action items"], anchorID: SettingsPage.meetings.rawValue),
             SettingsSearchEntry(title: "Listen to", keywords: ["meeting", "microphone", "mac sound", "system audio", "screen recording", "call"], anchorID: SettingsPage.meetings.rawValue),
-            SettingsSearchEntry(title: "Read questions aloud", keywords: ["voice", "speak", "speech", "aloud", "agent"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Agent updates", keywords: ["cat", "claude", "codex", "cursor", "agent"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Keep the Mac awake while agents work", keywords: ["sleep", "awake", "caffeinate", "agent", "claude", "codex"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Beside the notch", keywords: ["cat", "live activity", "status", "notch", "moments", "always", "island", "late night"], anchorID: SettingsPage.notch.rawValue),
@@ -5047,6 +5257,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "An agent finishes or hits a snag", keywords: ["notch", "moments", "agent", "done", "error", "claude"], anchorID: SettingsPage.notch.rawValue),
             SettingsSearchEntry(title: "Long commands and CI", keywords: ["notch", "moments", "command", "test", "build", "ci", "github"], anchorID: SettingsPage.notch.rawValue),
             SettingsSearchEntry(title: "Your pet's focus timer", keywords: ["notch", "moments", "focus", "pomodoro", "timer"], anchorID: SettingsPage.notch.rawValue),
+            SettingsSearchEntry(title: "Taking meeting notes", keywords: ["notch", "moments", "meeting", "notes", "live activity", "recording"], anchorID: SettingsPage.notch.rawValue),
             SettingsSearchEntry(title: "Photo of your pet", keywords: ["photo", "picture", "camera", "capture"], anchorID: SettingsPage.capture.rawValue),
             SettingsSearchEntry(title: "Permissions", keywords: ["permission", "privacy", "allow", "access", "accessibility", "calendar", "microphone", "screen recording", "automation", "system settings"], anchorID: SettingsPage.permissions.rawValue),
             SettingsSearchEntry(title: "Agent hooks", keywords: ["hook", "hooks", "plugin", "setup", "install", "readme", "claude", "antigravity", "codex", "pixpaw-ask"], anchorID: SettingsPage.permissions.rawValue),
@@ -5231,6 +5442,11 @@ private struct PixpawSettings: View {
     @State private var newReminderMinutes = 60
     @State private var templateKind: PetKind = .cat
     @State private var wardrobeTab: WardrobeTab = .all
+    /// The decoration whose Buy was pressed, waiting for Buy for N ★.
+    @State private var buyingDecor: HomeDecor?
+    /// The one decoration whose preview is open under its row (its eye
+    /// button, or its Buy), owned or not, affordable or not.
+    @State private var previewingDecor: HomeDecor?
     @State private var newSign = ""
     @State private var distractionText: String?
     @State private var lofiLinkText: String?
@@ -5432,7 +5648,16 @@ private struct PixpawSettings: View {
                 ) {
                     Picker("Character", selection: Binding(get: { cat.kind }, set: { droplet.setKind($0) })) {
                         ForEach(PetKind.alphabetical) { kind in
-                            Text(kind.title).tag(kind)
+                            // Each pet's face, in its own colours, beside its name.
+                            Label {
+                                Text(kind.title)
+                            } icon: {
+                                if let face = CatSprites.shared.menuImage(kind, coat: cat.coat) {
+                                    Image(nsImage: face).interpolation(.none)
+                                        .accessibilityHidden(true)
+                                }
+                            }
+                            .tag(kind)
                         }
                     }
                     .pickerStyle(.menu)
@@ -5523,6 +5748,11 @@ private struct PixpawSettings: View {
 
             DropletSettingsCard {
                 pageLink(.permissions)
+                DropletControlRow(title: "Say hello again", icon: "hand.wave",
+                                  infoTip: "Your pet shows its three tips again: how to pet it, how to open its card, and that you can drag it anywhere.") {
+                    Button("Say hello") { droplet.sayHelloAgain() }
+                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                }
             }
         }
     }
@@ -5551,7 +5781,8 @@ private struct PixpawSettings: View {
             let quiet = droplet.homeWhenQuiet ? " · to bed in calls and late at night" : ""
             guard cat.hasHome else { return "\(CatController.homeUnlockAt - cat.points) ★ to a home of its own" + quiet }
             guard cat.homeOn else { return "Off" + quiet }
-            return (cat.keepsHomeOut ? "Always out" : "Comes out for naps") + quiet
+            let decor = cat.decorOwned.isEmpty ? "" : " · \(cat.decorOwned.count) decoration\(cat.decorOwned.count == 1 ? "" : "s")"
+            return (cat.keepsHomeOut ? "Always out" : "Comes out for naps") + decor + quiet
         case .notch:
             let light = droplet.notchMode != .off && droplet.lightsNotch ? " · light on" : ""
             if droplet.notchMode == .off { return "Off · only its focus timer" }
@@ -5984,6 +6215,7 @@ private struct PixpawSettings: View {
                                       infoTip: "At \(CatController.homeUnlockAt) ★ your pet gets a home after where it really lives (a beehive, a tree, a pond) to nap in.") {
                         DropletValuePill(text: "\(CatController.homeUnlockAt - cat.points) ★ to go")
                     }
+                    lockedHomeStrip
                 }
                 DropletToggleRow(
                     title: "Go home when it should be quiet",
@@ -5991,6 +6223,222 @@ private struct PixpawSettings: View {
                     isOn: Binding(get: { droplet.homeWhenQuiet }, set: { droplet.setHomeWhenQuiet($0) })
                 )
             }
+            if cat.hasHome { decorationsCard }
+        }
+    }
+
+    /// Things to stand beside the home, bought with stars once it's there.
+    /// Buying asks once more before it spends; what's yours gets a spot.
+    @ViewBuilder
+    private var decorationsCard: some View {
+        DropletSettingsCard {
+            if cat.hasHome {
+                DropletControlRow(title: "To spend", icon: "star",
+                                  infoTip: "Decorations are bought with stars. Spending never takes stars off your total, so nothing you've unlocked locks again. Each one changes with your pet: a cat's bowls are a fish dish, a hamster's lamp a water bottle.") {
+                    DropletValuePill(text: "\(cat.wallet) ★")
+                }
+                ForEach(HomeDecor.allCases) { item in
+                    // One line, centred: art, name, then the eye and the control.
+                    // Not a LabeledContent: the Form pins its control to the label's
+                    // first text baseline, which leaves the tall art riding high.
+                    HStack(alignment: .center, spacing: DroppySpacing.sm) {
+                        decorLabel(item)
+                        Spacer(minLength: DroppySpacing.sm)
+                        decorPreviewButton(item)
+                        // A trailing column as wide as "Buy · 220 ★", so the eyes line up.
+                        decorControl(item)
+                            .frame(minWidth: 112, alignment: .trailing)
+                    }
+                    if previewingDecor == item {
+                        decorPreview(item)
+                    }
+                }
+            }
+        }
+    }
+
+    /// Before the home: the goal in view. The pet's home and every
+    /// decoration in their own art, dimmed, each over its price, in one row
+    /// under the challenge's "N ★ to go". Read by VoiceOver as one line.
+    private var lockedHomeStrip: some View {
+        let fine = cat.drawsFine, look = decorLook
+        let toGo = max(0, CatController.homeUnlockAt - cat.points)
+        let items = HomeDecor.allCases
+        let spoken = "Locked until \(CatController.homeUnlockAt) stars, \(toGo) to go: a home, then "
+            + items.map { "\($0.title(for: look)), \($0.price) stars" }.joined(separator: "; ")
+        return HStack(alignment: .bottom, spacing: DroppySpacing.xs) {
+            lockedCell(price: CatController.homeUnlockAt) {
+                if let art = CatSprites.shared.home(cat.kind, occupied: false, fine: fine) {
+                    Image(decorative: art, scale: 1).resizable().interpolation(.none)
+                        .aspectRatio(contentMode: .fit).frame(height: 28)
+                } else {
+                    Image(systemName: "house").font(.system(size: 14, weight: .semibold))
+                }
+            }
+            ForEach(items) { item in
+                lockedCell(price: item.price) {
+                    if let art = CatSprites.shared.decorIcon(item, fine: fine, large: true, look: look) {
+                        Image(decorative: art, scale: 2).resizable().interpolation(.none)
+                            .aspectRatio(contentMode: .fit).frame(height: 24)
+                    } else {
+                        Image(systemName: item.symbol).font(.system(size: 13, weight: .semibold))
+                    }
+                }
+                .help("\(item.title(for: look)) · \(item.price) ★")
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel(spoken)
+    }
+
+    /// One piece of the locked strip: its art dimmed, its price under it.
+    private func lockedCell(price: Int, @ViewBuilder art: () -> some View) -> some View {
+        VStack(spacing: 2) {
+            art()
+                .frame(height: 28)
+                .opacity(0.55)
+                .saturation(0.5)
+            Text("\(price) ★")
+                .font(.system(size: 11, weight: .medium))
+                .monospacedDigit()
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
+                .fixedSize()
+        }
+        .frame(maxWidth: .infinity)
+    }
+
+    /// The row's label: the decoration's own art (in the pet's Pixel size)
+    /// where a settings row has its symbol, then its name.
+    private func decorLabel(_ item: HomeDecor) -> some View {
+        let size = CatSprites.decorIconLargePixels
+        return HStack(alignment: .center, spacing: DroppySpacing.sm) {
+            if let art = CatSprites.shared.decorIcon(item, fine: cat.drawsFine, large: true, look: decorLook) {
+                Image(decorative: art, scale: 2).interpolation(.none).accessibilityHidden(true)
+            } else {
+                Image(systemName: item.symbol).font(.system(size: 16, weight: .semibold)).foregroundStyle(.secondary)
+                    .frame(width: CGFloat(size.width) / 2, height: CGFloat(size.height) / 2)
+            }
+            Text(item.title(for: decorLook)).lineLimit(1)
+        }
+    }
+
+    /// Whose version of each decoration shows: the kind the home is drawn
+    /// for (a pet you drew gets the animal it acts like).
+    private var decorLook: String { cat.kind.actsLike.rawValue }
+
+    /// The eye on every row: opens (or closes) the preview under it, so
+    /// anything can be looked at beside the home before it's bought.
+    private func decorPreviewButton(_ item: HomeDecor) -> some View {
+        let open = previewingDecor == item
+        return Button {
+            if open {
+                previewingDecor = nil
+                if buyingDecor == item { buyingDecor = nil }
+            } else {
+                previewingDecor = item
+                buyingDecor = nil
+            }
+        } label: {
+            Image(systemName: open ? "eye.slash" : "eye")
+        }
+        .buttonStyle(DroppyCircleButtonStyle(size: 24))
+        .help(open ? "Hide the preview" : "See it beside the home")
+        .accessibilityLabel(open ? "Hide the preview of \(item.title(for: decorLook))" : "Preview \(item.title(for: decorLook))")
+    }
+
+    /// Under a decoration opened to look at (its eye, or its Buy): your
+    /// pet's home as it stands now with this one where it is or where Buy
+    /// would put it, crisp, at whole points a pixel; and a line on where
+    /// that is and what it costs, with Buy for one you can afford.
+    private func decorPreview(_ item: HomeDecor) -> some View {
+        let fine = cat.drawsFine
+        let owned = cat.decorOwned.contains(item)
+        let placedAt = cat.homeDecor.spot(of: item)
+        let spot = placedAt ?? cat.homeDecor.freeSpot(for: item)
+        let decor = placedAt != nil ? cat.homeDecor : spot.map { cat.homeDecor.placing(item, in: $0) }
+        // Both sides taken: Buy keeps it to place later, so it's shown on its own.
+        let art = decor.flatMap { CatSprites.shared.home(cat.kind, occupied: false, fine: fine, decor: $0) }
+            ?? CatSprites.shared.decor(item, fine: fine, look: decorLook)
+        let title = item.title(for: decorLook)
+        let pixel: CGFloat = fine ? 2 : 4
+        let side = switch spot {
+        case .left: "on the left of its home"
+        case .right: "on the right of its home"
+        case .front: "in front of its home"
+        case nil: nil as String?
+        }
+        let short = DecorShop.short(of: item, points: cat.points, spent: cat.starsSpent)
+        let caption = if owned {
+            if placedAt != nil, let side { "Yours, \(side)" }
+            else if let side { "Yours, put away: it would go \(side)" }
+            else { "Yours, put away: both sides are taken" }
+        } else {
+            [side.map { $0.prefix(1).uppercased() + $0.dropFirst() } ?? "Both sides are taken: place it from Decorate",
+             "\(item.price) ★",
+             short > 0 ? "\(short) ★ more to go" : "\(cat.wallet - item.price) ★ left after"].joined(separator: " · ")
+        }
+        return VStack(spacing: DroppySpacing.sm) {
+            if let art {
+                Image(decorative: art, scale: 1)
+                    .interpolation(.none)
+                    .resizable()
+                    .frame(width: CGFloat(art.width) * pixel, height: CGFloat(art.height) * pixel)
+                    .accessibilityLabel(owned ? "\(title): \(caption.lowercased())" : "\(title) \(side ?? "kept to place later")")
+            }
+            Text(caption)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+                .multilineTextAlignment(.center)
+            if !owned, short <= 0, buyingDecor != item {
+                // Seen it, like it: buy it from here (the price is on the button).
+                Button("Buy for \(item.price) ★") {
+                    cat.buy(item)
+                    buyingDecor = nil
+                }
+                .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+            }
+        }
+        .frame(maxWidth: .infinity)
+        .padding(.vertical, DroppySpacing.sm)
+    }
+
+    /// Where it stands when it's yours; otherwise Buy, then Buy for N ★ to spend them.
+    @ViewBuilder
+    private func decorControl(_ item: HomeDecor) -> some View {
+        if cat.decorOwned.contains(item) {
+            Picker(item.title(for: decorLook), selection: Binding(get: { cat.homeDecor.spot(of: item) }, set: { spot in
+                if let spot { cat.place(item, in: spot) } else if let was = cat.homeDecor.spot(of: item) { cat.place(nil, in: was) }
+            })) {
+                Text("Put away").tag(HomeDecor.Spot?.none)
+                ForEach(item.spots) { Text($0.title).tag(HomeDecor.Spot?.some($0)) }
+            }
+            .pickerStyle(.menu)
+            .labelsHidden()
+            .fixedSize()
+        } else if buyingDecor == item {
+            HStack(spacing: DroppySpacing.sm) {
+                Button("Cancel") {
+                    buyingDecor = nil
+                    previewingDecor = nil
+                }
+                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                Button("Buy for \(item.price) ★") {
+                    cat.buy(item)
+                    buyingDecor = nil
+                }
+                .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+            }
+        } else {
+            let short = DecorShop.short(of: item, points: cat.points, spent: cat.starsSpent)
+            Button(short > 0 ? "\(short) ★ more" : "Buy · \(item.price) ★") {
+                // Buy opens its preview too, then asks once more.
+                previewingDecor = item
+                buyingDecor = item
+            }
+            .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+            .disabled(short > 0)
         }
     }
 
@@ -6611,6 +7059,17 @@ private struct PixpawSettings: View {
                 default:
                     EmptyView()
                 }
+                DropletToggleRow(
+                    title: "Ask how to sum it up after Stop",
+                    subtitle: "Type an angle like “action items for me” or “in Thai”, pick a recent one, or press Enter for the usual notes.",
+                    isOn: Binding(get: { droplet.asksMeetingAngle }, set: { droplet.setAsksMeetingAngle($0) })
+                )
+                .disabled(droplet.notesModel == .none)
+                DropletToggleRow(
+                    title: "Show live transcript while taking notes",
+                    subtitle: "A small window with what's being said, only after you start notes. Others can see it if you share your screen; × hides it, your pet's menu brings it back.",
+                    isOn: Binding(get: { droplet.showsLiveTranscript }, set: { droplet.setShowsLiveTranscript($0) })
+                )
                 DropletControlRow(title: "Your meeting notes", icon: "folder") {
                     Button("Open folder") { droplet.openNotesFolder() }
                 }
@@ -6645,12 +7104,6 @@ private struct PixpawSettings: View {
                     title: "Touch ID to allow a risky one",
                     subtitle: "Allowing rm -rf, a force-push, sudo or a secrets file takes your fingerprint or password, so a stray click can't let it through.",
                     isOn: Binding(get: { droplet.touchIDForRisky }, set: { droplet.setTouchIDForRisky($0) })
-                )
-                .disabled(!droplet.tellsAgents || !droplet.answersAsks)
-                DropletToggleRow(
-                    title: "Read questions aloud",
-                    subtitle: "Says the question out loud as it comes over, so you hear it from across the room.",
-                    isOn: Binding(get: { droplet.readsAsksAloud }, set: { droplet.setReadsAsksAloud($0) })
                 )
                 .disabled(!droplet.tellsAgents || !droplet.answersAsks)
             }
@@ -6870,7 +7323,8 @@ private struct PixpawSettings: View {
 /// Playground), for Shortcuts and scripts: show, hide, come, nap, feed,
 /// play?toy=yarn|teaser|stop, wear?hat=…&collar=…, quiet?on=1|0, say?text=…,
 /// agent?name=…&state=working|done|waiting|error&text=…&usage=…,
-/// agent?name=…&state=tool&tool=Edit&target=…, gif, and
+/// agent?name=…&state=tool&tool=Edit&target=…, gif,
+/// colour?name=<colourway id>[&friend=1] (also color), and
 /// roam?mode=anywhere|floor|windows.
 extension PixpawDroplet: DropletURLHandling {
     public func handle(_ request: DropletURLRequest) {
@@ -6956,6 +7410,15 @@ extension PixpawDroplet: DropletURLHandling {
         case "character":
             // character?name=cat|bee
             if let kind = request.query["name"].flatMap({ PetKind(rawValue: $0.lowercased()) }) { setKind(kind) }
+        case "colour", "color":
+            // colour?name=husky (a colourway id, or a cat coat) ; friend=1 for the friend's.
+            // Only changes the look; an unknown name is ignored.
+            let friend = ["1", "on", "true"].contains(request.query["friend"]?.lowercased() ?? "")
+            let kind = friend ? friendsKind : cat?.kind ?? .cat
+            let id = (request.query["name"] ?? "").lowercased()
+            let known = (kind.hasCoats && CatCoat(rawValue: id).map { $0 != .photo || hasPhotoCoat } == true)
+                || PetCoat.choices(kind).contains { $0.id == id }
+            if known { setColour(id, friend: friend) } else { host?.log.info("ignored colour \(id)") }
         default: host?.log.info("ignored URL path \(request.path)")
         }
     }

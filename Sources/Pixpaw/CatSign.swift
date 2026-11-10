@@ -38,8 +38,8 @@ final class CatSign {
         guard let text else { return close() }
         let font = NSFont.systemFont(ofSize: 12.5, weight: .bold)
         let natural = ceil((text as NSString).size(withAttributes: [.font: font]).width) + 4
-        let small = NSFont.systemFont(ofSize: 9.5, weight: .semibold)
-        let under = footer.map { ceil(($0 as NSString).size(withAttributes: [.font: small]).width) + 18 } ?? 0
+        let small = NSFont.systemFont(ofSize: 11, weight: .semibold)
+        let under = footer.map { ceil(($0 as NSString).size(withAttributes: [.font: small]).width) + 20 } ?? 0
         let view = SignBoard(text: text, more: more, footer: footer, textWidth: min(max(natural, under, 40), Self.maxWidth))
         if let hosting {
             hosting.rootView = view
@@ -103,12 +103,12 @@ struct SignBoard: View {
                     .fixedSize(horizontal: false, vertical: true)
                 if more > 0 {
                     Text("+\(more) more")
-                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(Color(red: 0.42, green: 0.27, blue: 0.14).opacity(0.8))
                 }
                 if let footer {
                     Label(footer, systemImage: "calendar")
-                        .font(.system(size: 9.5, weight: .semibold, design: .rounded))
+                        .font(.system(size: 11, weight: .semibold, design: .rounded))
                         .foregroundStyle(Color(red: 0.42, green: 0.27, blue: 0.14).opacity(0.85))
                         .lineLimit(1)
                 }

@@ -29,6 +29,9 @@ struct CatLine: Equatable {
 @MainActor
 final class CatBubble {
     private static let maxQueued = 3
+    /// Whether VoiceOver may read a new line out; false while the pet keeps
+    /// quiet in a call or screen share.
+    var mayAnnounce: () -> Bool = { true }
     private static let maxWidth: CGFloat = 260
 
     private var panel: CatPanel?
@@ -59,6 +62,12 @@ final class CatBubble {
     /// A line that stays up between the others, or nil to take it down.
     func keep(_ line: CatLine?) {
         kept = line
+    }
+
+    private func announce(_ text: String) {
+        guard NSWorkspace.shared.isVoiceOverEnabled, mayAnnounce() else { return }
+        NSAccessibility.post(element: NSApp as Any, notification: .announcementRequested,
+                             userInfo: [.announcement: text, .priority: NSAccessibilityPriorityLevel.medium.rawValue])
     }
 
     func say(_ line: CatLine) {
@@ -108,6 +117,10 @@ final class CatBubble {
             // or a level changing in place, does not.
             let fresh = shown?.line != line && (line.key == nil || shown?.line.key != line.key)
             if fresh, playsEffect(pointsUp: anchor.pointsUp) { startEffect() } else if fresh { stopEffect() }
+            // VoiceOver reads each new line as it comes up, paced by the
+            // bubble itself: one at a time, a few queued at most.
+            // The first-day hello swaps its text in place; each one is read too.
+            if fresh || (line.key == FirstHello.key && shown?.line.text != line.text) { announce(line.text) }
             show(line, pointsUp: anchor.pointsUp)
             shown = (line, anchor.pointsUp)
         }

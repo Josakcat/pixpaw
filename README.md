@@ -1,6 +1,6 @@
 # Pixpaw 🐾
 
-A pixel cat (or bee, parrot, dinosaur, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig or dragon) that lives on
+A pixel pet (a cat, bee, parrot, dinosaur, dog, hamster, chicken, giraffe, hippo, rabbit, shark, pig or dragon) that lives on
 your desktop and talks to you. A Droplet for
 [Droppy](https://getdroppy.app), built with
 [DroppyKit](https://getdroppy.app/docs/droppykit).
@@ -41,6 +41,7 @@ your desktop and talks to you. A Droplet for
   red, violet). Droppy's own music, timers and meetings always go first.
 - Its home comes out for naps, with a puff of dust, and folds away a minute
   after it wakes (× to put it away sooner, or keep it out in Settings → Home).
+- Home decorations that fit each pet (a cat's fish dish, a hamster's wheel): eight things to set beside the home, bought with stars you've earned (Decorate in its menu, or Settings → Home).
   In a call, or late at night once you've been away, it goes home by itself.
 - Says good morning the first time it sees you each morning, with your first event of the day.
 - Celebrates your birthday with confetti and a party hat.
@@ -74,6 +75,8 @@ your desktop and talks to you. A Droplet for
   on Droppy's shelf and in Documents → Pixpaw Meetings. The sound is never
   kept; with Claude the transcript goes to Anthropic.
   Let everyone in the call know. Settings → Meeting notes.
+- Shows a live transcript in a small window of its own while it listens (it never takes the keyboard from the call; × hides it, Settings → Meeting notes turns it off, and macOS may still show it when you share your screen). Your pet sits by the notch at its laptop meanwhile.
+- Sums a meeting up your way: after Stop, tell it how (“action items for me”, “in Thai”) or press Enter for the usual notes; it remembers your last three.
 - Or your own cat: choose a photo of it and Pixpaw paints the cat in its
   colours (fur, stripes or patches, white, eyes), read on your Mac and only
   the colours kept. Folded ears too, for a Scottish Fold.
@@ -123,8 +126,12 @@ your desktop and talks to you. A Droplet for
 
 | | |
 |---|---|
+| ![Pixpaw](Assets/Screenshot-36.png) | ![Thirteen pets, or your own](Assets/Screenshot-37.png) |
+| ![Fire in the speech bubble, in HD](Assets/Screenshot-38.png) | ![Fine or chunky pixels](Assets/Screenshot-39.png) |
+| ![Your pet's card](Assets/Screenshot-40.png) | ![Decorations that fit your pet](Assets/Screenshot-41.png) |
+| ![Colours after real animals](Assets/Screenshot-42.png) | ![A home for naps](Assets/Screenshot-43.png) |
 | ![Playtime](Assets/Screenshot-2.png) | ![Wardrobe](Assets/Screenshot-3.png) |
-| ![Alerts](Assets/Screenshot-4.png) | ![Eleven friends](Assets/Screenshot-5.png) |
+| ![Alerts](Assets/Screenshot-4.png) | ![Thirteen friends](Assets/Screenshot-5.png) |
 | ![A home of its own](Assets/Screenshot-6.png) | ![Working together](Assets/Screenshot-7.png) |
 | ![Healthy breaks](Assets/Screenshot-8.png) | ![Draw your own](Assets/Screenshot-9.png) |
 | ![Full of beans](Assets/Screenshot-10.png) | ![Right beside you](Assets/Screenshot-11.png) |
@@ -280,8 +287,8 @@ Mac, so they can't reach it.
 
 **Answer from your pet.** With `Tools/agent-hooks/pixpaw-ask.py` as a Claude Code
 hook, a permission prompt (run this command? edit this file?) or a question with
-a few answers comes to your pet: it reads it out and holds up the choices on a
-card, and the one you click goes back to Claude. When the pet isn't out, you're
+a few answers comes to your pet: it holds up the choices on a
+card (it doesn't read them aloud), and the one you click goes back to Claude. When the pet isn't out, you're
 away from the Mac (no input for a minute, or the screen locked: handy with
 Remote Control, which then asks you on your phone at once), or you don't
 answer within PIXPAW_ASK_WAIT seconds (110), Claude asks you as usual. While
@@ -307,7 +314,7 @@ also has a field for your own words: your answer to a question, like Claude's
 `come`, `nap`, `feed`, `play?toy=yarn|teaser|laser|ball|mouse|frisbee|bigbone|seed|carrot|worm|bell|flower|leaves|watermelon|fish|marshmallow|stop` (`play?toy=hands`: rock, paper, scissors with its friend), `wear?hat=…&collar=…&glasses=…`,
 `quiet?on=1|0`, `say?text=…`, `sign?text=…` (no text puts it down), `agent?name=…&state=…&text=…&usage=…`,
 `note?text=…`, `join` (your next video call), `countdown?title=…&date=2026-12-24`,
-`focus?minutes=25` or `focus?stop` (a focus session, without lofi), `meeting` (stops meeting notes; starting them, like Talk to me, lofi and a page capture, takes a click in Pixpaw), `gif` (five seconds of your pet as a GIF), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `agent?name=…&state=tool-done&tool=Bash&outcome=ok|failed` and `agent?name=…&state=helper&event=start|done&id=…` (used by the hooks for long commands and helpers), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`,
+`focus?minutes=25` or `focus?stop` (a focus session, without lofi), `meeting` (stops meeting notes; starting them, like Talk to me, lofi and a page capture, takes a click in Pixpaw), `gif` (five seconds of your pet as a GIF), `agent?name=…&state=tool&tool=…&target=…` (used by the tool hook), `agent?name=…&state=tool-done&tool=Bash&outcome=ok|failed` and `agent?name=…&state=helper&event=start|done&id=…` (used by the hooks for long commands and helpers), `ask?id=…` (used by pixpaw-ask.py), `roam?mode=anywhere|floor|windows`, `colour?name=<colourway>` (or `color`; add `&friend=1` for the friend's),
 `character?name=cat|bee|parrot|dino|dog|hamster|chicken|giraffe|hippo|rabbit|shark|pig|dragon`.
 
 ## Art
