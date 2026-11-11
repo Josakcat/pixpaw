@@ -9,7 +9,7 @@
 import AppKit
 import EventKit
 
-struct Meeting: Equatable {
+struct Meeting: Equatable, Sendable {
     var title: String
     var start: Date
     var link: URL
@@ -53,18 +53,21 @@ enum MeetingLink {
 
     /// The call you'd want to join now: one under way that started in the
     /// last half hour, or the next to start in the coming quarter hour.
-    @MainActor static func next(store: EKEventStore = EKEventStore()) -> Meeting? {
-        guard CalendarWatcher.hasAccess else { return nil }
-        let now = Date()
-        let events = store.events(matching: store.predicateForEvents(withStart: now.addingTimeInterval(-30 * 60),
-                                                                    end: now.addingTimeInterval(15 * 60), calendars: nil))
-        return events
-            .filter { !$0.isAllDay && ($0.endDate ?? .distantFuture) > now }
-            .compactMap { event in
-                guard let start = event.startDate, let link = find(in: event) else { return nil }
-                return Meeting(title: event.title ?? "Meeting", start: start, link: link)
-            }
-            .min { abs($0.start.timeIntervalSince(now)) < abs($1.start.timeIntervalSince(now)) }
+    /// Read off the main thread; `done` runs on main.
+    @MainActor static func next(_ done: @escaping @MainActor @Sendable (Meeting?) -> Void) {
+        guard CalendarWatcher.hasAccess else { return done(nil) }
+        CalendarReader.oneOff.read({ store -> Meeting? in
+            let now = Date()
+            let events = store.events(matching: store.predicateForEvents(withStart: now.addingTimeInterval(-30 * 60),
+                                                                        end: now.addingTimeInterval(15 * 60), calendars: nil))
+            return events
+                .filter { !$0.isAllDay && ($0.endDate ?? .distantFuture) > now }
+                .compactMap { event in
+                    guard let start = event.startDate, let link = find(in: event) else { return nil }
+                    return Meeting(title: event.title ?? "Meeting", start: start, link: link)
+                }
+                .min { abs($0.start.timeIntervalSince(now)) < abs($1.start.timeIntervalSince(now)) }
+        }, then: done)
     }
 }
 

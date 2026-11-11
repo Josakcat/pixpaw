@@ -1,4 +1,3 @@
-// droppykit-lint: allow-file own-window: the scuffle's dust cloud, a click-through panel over the pet and its friend for a couple of seconds while they play-fight, never opened by itself, and closed when the pet hides and in deactivate(); under the same waiver as the pet's own panel, agreed by Droppy for the Store, 2026-11-04
 //
 //  Scuffle.swift
 //  Pixpaw

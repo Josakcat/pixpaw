@@ -2703,7 +2703,7 @@ final class CatController: ObservableObject {
     /// DockDoor Pro started, quit, or its bar moved: above it, and onto the new floor.
     private func dockDoorChanged() {
         // Every pet-level panel already made (the pet, its home, tags, signs, toys); not the bubble.
-        for case let window as CatPanel in NSApp.windows where window.followsPetLevel {
+        for window in CatPanel.made.allObjects where window.followsPetLevel {
             window.level = DockDoorPro.petLevel
         }
         if let home = homePanel {
@@ -3593,8 +3593,12 @@ final class CatPanel: NSPanel {
     /// False for the speech bubble, which always sits at the status-bar level.
     var followsPetLevel = true
 
+    /// Every pet panel still alive, held weakly: our own windows, never Droppy's.
+    static let made = NSHashTable<CatPanel>.weakObjects()
+
     init(contentRect: CGRect) {
         super.init(contentRect: contentRect, styleMask: [.borderless, .nonactivatingPanel], backing: .buffered, defer: false)
+        Self.made.add(self)
         isOpaque = false
         backgroundColor = .clear
         hasShadow = false
@@ -4098,68 +4102,108 @@ final class CatView: NSView {
         }
     }
 
-    @objc private func feed() { MainActor.assumeIsolated { controller?.feed() } }
-    @objc private func treat() { MainActor.assumeIsolated { controller?.giveTreat() } }
-    @objc private func photo() { MainActor.assumeIsolated { controller?.onPhoto?() } }
-    @objc private func stretch() { MainActor.assumeIsolated { controller?.stretchWithMe() } }
-    @objc private func askSign() { MainActor.assumeIsolated { controller?.onAskSign?() } }
-    @objc private func dropSign() { MainActor.assumeIsolated { controller?.signDone() } }
-    @objc private func recordGIF() { MainActor.assumeIsolated { controller?.onRecordGIF?() } }
-    @objc private func lofi() { MainActor.assumeIsolated { controller?.onLofi?() } }
-    @objc private func pauseLofi() { MainActor.assumeIsolated { controller?.onPauseLofi?() } }
-    @objc private func playHands() { MainActor.assumeIsolated { controller?.challengeFriend() } }
-    @objc private func capturePage() { MainActor.assumeIsolated { controller?.onCapturePage?() } }
-    @objc private func droppyTool(_ sender: NSMenuItem) {
+    @objc fileprivate func feed() { MainActor.assumeIsolated { controller?.feed() } }
+    @objc fileprivate func treat() { MainActor.assumeIsolated { controller?.giveTreat() } }
+    @objc fileprivate func photo() { MainActor.assumeIsolated { controller?.onPhoto?() } }
+    @objc fileprivate func stretch() { MainActor.assumeIsolated { controller?.stretchWithMe() } }
+    @objc fileprivate func askSign() { MainActor.assumeIsolated { controller?.onAskSign?() } }
+    @objc fileprivate func dropSign() { MainActor.assumeIsolated { controller?.signDone() } }
+    @objc fileprivate func recordGIF() { MainActor.assumeIsolated { controller?.onRecordGIF?() } }
+    @objc fileprivate func lofi() { MainActor.assumeIsolated { controller?.onLofi?() } }
+    @objc fileprivate func pauseLofi() { MainActor.assumeIsolated { controller?.onPauseLofi?() } }
+    @objc fileprivate func playHands() { MainActor.assumeIsolated { controller?.challengeFriend() } }
+    @objc fileprivate func capturePage() { MainActor.assumeIsolated { controller?.onCapturePage?() } }
+    @objc fileprivate func droppyTool(_ sender: NSMenuItem) {
         guard let tool = (sender.representedObject as? String).flatMap(DroppyTool.init(rawValue:)) else { return }
         MainActor.assumeIsolated { controller?.onDroppyTool?(tool) }
     }
-    @objc private func meetingNotes() { MainActor.assumeIsolated { controller?.onNotes?() } }
-    @objc private func openNotes() { MainActor.assumeIsolated { controller?.onOpenNotes?() } }
-    @objc private func showTranscript() { MainActor.assumeIsolated { controller?.onShowTranscript?() } }
-    @objc private func talk() { MainActor.assumeIsolated { controller?.onTalk?() } }
-    @objc private func ask() { MainActor.assumeIsolated { controller?.onAsk?("") } }
-    @objc private func runSuggestion(_ sender: NSMenuItem) {
+    @objc fileprivate func meetingNotes() { MainActor.assumeIsolated { controller?.onNotes?() } }
+    @objc fileprivate func openNotes() { MainActor.assumeIsolated { controller?.onOpenNotes?() } }
+    @objc fileprivate func showTranscript() { MainActor.assumeIsolated { controller?.onShowTranscript?() } }
+    @objc fileprivate func talk() { MainActor.assumeIsolated { controller?.onTalk?() } }
+    @objc fileprivate func ask() { MainActor.assumeIsolated { controller?.onAsk?("") } }
+    @objc fileprivate func runSuggestion(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }
         let parts = value.split(separator: ".", maxSplits: 1).map(String.init)
         guard parts.count == 2, let kind = PetSuggestionKind(rawValue: parts[0]), let action = PetSuggestionAction(rawValue: parts[1]) else { return }
         MainActor.assumeIsolated { controller?.onSuggestion?(kind, action) }
     }
-    @objc private func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
-    @objc private func nap() { MainActor.assumeIsolated { controller?.goHome() } }
-    @objc private func putHomeAway() { MainActor.assumeIsolated { controller?.putHomeAway() } }
-    @objc private func wake() { MainActor.assumeIsolated { controller?.callOver() } }
+    @objc fileprivate func focus() { MainActor.assumeIsolated { controller?.onFocus?() } }
+    @objc fileprivate func nap() { MainActor.assumeIsolated { controller?.goHome() } }
+    @objc fileprivate func putHomeAway() { MainActor.assumeIsolated { controller?.putHomeAway() } }
+    @objc fileprivate func wake() { MainActor.assumeIsolated { controller?.callOver() } }
     /// "left=lamp", or "left=" to take it off.
-    @objc private func placeDecor(_ sender: NSMenuItem) {
+    @objc fileprivate func placeDecor(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }
         let parts = value.split(separator: "=", maxSplits: 1, omittingEmptySubsequences: false).map(String.init)
         guard let spot = parts.first.flatMap(HomeDecor.Spot.init(rawValue:)) else { return }
         let item = parts.count > 1 ? HomeDecor(rawValue: parts[1]) : nil
         MainActor.assumeIsolated { controller?.place(item, in: spot) }
     }
-    @objc private func buyDecor(_ sender: NSMenuItem) {
+    @objc fileprivate func buyDecor(_ sender: NSMenuItem) {
         guard let item = (sender.representedObject as? String).flatMap(HomeDecor.init(rawValue:)) else { return }
         MainActor.assumeIsolated { _ = controller?.buy(item) }
     }
-    @objc private func playGame(_ sender: NSMenuItem) {
+    @objc fileprivate func playGame(_ sender: NSMenuItem) {
         guard let game = (sender.representedObject as? String).flatMap(PetGame.init(rawValue:)) else { return }
         MainActor.assumeIsolated { controller?.play(game) }
     }
-    @objc private func stopPlaying() { MainActor.assumeIsolated { controller?.stopPlaying() } }
-    @objc private func wearItem(_ sender: NSMenuItem) {
+    @objc fileprivate func stopPlaying() { MainActor.assumeIsolated { controller?.stopPlaying() } }
+    @objc fileprivate func wearItem(_ sender: NSMenuItem) {
         guard let value = sender.representedObject as? String else { return }
         let parts = value.split(separator: ":", maxSplits: 1, omittingEmptySubsequences: false)
         guard let slot = parts.first.flatMap({ CatAccessory.Slot(rawValue: String($0)) }) else { return }
         let item = parts.count > 1 ? CatAccessory(rawValue: String(parts[1])) : nil
         MainActor.assumeIsolated { controller?.wear(item, in: slot) }
     }
-    @objc private func openWardrobe() { MainActor.assumeIsolated { controller?.onOpenWardrobe?() } }
-    @objc private func openSettings() { MainActor.assumeIsolated { controller?.onOpenSettings?() } }
-    @objc private func setPixels(_ sender: NSMenuItem) {
+    @objc fileprivate func openWardrobe() { MainActor.assumeIsolated { controller?.onOpenWardrobe?() } }
+    @objc fileprivate func openSettings() { MainActor.assumeIsolated { controller?.onOpenSettings?() } }
+    @objc fileprivate func setPixels(_ sender: NSMenuItem) {
         let classic = sender.representedObject as? String == "classic"
         MainActor.assumeIsolated { controller?.onClassicPixels?(classic) }
     }
-    @objc private func setColour(_ sender: NSMenuItem) {
+    @objc fileprivate func setColour(_ sender: NSMenuItem) {
         guard let id = sender.representedObject as? String else { return }
         MainActor.assumeIsolated { controller?.onColour?(id) }
+    }
+}
+
+extension PetMenuAction {
+    /// The pet view's method this action runs, checked by the compiler
+    /// (the raw value stays its Objective-C name, for the menu's checks).
+    var selector: Selector {
+        switch self {
+        case .talk: #selector(CatView.talk)
+        case .ask: #selector(CatView.ask)
+        case .droppyTool: #selector(CatView.droppyTool(_:))
+        case .runSuggestion: #selector(CatView.runSuggestion(_:))
+        case .feed: #selector(CatView.feed)
+        case .treat: #selector(CatView.treat)
+        case .nap: #selector(CatView.nap)
+        case .wake: #selector(CatView.wake)
+        case .playGame: #selector(CatView.playGame(_:))
+        case .playHands: #selector(CatView.playHands)
+        case .stopPlaying: #selector(CatView.stopPlaying)
+        case .focus: #selector(CatView.focus)
+        case .stretch: #selector(CatView.stretch)
+        case .lofi: #selector(CatView.lofi)
+        case .pauseLofi: #selector(CatView.pauseLofi)
+        case .askSign: #selector(CatView.askSign)
+        case .dropSign: #selector(CatView.dropSign)
+        case .meetingNotes: #selector(CatView.meetingNotes)
+        case .showTranscript: #selector(CatView.showTranscript)
+        case .openNotes: #selector(CatView.openNotes)
+        case .putHomeAway: #selector(CatView.putHomeAway)
+        case .placeDecor: #selector(CatView.placeDecor(_:))
+        case .buyDecor: #selector(CatView.buyDecor(_:))
+        case .photo: #selector(CatView.photo)
+        case .recordGIF: #selector(CatView.recordGIF)
+        case .capturePage: #selector(CatView.capturePage)
+        case .wearItem: #selector(CatView.wearItem(_:))
+        case .openWardrobe: #selector(CatView.openWardrobe)
+        case .setColour: #selector(CatView.setColour(_:))
+        case .setPixels: #selector(CatView.setPixels(_:))
+        case .openSettings: #selector(CatView.openSettings)
+        }
     }
 }

@@ -810,6 +810,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         PetCard.shared.close()
         stopCIWatches()
         listener.stop()
+        SoundOutput.shared.stopAll()
         meetingTimer?.invalidate()
         meetingTimer = nil
         if let meeting {
@@ -1505,7 +1506,13 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         guard meeting == nil, host != nil else { return }
         if !isOut { setOut(true) }
         do {
-            let recorder = try MeetingRecorder(language: notesLanguage, title: cat?.joinTitle ?? MeetingLink.next()?.title)
+            let recorder = try MeetingRecorder(language: notesLanguage, title: cat?.joinTitle)
+            // The calendar's title arrives off main; the recording doesn't wait for it.
+            if recorder.title == nil {
+                MeetingLink.next { [weak recorder] meeting in
+                    if let recorder, recorder.title == nil { recorder.title = meeting?.title }
+                }
+            }
             meeting = recorder
             takingNotes = true
             liveTranscript.reset()
@@ -1796,11 +1803,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// The call under way or about to start, from a shortcut or a link.
     func joinNextMeeting() {
-        guard let meeting = MeetingLink.next() else {
-            cat?.say(CatWords.noMeeting)
-            return
+        MeetingLink.next { [weak self] meeting in
+            guard let self, self.host != nil else { return }
+            guard let meeting else {
+                self.cat?.say(CatWords.noMeeting)
+                return
+            }
+            self.join(meeting)
         }
-        join(meeting)
     }
 
     private func join(_ meeting: Meeting) {
@@ -2180,7 +2190,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         host.preferences.setValue(StarDay.today, forKey: Key.morningGreeted)
         let reads = tellsCalendar && calendarAllowed
         cat?.stretch()
-        cat?.say(CatWords.goodMorning(first: reads ? CalendarWatcher.firstEventToday() : nil, calendar: reads))
+        if reads {
+            CalendarWatcher.firstEventToday { [weak self] first in
+                guard let self, self.host != nil else { return }
+                self.cat?.say(CatWords.goodMorning(first: first, calendar: true))
+            }
+        } else {
+            cat?.say(CatWords.goodMorning(first: nil, calendar: false))
+        }
         return true
     }
 
@@ -3922,7 +3939,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func sendActivity(_ title: String?) {
         guard activitySubject.value?.accessibilityTitle != title || (activitySubject.value == nil) != (title == nil) else { return }
         activitySubject.send(title.map {
-            LiveActivityState(priority: 50, accessibilityTitle: $0, isInteractive: false, joinsPersistentActivitySet: true)
+            LiveActivityState(priority: .ambient, accessibilityTitle: $0, isInteractive: false, joinsPersistentActivitySet: true)
         })
     }
 
@@ -4467,16 +4484,15 @@ private struct UsageLeftPage: View {
             ForEach(Array(options.enumerated()), id: \.offset) { index, option in
                 if index == 0 && ask.risk == nil {
                     Button(option) { droplet.answerOpenAsk(option) }
-                        .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+                        .buttonStyle(DroppyWashPillButtonStyle(height: context.washControlSize, tone: .accent(.blue), usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
                 } else {
                     Button(option) { droplet.answerOpenAsk(option) }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .buttonStyle(DroppyWashPillButtonStyle(height: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
                 }
             }
         }
         .lineLimit(1)
         .fixedSize()
-        .droppyFlatGlassControls()
     }
 
     // MARK: Usage
@@ -4662,9 +4678,7 @@ private struct PixpawWidget: View {
 
     /// Droppy's shelf sizes: a control alone on the shelf is 34pt, beside
     /// another widget 28, the header's toggles 28, a small choice 24.
-    private var actionSize: CGFloat { context.isPaired ? 28 : 34 }
-    private static let headerSize: CGFloat = 28
-    private static let choiceSize: CGFloat = 24
+    private var actionSize: CGFloat { context.washControlSize }
 
     var body: some View {
         // The header on the card's top edge, the control row on its bottom
@@ -4684,7 +4698,6 @@ private struct PixpawWidget: View {
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
         // One family of controls on the shelf: the header's buttons draw the
         // same flat wash as the row of controls under the pet.
-        .droppyFlatGlassControls()
     }
 
     @ViewBuilder private var petPage: some View {
@@ -4737,7 +4750,7 @@ private struct PixpawWidget: View {
                 Image(systemName: droplet.widgetShowsPlans ? "pawprint.fill" : droplet.openAsk != nil ? "hand.raised.fill" : "gauge.with.dots.needle.67percent")
                     .foregroundStyle(droplet.openAsk != nil && !droplet.widgetShowsPlans ? Color.orange : AdaptiveColors.notchSurfaceSecondaryText)
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help(droplet.widgetShowsPlans ? "Back to your pet" : "AI usage left: what's left of each AI's plan")
             .accessibilityLabel(droplet.widgetShowsPlans ? "Show your pet" : "Show AI usage left")
             if !droplet.widgetShowsPlans {
@@ -4755,7 +4768,7 @@ private struct PixpawWidget: View {
                 } label: {
                     Image(systemName: "camera")
                 }
-                .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+                .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
                 .help("Take a photo of your pet")
                 .accessibilityLabel("Take a photo of your pet")
             }
@@ -4772,7 +4785,7 @@ private struct PixpawWidget: View {
                     Image(systemName: "pawprint")
                 }
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help("Character: \(cat.kind.title). Click to change.")
             .accessibilityLabel("Change character, now \(cat.kind.title)")
             Button {
@@ -4780,7 +4793,7 @@ private struct PixpawWidget: View {
             } label: {
                 Image(systemName: cat.quietReason == nil ? "bell" : "bell.slash.fill")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help(droplet.quietByHand ? "Let your pet talk again" : "Quiet: no speech bubbles")
             .accessibilityLabel(droplet.quietByHand ? "Turn quiet mode off" : "Turn quiet mode on")
             Button {
@@ -4788,7 +4801,7 @@ private struct PixpawWidget: View {
             } label: {
                 Image(systemName: droplet.isOut ? "eye.slash" : "eye")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: Self.headerSize))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help(droplet.isOut ? "Bring your pet inside" : "Let your pet out")
             .accessibilityLabel(droplet.isOut ? "Hide your pet" : "Show your pet")
     }
@@ -4883,11 +4896,14 @@ private struct PixpawWidget: View {
             ZStack(alignment: .leading) {
                 Capsule(style: .continuous)
                     .fill(AdaptiveColors.notchSurfaceCardFill)
-                Capsule(style: .continuous)
-                    .fill(cat.isHungry ? Color.orange : Color.green.opacity(0.85))
-                    .frame(width: 72 * max(0.06, cat.fullness))
+                GeometryReader { box in
+                    Capsule(style: .continuous)
+                        .fill(cat.isHungry ? Color.orange : Color.green.opacity(0.85))
+                        .frame(width: box.size.width * max(0.06, cat.fullness))
+                }
             }
-            .frame(width: 72, height: 5)
+            .frame(maxWidth: 72)
+            .frame(height: 5)
         }
         .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
         .accessibilityElement()
@@ -4928,7 +4944,7 @@ private struct PixpawWidget: View {
                     }
                 }
         }
-        .buttonStyle(DroppyCircleButtonStyle(size: Self.choiceSize))
+        .buttonStyle(DroppyWashCircleButtonStyle(diameter: DroppyWashSize.row, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
         .help(title)
         .accessibilityLabel(title)
     }
@@ -4939,7 +4955,7 @@ private struct PixpawWidget: View {
             } label: {
                 Image(systemName: "fork.knife")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: actionSize))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: actionSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help("Feed your pet")
             .accessibilityLabel("Feed your pet")
             Button {
@@ -4947,7 +4963,7 @@ private struct PixpawWidget: View {
             } label: {
                 Image(systemName: "moon.zzz.fill")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: actionSize))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: actionSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .disabled(cat.mood == .sleeping)
             .help("Nap now")
             .accessibilityLabel("Nap now")
@@ -4956,17 +4972,18 @@ private struct PixpawWidget: View {
             } label: {
                 Image(systemName: droplet.breakEndsAt != nil ? "forward.end.fill" : droplet.focusEndsAt == nil ? "timer" : "stop.fill")
             }
-            .buttonStyle(DroppyCircleButtonStyle(size: actionSize))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: actionSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help(droplet.breakEndsAt != nil ? "Skip the break" : droplet.focusEndsAt == nil ? "Focus for \(droplet.focusMinutes) minutes" : "Stop focusing")
             .accessibilityLabel(droplet.breakEndsAt != nil ? "Skip the break" : droplet.focusEndsAt == nil ? "Start focusing" : "Stop focusing")
             Button {
                 droplet.callOver()
             } label: {
-                // The pill as tall as the discs beside it.
+                // On the narrow notch the wash pill shrinks its words
+                // a little rather than cut them off.
                 Text(cat.mood == .sleeping ? "Wake up" : "Come here")
-                    .frame(minHeight: actionSize - 16)
+                    .minimumScaleFactor(0.7)
             }
-            .buttonStyle(DroppyQuietButtonStyle(size: .small))
+            .buttonStyle(DroppyWashPillButtonStyle(height: actionSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
     }
 }
 
@@ -5692,7 +5709,7 @@ private struct PixpawSettings: View {
                                     .frame(width: 14, height: 14)
                                     .accessibilityHidden(true)
                                 Button("Forget") { droplet.forgetPhotoCoat() }
-                                    .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                                    .buttonStyle(.bordered)
                             }
                             Button(droplet.hasPhotoCoat ? "Another photo…" : "Choose…") { droplet.coatFromPhoto() }
                                 .disabled(droplet.readingPhoto)
@@ -5751,7 +5768,7 @@ private struct PixpawSettings: View {
                 DropletControlRow(title: "Say hello again", icon: "hand.wave",
                                   infoTip: "Your pet shows its three tips again: how to pet it, how to open its card, and that you can drag it anywhere.") {
                     Button("Say hello") { droplet.sayHelloAgain() }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .buttonStyle(.bordered)
                 }
             }
         }
@@ -6103,7 +6120,7 @@ private struct PixpawSettings: View {
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             if droplet.stats.summary != nil {
                                 Button("Clear") { droplet.clearStats() }
-                                    .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                                    .buttonStyle(.bordered)
                             }
                         }
                     }
@@ -6343,7 +6360,7 @@ private struct PixpawSettings: View {
         } label: {
             Image(systemName: open ? "eye.slash" : "eye")
         }
-        .buttonStyle(DroppyCircleButtonStyle(size: 24))
+        .buttonStyle(.borderless)
         .help(open ? "Hide the preview" : "See it beside the home")
         .accessibilityLabel(open ? "Hide the preview of \(item.title(for: decorLook))" : "Preview \(item.title(for: decorLook))")
     }
@@ -6397,7 +6414,8 @@ private struct PixpawSettings: View {
                     cat.buy(item)
                     buyingDecor = nil
                 }
-                .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
             }
         }
         .frame(maxWidth: .infinity)
@@ -6423,12 +6441,13 @@ private struct PixpawSettings: View {
                     buyingDecor = nil
                     previewingDecor = nil
                 }
-                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                .buttonStyle(.bordered)
                 Button("Buy for \(item.price) ★") {
                     cat.buy(item)
                     buyingDecor = nil
                 }
-                .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+                .buttonStyle(.borderedProminent)
+                .tint(.blue)
             }
         } else {
             let short = DecorShop.short(of: item, points: cat.points, spent: cat.starsSpent)
@@ -6437,7 +6456,8 @@ private struct PixpawSettings: View {
                 previewingDecor = item
                 buyingDecor = item
             }
-            .buttonStyle(DroppyAccentButtonStyle(color: .blue, size: .small))
+            .buttonStyle(.borderedProminent)
+            .tint(.blue)
             .disabled(short > 0)
         }
     }
@@ -6474,10 +6494,10 @@ private struct PixpawSettings: View {
                 Text(wornSummary).font(.headline)
                 HStack(spacing: DroppySpacing.sm) {
                     Button("Take it all off") { droplet.undress() }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .buttonStyle(.bordered)
                         .disabled(cat.hat == nil && cat.glasses == nil && cat.collar == nil)
                     Button("Surprise me") { droplet.surpriseOutfit() }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .buttonStyle(.bordered)
                 }
                 .padding(.top, DroppySpacing.xs)
             }
@@ -6661,7 +6681,7 @@ private struct PixpawSettings: View {
                         HStack(spacing: DroppySpacing.sm) {
                             DropletValuePill(text: "\(droplet.social.petCoins) vs \(droplet.social.friendCoins) coins · \(droplet.social.petWins)–\(droplet.social.friendWins)")
                             Button("Start over") { droplet.resetSocial() }
-                                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                                .buttonStyle(.bordered)
                         }
                     }
                 }
@@ -6841,7 +6861,7 @@ private struct PixpawSettings: View {
                 DropletControlRow(title: "Photo of your pet", icon: "camera",
                                   infoTip: "A picture of your pet where your screenshots go.") {
                     Button("Take") { droplet.takePhoto() }
-                        .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                        .buttonStyle(.bordered)
                         .disabled(!droplet.isOut)
                 }
                 DropletControlRow(title: "GIF of your pet", icon: "film",
@@ -6887,7 +6907,7 @@ private struct PixpawSettings: View {
                             DropletValuePill(text: "Not on this Mac")
                         } else {
                             Button("Allow…") { droplet.requestPermission(item.permission) }
-                                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                                .buttonStyle(.bordered)
                         }
                     }
                 }
@@ -6913,7 +6933,7 @@ private struct PixpawSettings: View {
                             DropletValuePill(text: "Heard " + heard.formatted(.relative(presentation: .named)))
                         } else {
                             Button("How to set up") { NSWorkspace.shared.open(URL(string: "https://github.com/Josakcat/pixpaw#readme")!) }
-                                .buttonStyle(DroppyQuietButtonStyle(size: .small))
+                                .buttonStyle(.bordered)
                         }
                     }
                 }

@@ -307,7 +307,8 @@ final class SystemAudio: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
 final class MeetingRecorder {
     let startedAt = Date()
     let language: MeetingLanguage
-    let title: String?
+    /// Filled in after the start when it comes from the calendar.
+    var title: String?
     private let engine = AVAudioEngine()
     private var mine: RollingTranscriber?
     private var theirs: RollingTranscriber?

@@ -44,7 +44,7 @@ struct PetCardItem: Identifiable {
     /// The same, with `picture` drawing an entry's decoration art.
     init(_ entry: PetMenuEntry, picture: (String) -> CGImage?) {
         if entry.isSeparator { self = .separator; return }
-        self.init(title: entry.title, symbol: entry.symbol, action: entry.action.map { NSSelectorFromString($0.rawValue) },
+        self.init(title: entry.title, symbol: entry.symbol, action: entry.action.map { $0.selector },
                   represented: entry.represented, badge: entry.badge, shortcut: entry.shortcut?.text,
                   enabled: entry.enabled, checked: entry.checked, children: entry.children?.map { PetCardItem($0, picture: picture) })
         self.picture = entry.picture.flatMap(picture)
@@ -108,7 +108,7 @@ extension NSMenu {
             if entry.isSeparator { return .separator() }
             let item = PetMenuItem(title: entry.title, action: entry.action.map { _ in #selector(PetMenuRelay.fire(_:)) },
                                    keyEquivalent: entry.shortcut?.key ?? "")
-            item.petAction = entry.action.map { NSSelectorFromString($0.rawValue) }
+            item.petAction = entry.action.map { $0.selector }
             item.petTarget = target
             if let key = entry.shortcut {
                 var mask = NSEvent.ModifierFlags()

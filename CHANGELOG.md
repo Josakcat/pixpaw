@@ -2,6 +2,18 @@
 
 ## [Unreleased]
 
+## [2.0.1] - 2026-11-11
+
+### Changed
+- Every control on the shelf widget (the pet's header buttons, feed, nap, focus, Come here, the coat swatches and the answers to an agent's question) now uses Droppy's flat wash style, like Droppy's own Pomodoro and Stay Awake widgets.
+- Needs DroppyKit 1.23.
+
+### Fixed
+- Pet voices (the dragon's triple rawr and the rest) are now made, and your own pets' sounds read, off the main thread the first time they play, so Droppy no longer stutters; sounds stop when Pixpaw is switched off.
+- Claude Code sessions are followed by reading only the lines added since the last look (restarting if a transcript shrinks or is replaced), not the last 256 KB again every few seconds.
+- Settings use native macOS buttons, the live activity takes Droppy's ambient band, and the code passes DroppyKit's review checks more cleanly.
+- Calendar reads (meeting alerts, the good-morning event, the meeting-notes title and Join next meeting) no longer run on the main thread, so a slow calendar can't freeze Droppy.
+
 ## [2.0.0] - 2026-11-10
 
 Everything new since 1.12.0: your pet, redrawn.

@@ -442,9 +442,13 @@ final class DownloadsWatcher {
 /// half minute, only while calendar access is granted.
 @MainActor
 final class CalendarWatcher {
-    private let store = EKEventStore()
+    private let reader = CalendarReader()
     private var timer: Timer?
     private var announced: Set<String> = []
+    /// A read on its way back; a slow calendar daemon never gets a second.
+    private var reading = false
+    /// Bumped by stop(), so a read that comes back after it is dropped.
+    private var generation = 0
     private let onLine: (CatLine) -> Void
     /// An event with a video call to join, as it is announced.
     private let onMeeting: ((Meeting) -> Void)?
@@ -479,15 +483,16 @@ final class CalendarWatcher {
     }
 
     /// Today's first event still to come, or begun in the last half hour;
-    /// all-day ones left out.
-    static func firstEventToday() -> (title: String, start: Date)? {
-        guard hasAccess else { return nil }
-        let store = EKEventStore()
-        let now = Date()
-        guard let end = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now) else { return nil }
-        let events = store.events(matching: store.predicateForEvents(withStart: now.addingTimeInterval(-30 * 60), end: end, calendars: nil))
-        return events.filter { !$0.isAllDay }.compactMap { event in event.startDate.map { (event.title ?? "An event", $0) } }
-            .min { $0.1 < $1.1 }
+    /// all-day ones left out. Read off the main thread; `done` runs on main.
+    static func firstEventToday(_ done: @escaping @MainActor @Sendable ((title: String, start: Date)?) -> Void) {
+        guard hasAccess else { return done(nil) }
+        CalendarReader.oneOff.read({ store -> (title: String, start: Date)? in
+            let now = Date()
+            guard let end = Calendar.current.date(bySettingHour: 23, minute: 59, second: 59, of: now) else { return nil }
+            let events = store.events(matching: store.predicateForEvents(withStart: now.addingTimeInterval(-30 * 60), end: end, calendars: nil))
+            return events.filter { !$0.isAllDay }.compactMap { event in event.startDate.map { (event.title ?? "An event", $0) } }
+                .min { $0.1 < $1.1 }
+        }, then: done)
     }
 
     func start() {
@@ -502,26 +507,83 @@ final class CalendarWatcher {
     func stop() {
         timer?.invalidate()
         timer = nil
+        generation += 1
+        reading = false
+    }
+
+    /// An event starting within two minutes (or begun in the last one).
+    private struct Due: Sendable {
+        var id: String
+        var title: String?
+        var start: Date
+        var minutes: Int
+        var link: URL?
     }
 
     private func check() {
-        guard Self.hasAccess else { return }
-        let now = Date()
-        let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-60), end: now.addingTimeInterval(3 * 60), calendars: nil)
-        for event in store.events(matching: predicate) where !event.isAllDay {
-            guard let start = event.startDate, let id = event.eventIdentifier, !announced.contains(id) else { continue }
-            let minutes = Int((start.timeIntervalSince(now) / 60).rounded())
-            guard minutes <= 2, minutes >= -1 else { continue }
-            announced.insert(id)
-            let soon = CatWords.eventSoon(event.title ?? "Event", minutes: max(0, minutes))
-            if let link = MeetingLink.find(in: event) {
+        guard Self.hasAccess, !reading else { return }
+        reading = true
+        let generation = generation
+        reader.read({ store -> [Due] in
+            let now = Date()
+            let predicate = store.predicateForEvents(withStart: now.addingTimeInterval(-60), end: now.addingTimeInterval(3 * 60), calendars: nil)
+            return store.events(matching: predicate).compactMap { event in
+                guard !event.isAllDay, let start = event.startDate, let id = event.eventIdentifier else { return nil }
+                let minutes = Int((start.timeIntervalSince(now) / 60).rounded())
+                guard minutes <= 2, minutes >= -1 else { return nil }
+                return Due(id: id, title: event.title, start: start, minutes: minutes, link: MeetingLink.find(in: event))
+            }
+        }, then: { [weak self] due in
+            guard let self, generation == self.generation else { return }
+            self.reading = false
+            self.announce(due)
+        })
+    }
+
+    private func announce(_ due: [Due]) {
+        for event in due where !announced.contains(event.id) {
+            announced.insert(event.id)
+            let soon = CatWords.eventSoon(event.title ?? "Event", minutes: max(0, event.minutes))
+            if let link = event.link {
                 onLine(CatLine(text: soon + " · click me to join", symbol: "video.fill", seconds: 6))
-                onMeeting?(Meeting(title: event.title ?? "Meeting", start: start, link: link))
+                onMeeting?(Meeting(title: event.title ?? "Meeting", start: event.start, link: link))
             } else {
                 onLine(CatLine(text: soon, symbol: "calendar"))
             }
         }
         if announced.count > 200 { announced = [] }
+    }
+}
+
+/// EventKit reads, off the main thread: a store's queries wait on the
+/// calendar daemon, which can take many seconds to answer. Each reader runs
+/// its reads one at a time on a serial queue of its own and hands the answer
+/// back on main.
+final class CalendarReader: @unchecked Sendable {
+    /// For one-off reads, a fresh store each time.
+    static let oneOff = CalendarReader(keepsStore: false)
+
+    private let queue = DispatchQueue(label: "app.pixpaw.calendar", qos: .utility)
+    private let keepsStore: Bool
+    /// Only touched on `queue`.
+    private var kept: EKEventStore?
+
+    init(keepsStore: Bool = true) {
+        self.keepsStore = keepsStore
+    }
+
+    func read<T: Sendable>(_ work: @escaping @Sendable (EKEventStore) -> T, then done: @escaping @MainActor @Sendable (T) -> Void) {
+        queue.async {
+            let store: EKEventStore
+            if self.keepsStore {
+                store = self.kept ?? EKEventStore()
+                self.kept = store
+            } else {
+                store = EKEventStore()
+            }
+            let value = work(store)
+            Task { @MainActor in done(value) }
+        }
     }
 }
 

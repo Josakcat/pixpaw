@@ -19,6 +19,9 @@ final class ClaudeSessions: @unchecked Sendable {
     /// The last read of each session, so the quiet after a tool's answer can
     /// end a turn without reading the file again.
     private var reads: [String: Read] = [:]
+    /// How far each session's transcript was read: each look reads only the
+    /// lines added since (LogTail.swift), not the file's end again.
+    private var tails: [String: LogTail] = [:]
     private var looked = false
     static let sessionsFolder = AgentFiles.home.appendingPathComponent(".claude/sessions", isDirectory: true)
     static let projectsFolder = AgentFiles.home.appendingPathComponent(".claude/projects", isDirectory: true)
@@ -47,17 +50,26 @@ final class ClaudeSessions: @unchecked Sendable {
                 }
                 continue
             }
+            var tail = tails[id] ?? LogTail(limit: AgentFiles.tail)
+            guard let (lines, restarted) = tail.read(log.file.path) else { continue }
+            tails[id] = tail
+            // A transcript that shrank or was replaced is learnt again, quietly,
+            // like a first look.
+            let fresh = first || restarted
+            if fresh, !first { log = AgentLog(file: log.file) }
             log.size = size
             log.modified = modified
-            guard let lines = AgentFiles.readTail(log.file, size: size) else { continue }
-            let read = Self.read(lines)
+            // Only the new lines: what they add, and the turn's last state
+            // carried on from before when they say nothing about it.
+            let read = Self.read(lines, after: fresh ? .nothing : reads[id]?.last ?? .nothing)
             reads[id] = read
             events += log.update(calls: read.order.map { ($0.id, $0.name, $0.target) }, results: read.results.map { ($0.id, $0.failed) },
-                                 busy: read.busy(quietFor: now.timeIntervalSince(modified)), first: first, quietStart: quietStart)
+                                 busy: read.busy(quietFor: now.timeIntervalSince(modified)), first: fresh, quietStart: quietStart)
             logs[id] = log
         }
         logs = logs.filter { alive.contains($0.key) }
         reads = reads.filter { alive.contains($0.key) }
+        tails = tails.filter { alive.contains($0.key) }
         return events
     }
 
@@ -125,8 +137,8 @@ final class ClaudeSessions: @unchecked Sendable {
         }
     }
 
-    private static func read(_ lines: [Substring]) -> Read {
-        var read = Read()
+    private static func read(_ lines: [Substring], after last: Last) -> Read {
+        var read = Read(last: last)
         for line in lines {
             guard let entry = AgentFiles.json(line), entry["isSidechain"] as? Bool != true else { continue }
             let message = entry["message"] as? [String: Any]
