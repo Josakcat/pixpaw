@@ -6,7 +6,7 @@ Package.resolved
 shots/
 # Kept outside the package (../pixpaw-extras) so submit never copies them.
 Design/
-Tools/__pycache__/
+.droppykit/Tools/__pycache__/
 # Agent wiring written by `droppykit agent`: absolute paths for one Mac.
 # Tracked here on purpose; ignored in the public export.
 AGENTS.md

@@ -6,7 +6,7 @@
 //  file that was, by inode) and reads only what was added since, whole lines
 //  only. A file that shrank or was replaced is read again from its end.
 //  Never holds more than `limit` bytes at once. Checked by
-//  Tools/log-tail-check.swift.
+//  .droppykit/Tools/log-tail-check.swift in the GitHub repo (not in the Store copy).
 //
 
 import Darwin

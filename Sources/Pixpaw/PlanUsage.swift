@@ -4,7 +4,7 @@
 //
 //  What's left of each coding agent's plan, for the menu bar: Claude Code's
 //  five-hour and weekly windows from what its status line saved
-//  (Tools/agent-hooks/usage.py), Antigravity's from the last `agy -p /usage`
+//  (.droppykit/Tools/agent-hooks/usage.py), Antigravity's from the last `agy -p /usage`
 //  its plugin kept, and any other agent's from the "5h 77% · week 59% left"
 //  its hook sent when a turn ended. Only percentages and reset times, all
 //  read from files on this Mac.

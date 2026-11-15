@@ -1,4 +1,4 @@
-// droppykit-lint: allow-file own-window: the pet's "What can I do?" box, a small non-activating panel on the card's own surface (PetCardSurface) over the pet, under the same waiver as its card; opened only by the user (its menu item, the 🔍 on the card, typing while the card is open, or its shortcut), closes on Escape, a click elsewhere (a mouse-click monitor, only while it is open) or once a row runs, and closed in deactivate()
+// droppykit-lint: allow-file own-window: the pet's "What can I do?" box, a small non-activating panel on the card's own surface (PetCardSurface) over the pet, under the same waiver as its card; opened only by the user (its menu item, the 🔍 on the card, typing while the card is open, or its shortcut), closes on Escape, a click elsewhere (it stops being the key window, or the pet's own windows are clicked; no event monitor) or once a row runs, and closed in deactivate()
 //
 //  AskBox.swift
 //  Pixpaw
@@ -119,9 +119,13 @@ final class AskBoxModel: ObservableObject {
 final class AskBox {
     private var panel: AskBoxPanel?
     private var activation: DroppyPanelActivation?
-    private var clickAway: Any?
-    private var clickInside: Any?
+    /// The card's, when the card handed over to this box: finished with it.
+    private var inherited: DroppyPanelActivation?
+    /// The panel's didResignKey observer, removed in close().
+    private var keyWatch: NSObjectProtocol?
     private let model = AskBoxModel()
+    /// The box that's open, for the pet's own windows to close on a click.
+    private(set) static weak var open: AskBox?
 
     var isOpen: Bool { panel != nil }
 
@@ -151,25 +155,30 @@ final class AskBox {
         self.panel = panel
         panel.makeKeyAndOrderFront(nil)
         activation = DroppyPanelActivation.begin(for: panel, returningTo: previous)
-        clickAway = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
-        }
-        // And a click in Droppy's own windows, the pet included.
-        clickInside = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            MainActor.assumeIsolated {
-                if let self, let panel = self.panel, event.window !== panel { self.close() }
+        inherited = PetCard.shared.takeHandedOver()
+        Self.open = self
+        // A click anywhere else closes it: another app, the desktop or a
+        // Droppy window takes the keyboard from it. The pet's own windows
+        // never take it: CatPanel closes the box on their clicks.
+        keyWatch = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: panel, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, let panel = self.panel, !panel.isKeyWindow else { return }
+                    self.close()
+                }
             }
-            return event
         }
     }
 
     func close() {
-        if let clickAway { NSEvent.removeMonitor(clickAway) }
-        if let clickInside { NSEvent.removeMonitor(clickInside) }
-        clickAway = nil
-        clickInside = nil
+        if let keyWatch { NotificationCenter.default.removeObserver(keyWatch) }
+        keyWatch = nil
+        if Self.open === self { Self.open = nil }
         activation?.finish()
         activation = nil
+        inherited?.finish()
+        inherited = nil
         model.reset()
         guard let panel else { return }
         self.panel = nil

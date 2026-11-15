@@ -8,21 +8,24 @@
 //  what you'd likely do next. It never runs one itself. Each suggestion
 //  has an end time, checked whenever the menu or card is built, so no
 //  timer keeps them. Pure functions, checked on their own
-//  (Tools/askbox-check.swift).
+//  (.droppykit/Tools/askbox-check.swift).
 //
 
 import Foundation
 
 enum PetSuggestionKind: String, CaseIterable {
     case meeting, ci, server, agent, pomodoro, meetingNotes, screenshot, download
-    /// The first-day hello: pick its colour.
+    /// The first-day hello: name it, pick its colour.
     case hello
+    /// Something new to wear, not put on by itself.
+    case unlock
 }
 
 /// A button a suggestion offers.
 enum PetSuggestionAction: String, CaseIterable {
     case toShelf, showInFinder, join, takeNotes, agents, openServer, openCI, focusAgain, stretch, openNotes
-    case pickColour
+    case pickColour, nameMe
+    case tryItOn
 
     /// On the card's button.
     func button(port: Int? = nil) -> String {
@@ -38,6 +41,8 @@ enum PetSuggestionAction: String, CaseIterable {
         case .stretch: "Stretch with me"
         case .openNotes: "Open the meeting notes"
         case .pickColour: "Pick my colour"
+        case .nameMe: "Give me a name"
+        case .tryItOn: "Try it on"
         }
     }
 
@@ -52,6 +57,7 @@ enum PetSuggestionAction: String, CaseIterable {
         case (.takeNotes, _): "Take meeting notes"
         case (.agents, _): "Open Agents"
         case (.openServer, _): button(port: suggestion.port)
+        case (.tryItOn, _): "Try on the \(suggestion.title.replacingOccurrences(of: "Unlocked: ", with: "").lowercased())"
         case (.openCI, _): suggestion.repo.map { "See why \($0)'s CI failed" } ?? "See why CI failed"
         default: button()
         }
@@ -70,6 +76,8 @@ enum PetSuggestionAction: String, CaseIterable {
         case .stretch: "figure.cooldown"
         case .openNotes: "doc.text"
         case .pickColour: "paintpalette"
+        case .nameMe: "character.cursor.ibeam"
+        case .tryItOn: "tshirt"
         }
     }
 }
@@ -89,6 +97,8 @@ struct PetSuggestion: Equatable {
     var start: Date?
     var port: Int?
     var repo: String?
+    /// The thing to try on, as `CatAccessory`'s raw value.
+    var item: String?
 
     var key: String { kind.rawValue }
 }
@@ -103,7 +113,7 @@ enum PetSuggestions {
         switch kind {
         case .screenshot: 3 * 60
         case .download, .pomodoro: 5 * 60
-        case .hello: 10 * 60
+        case .hello, .unlock: 10 * 60
         case .agent: 10 * 60
         case .meetingNotes: 15 * 60
         case .meeting, .server, .ci: nil
@@ -136,7 +146,11 @@ enum PetSuggestions {
     }
 
     static func hello(at: Date) -> PetSuggestion {
-        PetSuggestion(kind: .hello, title: "Make me yours", at: at, until: at + lasts(.hello)!, actions: [.pickColour])
+        PetSuggestion(kind: .hello, title: "Make me yours", at: at, until: at + lasts(.hello)!, actions: [.nameMe, .pickColour])
+    }
+
+    static func unlock(_ title: String, item: String, at: Date) -> PetSuggestion {
+        PetSuggestion(kind: .unlock, title: "Unlocked: \(title)", at: at, until: at + lasts(.unlock)!, actions: [.tryItOn], item: item)
     }
 
     static func server(_ port: Int, at: Date) -> PetSuggestion {
@@ -169,7 +183,7 @@ enum PetSuggestions {
                 guard !actions.isEmpty else { return nil }
                 return PetSuggestion(kind: suggestion.kind, title: suggestion.title, at: suggestion.at, until: suggestion.until,
                                      actions: actions, file: suggestion.file, start: suggestion.start, port: suggestion.port,
-                                     repo: suggestion.repo)
+                                     repo: suggestion.repo, item: suggestion.item)
             }
             .sorted { a, b in
                 let ra = rank(a.kind), rb = rank(b.kind)
@@ -195,7 +209,7 @@ enum PetSuggestions {
             if minutes > 0 { return "\(suggestion.title) in \(minutes) min" }
             let ago = Int((now.timeIntervalSince(start) / 60).rounded(.down))
             return ago < 1 ? "\(suggestion.title) now" : "\(suggestion.title) began \(ago) min ago"
-        case .server, .ci, .hello:
+        case .server, .ci, .hello, .unlock:
             return suggestion.title
         default:
             let ago = Int(now.timeIntervalSince(suggestion.at) / 60)

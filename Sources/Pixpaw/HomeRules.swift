@@ -1,7 +1,7 @@
 import Foundation
 
 /// When the home comes out, where it stands, and when it folds away. Pure,
-/// so `Tools/home-rules-check.swift` can check it without Droppy.
+/// so `.droppykit/Tools/home-rules-check.swift` can check it without Droppy.
 enum HomeRules {
     /// A home that is out with nobody in it folds itself away after this.
     static let foldAfter: TimeInterval = 60

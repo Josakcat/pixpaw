@@ -5,7 +5,7 @@
 //  What the "What can I do?" box lists: the pet's own commands, Droppy's
 //  catalog and, while you type, Droppy's search, ranked together, six at
 //  most. Pure functions, no DroppyKit, so they can be checked on their own
-//  (Tools/askbox-check.swift). Anything that could switch something off,
+//  (.droppykit/Tools/askbox-check.swift). Anything that could switch something off,
 //  delete it, send your words to the web or touch the Store never gets in.
 //
 

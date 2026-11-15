@@ -6,7 +6,7 @@
 //  goes, who it is drawn for, and what opens it (stars, days in a row, an
 //  all-time count). Also the drawing rules that need no art of their own:
 //  glasses found from a frame's eye pixels, and the headset built on the
-//  headphones' spot. Foundation only and pure, so Tools/wardrobe-check.swift
+//  headphones' spot. Foundation only and pure, so .droppykit/Tools/wardrobe-check.swift
 //  checks it without Droppy.
 //
 
@@ -332,7 +332,7 @@ enum WardrobeArt {
 /// a day it counts, so stars take days of real care rather than a minute of
 /// clicking.
 enum StarSource: String, Codable {
-    case pet, meal, hungryMeal, play, catchFile, treat, gift, stretch, note
+    case pet, meal, hungryMeal, play, catchFile, treat, gift, stretch, note, focusTask, find
 
     static let dailyTotal = 30
     /// Petting again this soon after the last counted pet earns nothing.
@@ -349,6 +349,8 @@ enum StarSource: String, Codable {
         case .gift: 3
         case .stretch: 2
         case .note: 2
+        case .focusTask: 3
+        case .find: 2
         }
     }
 
@@ -365,6 +367,8 @@ enum StarSource: String, Codable {
         case .gift: 1
         case .stretch: 5
         case .note: 5
+        case .focusTask: 4
+        case .find: 3
         }
     }
 }

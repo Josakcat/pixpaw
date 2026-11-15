@@ -73,6 +73,12 @@ final class ClaudeSessions: @unchecked Sendable {
         return events
     }
 
+    /// The sessions followed now, for the guests in the home (Guests.swift).
+    /// On the same queue as `poll`.
+    func guests() -> [GuestSeen] {
+        logs.map { GuestSeen(id: $0.key, agent: "Claude", busy: $0.value.busy, modified: $0.value.modified) }
+    }
+
     // MARK: Files
 
     /// The sessions whose Claude is still running: id and folder.

@@ -1,14 +1,15 @@
-// droppykit-lint: allow-file own-window: the pet's card, a small non-activating panel on Droppy's own panel surface that opens over the pet on a long press, a right-click or a click (the user's choice), with its submenus as panels beside it; closes on Escape, a click elsewhere (a mouse-click monitor, only while it is open) or once something in it is chosen (a letter typed hands over to the What can I do? box); never opened by itself, and closed in deactivate()
+// droppykit-lint: allow-file own-window: the pet's card, a small non-activating panel on Droppy's own panel surface that opens over the pet on a long press, a right-click or a click (the user's choice), with its submenus as panels beside it; closes on Escape, a click elsewhere (it stops being the key window, or the pet's own windows are clicked; no event monitor) or once something in it is chosen (a letter typed hands over to the What can I do? box); never opened by itself, and closed in deactivate()
 //
 //  PetCard.swift
 //  Pixpaw
 //
 //  Hold on your pet or right-click it (or click it, in Settings) and its
-//  card opens over it: who it is and how it's doing, the six things you
-//  do most as big buttons, and rows for the rest. A row with more opens
-//  it beside the card as you point at it, never over it, and so on for a
-//  menu inside that. Its ⋯ button gives the full menu, every item in it,
-//  for the keyboard and VoiceOver; the card's rows are that menu's own
+//  card opens over it, wide: who it is and how it's doing, the six things
+//  you do most as big buttons, rows for the rest beside them, and chips
+//  along the bottom. A row with more opens it beside the card as you point
+//  at it, a chip above itself when clicked, and so on for a menu inside
+//  that. VoiceOver's show-menu (VO-Shift-M on the pet) gives the full menu,
+//  every item in it; the card's rows are that menu's own
 //  groups and items (PetMenu.swift), less what's on top.
 //
 
@@ -223,13 +224,25 @@ final class PetCard {
     /// The submenus open beside it, outermost last.
     private var flyouts: [PetCardPanel] = []
     private var activation: DroppyPanelActivation?
-    private var clickAway: Any?
-    private var clickInside: Any?
+    /// The card's and each submenu's didResignKey observer, removed in close().
+    private var keyWatch: [ObjectIdentifier: NSObjectProtocol] = [:]
+    /// The card's activation, left running for the "What can I do?" box it
+    /// just handed over to, so Droppy doesn't hand the foreground away and
+    /// straight back; the box takes it, or it's finished a turn later.
+    private var handedOver: DroppyPanelActivation?
     private weak var target: NSView?
+    /// The open flyout is a bar chip's, `barItem`'s.
+    private var barOpen = false
+    private var barItem: UUID?
     private var look = PetCardLook.droppy
     private var level = 0.5
+    /// Draws the open card for a model (and a capped height), the same
+    /// actions wired in: `refresh` cuts it again in place with it.
+    private var make: ((PetCardModel, CGFloat?) -> PetCardView)?
 
     var isOpen: Bool { panel != nil }
+    /// Open, over the pet whose view is `target`.
+    func isOpen(over target: NSView) -> Bool { panel != nil && self.target === target }
     /// The app the card last opened over, for the box it hands over to.
     private(set) var openedOver: NSRunningApplication?
     private var closedAt = Date.distantPast
@@ -240,50 +253,86 @@ final class PetCard {
     /// `target`, the pet's view, exactly as its menu's do.
     /// A letter typed while it's open closes it and goes to `type`, the
     /// "What can I do?" box, with that letter in it.
+    /// `menu` pops up the full menu, for the header's ⋯ button.
     func show(_ model: PetCardModel, over petFrame: CGRect, target: NSView, look: PetCardLook, level: Double,
-              type: @escaping (String) -> Void) {
+              menu: @escaping () -> Void, type: @escaping (String) -> Void) {
         close()
         self.target = target
         self.look = look
         self.level = level
         let previous = NSWorkspace.shared.frontmostApplication
         openedOver = previous
-        let panel = Self.fitted(on: petFrame) { height in
+        let make: (PetCardModel, CGFloat?) -> PetCardView = { [weak self] model, height in
             PetCardView(model: model, look: look, level: level, height: height,
                         run: { [weak self] item, frame in self?.run(item, at: frame, depth: 0) },
-                        hover: { [weak self] item, frame in self?.hover(item, at: frame, depth: 0) })
+                        hover: { [weak self] item, frame in self?.hover(item, at: frame, depth: 0) },
+                        chip: { [weak self] item, frame, clicked in self?.chip(item, at: frame, clicked: clicked) },
+                        menu: { [weak self] in
+                            self?.close()
+                            // Once the card has gone, as a menu item's action runs.
+                            DispatchQueue.main.async { menu() }
+                        })
         }
+        self.make = make
+        let panel = Self.fitted(on: petFrame) { make(model, $0) }
         panel.onCancel = { [weak self] in self?.close() }
         panel.onType = { [weak self] text in
-            self?.close()
+            self?.close(handingOver: true)
             type(text)
         }
         panel.setFrameOrigin(Self.origin(for: panel.frame.size, over: petFrame))
         self.panel = panel
         panel.makeKeyAndOrderFront(nil)
         activation = DroppyPanelActivation.begin(for: panel, returningTo: previous)
-        // A click anywhere else closes it, as a menu would: in other apps,
-        // and in Droppy's own windows (the pet included).
-        clickAway = NSEvent.addGlobalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] _ in
-            MainActor.assumeIsolated { self?.close() }
-        }
-        clickInside = NSEvent.addLocalMonitorForEvents(matching: [.leftMouseDown, .rightMouseDown]) { [weak self] event in
-            MainActor.assumeIsolated {
-                guard let self, let panel = self.panel else { return }
-                if event.window !== panel, !self.flyouts.contains(where: { $0 === event.window }) { self.close() }
+        // A click anywhere else closes it, as a menu would: another app, the
+        // desktop or a Droppy window takes the keyboard from it. The pet's own
+        // windows never take it: CatPanel closes the card on their clicks.
+        watchKey(panel)
+    }
+
+    /// The card or one of its submenus stopped being the key window: once
+    /// the new one is settled, close unless it's the card or a submenu.
+    private func watchKey(_ window: NSWindow) {
+        keyWatch[ObjectIdentifier(window)] = NotificationCenter.default.addObserver(
+            forName: NSWindow.didResignKeyNotification, object: window, queue: .main) { [weak self] _ in
+            DispatchQueue.main.async {
+                MainActor.assumeIsolated {
+                    guard let self, let panel = self.panel else { return }
+                    let key = NSApp.keyWindow
+                    if key === panel || self.flyouts.contains(where: { $0 === key }) { return }
+                    self.close()
+                }
             }
-            return event
         }
     }
 
-    func close() {
-        if let clickAway { NSEvent.removeMonitor(clickAway) }
-        if let clickInside { NSEvent.removeMonitor(clickInside) }
-        clickAway = nil
-        clickInside = nil
+    private func unwatchKey(_ window: NSWindow) {
+        if let token = keyWatch.removeValue(forKey: ObjectIdentifier(window)) { NotificationCenter.default.removeObserver(token) }
+    }
+
+    /// The card's activation, when it just handed over to the box.
+    func takeHandedOver() -> DroppyPanelActivation? {
+        defer { handedOver = nil }
+        return handedOver
+    }
+
+    /// `handingOver`: the "What can I do?" box opens next, in this same turn,
+    /// and takes the activation over (`takeHandedOver`).
+    func close(handingOver: Bool = false) {
+        for token in keyWatch.values { NotificationCenter.default.removeObserver(token) }
+        keyWatch = [:]
         closeFlyouts(from: 0)
-        activation?.finish()
+        barOpen = false
+        if handingOver, let activation {
+            handedOver?.finish()
+            handedOver = activation
+            DispatchQueue.main.async { [weak self] in self?.takeHandedOver()?.finish() }
+        } else {
+            activation?.finish()
+            takeHandedOver()?.finish()
+        }
         activation = nil
+        make = nil
         guard let panel else { return }
         closedAt = Date()
         self.panel = nil
@@ -292,13 +341,31 @@ final class PetCard {
         panel.close()
     }
 
+    /// The open card cut again from `model` (the pet's state changed under
+    /// it: the home came out or went), in place over `petFrame`; an open
+    /// flyout of the old rows closes.
+    func refresh(_ model: PetCardModel, over petFrame: CGRect) {
+        guard let panel, let make else { return }
+        closeFlyouts(from: 0)
+        barOpen = false
+        var hosting = NSHostingView(rootView: make(model, nil))
+        let cap = Self.cap(on: petFrame)
+        if hosting.fittingSize.height > cap { hosting = NSHostingView(rootView: make(model, cap)) }
+        panel.contentView = hosting
+        let size = hosting.fittingSize
+        panel.setFrame(CGRect(origin: Self.origin(for: size, over: petFrame), size: size), display: true)
+    }
+
     /// The panel at a depth: 0 the card, 1 the first submenu beside it.
     private func panel(at depth: Int) -> PetCardPanel? { depth == 0 ? panel : flyouts.indices.contains(depth - 1) ? flyouts[depth - 1] : nil }
 
     /// Pointing at a row: its submenu opens beside the panel it's in, and
     /// any deeper one closes.
     private func hover(_ item: PetCardItem, at frame: CGRect, depth: Int) {
+        // A clicked tile's or chip's menu stays open while the pointer crosses the card's rows to reach it.
+        if depth == 0, barOpen { return }
         closeFlyouts(from: depth)
+        barOpen = false
         guard let children = item.children, item.enabled, let parent = panel(at: depth) else { return }
         let look = look, level = level
         let flyout = Self.fitted(on: parent.frame) { height in
@@ -310,11 +377,43 @@ final class PetCard {
         flyout.setFrameOrigin(Self.beside(parent.frame, rowTop: parent.frame.maxY - frame.minY, size: flyout.frame.size))
         flyouts.append(flyout)
         flyout.orderFront(nil)
+        watchKey(flyout)
+    }
+
+    /// A chip in the card's bar: clicked, its items open above it (or it
+    /// runs); pointed at while another chip's are open, its open instead.
+    private func chip(_ item: PetCardItem, at frame: CGRect, clicked: Bool) {
+        guard clicked || barOpen, let panel else { return }
+        guard let children = item.children, item.enabled else {
+            if clicked { run(item, at: frame, depth: 0) } else { closeFlyouts(from: 0); barOpen = false }
+            return
+        }
+        if clicked, barOpen, barItem == item.id { closeFlyouts(from: 0); barOpen = false; return }
+        if !clicked, barOpen, barItem == item.id { return }
+        closeFlyouts(from: 0)
+        let look = look, level = level
+        let flyout = Self.fitted(on: panel.frame) { height in
+            PetCardMenuView(items: children, look: look, level: level, height: height,
+                            run: { [weak self] child, rect in self?.run(child, at: rect, depth: 1) },
+                            hover: { [weak self] child, rect in self?.hover(child, at: rect, depth: 1) },
+                            heading: item)
+        }
+        flyout.onCancel = { [weak self] in self?.close() }
+        flyout.setFrameOrigin(Self.above(panel.frame, chip: frame, size: flyout.frame.size))
+        flyouts.append(flyout)
+        flyout.orderFront(nil)
+        watchKey(flyout)
+        barOpen = true
+        barItem = item.id
     }
 
     private func closeFlyouts(from depth: Int) {
         while flyouts.count > depth {
             let flyout = flyouts.removeLast()
+            unwatchKey(flyout)
+            // A clicked submenu has the keyboard: back to the card (or the
+            // submenu under it) first, so the card stays open.
+            if flyout.isKeyWindow { (flyouts.last ?? panel)?.makeKey() }
             flyout.onCancel = nil
             flyout.orderOut(nil)
             flyout.close()
@@ -325,9 +424,9 @@ final class PetCard {
     /// items beside the card.
     private func run(_ item: PetCardItem, at frame: CGRect, depth: Int) {
         guard item.enabled, let target else { return }
-        if item.children != nil { return hover(item, at: frame, depth: depth) }
+        if item.children != nil { return depth == 0 ? chip(item, at: frame, clicked: true) : hover(item, at: frame, depth: depth) }
         guard let action = item.action else { return }
-        close()
+        close(handingOver: action == PetMenuAction.ask.selector)
         let sender = NSMenuItem()
         sender.representedObject = item.represented
         NSApp.sendAction(action, to: target, from: sender)
@@ -356,13 +455,29 @@ final class PetCard {
         return CGPoint(x: x.rounded(), y: y.rounded())
     }
 
+    /// Above a chip of the card's bar (`chip` in the card's own top-left
+    /// coordinates), its leading edge at the chip's, on screen.
+    private static func above(_ parent: CGRect, chip: CGRect, size: CGSize) -> CGPoint {
+        let area = screen(for: parent)?.visibleFrame ?? parent.insetBy(dx: -800, dy: -800)
+        var x = parent.minX + chip.minX
+        var y = parent.maxY - chip.minY + 4
+        x = min(max(x, area.minX + 8), area.maxX - size.width - 8)
+        y = min(max(y, area.minY + 8), area.maxY - size.height - 8)
+        return CGPoint(x: x.rounded(), y: y.rounded())
+    }
+
     /// A panel no taller than the screen it opens on: one that would be is
     /// made again at that height, its rows scrolling.
     private static func fitted<V: View>(on rect: CGRect, _ make: (CGFloat?) -> V) -> PetCardPanel {
         let panel = PetCardPanel(make(nil))
-        let cap = ((screen(for: rect)?.visibleFrame.height ?? .greatestFiniteMagnitude) - 16).rounded(.down)
+        let cap = cap(on: rect)
         guard panel.frame.height > cap else { return panel }
         return PetCardPanel(make(cap))
+    }
+
+    /// The tallest a panel on `rect`'s screen may be.
+    private static func cap(on rect: CGRect) -> CGFloat {
+        ((screen(for: rect)?.visibleFrame.height ?? .greatestFiniteMagnitude) - 16).rounded(.down)
     }
 
     private static func screen(for rect: CGRect) -> NSScreen? {
@@ -444,48 +559,77 @@ struct PetCardSurface: View {
     }
 }
 
+/// The card, wide: on the left who it is, Right now and the big buttons,
+/// four across; on the right the menu's groups as rows; along the bottom
+/// Ask me's Droppy, Look and Capture as chips that open above themselves,
+/// and the settings gear.
 private struct PetCardView: View {
     let model: PetCardModel
     let look: PetCardLook
     let level: Double
     /// Set when the card would be taller than its screen: it's this tall,
-    /// and its rows scroll under the header and tiles.
+    /// and its two columns scroll between the header and the bar.
     let height: CGFloat?
     let run: (PetCardItem, CGRect) -> Void
     let hover: (PetCardItem, CGRect) -> Void
+    /// A bar chip clicked, or pointed at: its items open above it.
+    let chip: (PetCardItem, CGRect, Bool) -> Void
+    /// The ⋯ button: the full menu, every item in it.
+    let menu: () -> Void
     private static let radius: CGFloat = 20
+    static let width: CGFloat = 560
 
     var body: some View {
-        VStack(alignment: .leading, spacing: DroppySpacing.md) {
-            header
-            if let suggestion = model.suggestion { rightNow(suggestion) }
-            LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DroppySpacing.sm), count: 3), spacing: DroppySpacing.sm) {
-                ForEach(model.tiles) { tile($0) }
-            }
+        let split = PetCardSplit(model.groups)
+        VStack(alignment: .leading, spacing: DroppySpacing.sm) {
             if height != nil {
-                ScrollView { rows }
+                ScrollView { columns(split) }.frame(maxHeight: .infinity)
             } else {
-                rows
+                columns(split)
             }
+            Divider()
+            bar(split)
         }
         .padding(DroppySpacing.lg)
-        .frame(width: 280, height: height)
+        .frame(width: Self.width, height: height)
         .background(PetCardSurface(look: look, level: level, radius: Self.radius))
         .clipShape(RoundedRectangle(cornerRadius: Self.radius, style: .continuous))
     }
 
-    private var rows: some View {
-        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
-            ForEach(model.groups) { group in
-                if let title = group.title {
-                    Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
-                        .padding(.horizontal, DroppySpacing.sm).padding(.top, 2)
-                        .accessibilityAddTraits(.isHeader)
-                } else {
-                    Divider().padding(.vertical, 2)
+    private func columns(_ split: PetCardSplit) -> some View {
+        HStack(alignment: .top, spacing: DroppySpacing.lg) {
+            VStack(alignment: .leading, spacing: DroppySpacing.md) {
+                header
+                if model.suggestion != nil || !split.rightNow.isEmpty {
+                    VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+                        if let suggestion = model.suggestion { rightNow(suggestion) }
+                        ForEach(split.rightNow) { PetCardRow(item: $0, accent: false, height: 24, run: run, hover: hover) }
+                    }
                 }
-                ForEach(group.items) { PetCardRow(item: $0, accent: false, run: run, hover: hover) }
+                LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DroppySpacing.sm), count: 4), spacing: DroppySpacing.sm) {
+                    ForEach(model.tiles) { tile($0) }
+                }
             }
+            .frame(width: 272)
+            VStack(alignment: .leading, spacing: DroppySpacing.xsm) {
+                ForEach(split.columns) { group in
+                    VStack(alignment: .leading, spacing: 2) {
+                        if let title = group.title {
+                            Text(title).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                                .padding(.horizontal, DroppySpacing.sm)
+                                .accessibilityAddTraits(.isHeader)
+                        }
+                        ForEach(group.items) { item in
+                            if item.isSeparator {
+                                Divider().padding(.vertical, 2).padding(.horizontal, DroppySpacing.sm)
+                            } else {
+                                PetCardRow(item: item, accent: false, height: 24, run: run, hover: hover)
+                            }
+                        }
+                    }
+                }
+            }
+            .frame(maxWidth: .infinity, alignment: .leading)
         }
     }
 
@@ -551,11 +695,12 @@ private struct PetCardView: View {
     private func tile(_ item: PetCardItem) -> some View {
         GeometryReader { geo in
             Button { run(item, geo.frame(in: .global)) } label: {
-                VStack(spacing: 4) {
-                    Image(systemName: item.symbol ?? "circle").font(.system(size: 17))
+                // Every tile the same fixed size; its icon and words centred in it, badge or not.
+                VStack(spacing: 2) {
+                    Image(systemName: item.symbol ?? "circle").font(.system(size: 16)).frame(height: 20)
                     Text(item.tileTitle ?? item.title).font(.system(size: 11, weight: .medium)).lineLimit(1)
                     if let badge = item.badge {
-                        Text(badge).font(.system(size: 11)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
+                        Text(badge).font(.system(size: 10)).monospacedDigit().foregroundStyle(.secondary).lineLimit(1)
                     }
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
@@ -565,7 +710,92 @@ private struct PetCardView: View {
             .disabled(!item.enabled)
             .accessibilityLabel(item.spoken)
         }
-        .frame(height: 62)
+        .frame(height: 56)
+    }
+
+    /// The chips with their titles; when a Colour chip makes that too wide,
+    /// symbols and badges only (each still says its title on hover and to VoiceOver).
+    private func bar(_ split: PetCardSplit) -> some View {
+        ViewThatFits(in: .horizontal) {
+            barRow(split, titled: true)
+            barRow(split, titled: false)
+        }
+    }
+
+    private func barRow(_ split: PetCardSplit, titled: Bool) -> some View {
+        HStack(spacing: DroppySpacing.xsm) {
+            ForEach(split.bar) { PetCardChip(item: $0, titled: titled, chip: chip) }
+            Spacer(minLength: 0)
+            if let settings = split.settings { PetCardChip(item: settings, titled: false, chip: chip) }
+        }
+    }
+}
+
+/// The card's groups, placed: Right now's rows under its line, the titled
+/// groups in the right column, Ask me, Look, Capture and the gear in the bar.
+private struct PetCardSplit {
+    var rightNow: [PetCardItem] = []
+    var columns: [PetCardGroup] = []
+    var bar: [PetCardItem] = []
+    var settings: PetCardItem?
+
+    init(_ groups: [PetCardGroup]) {
+        for group in groups {
+            switch PetCardLayout.slot(group.title) {
+            case .rightNow: rightNow += group.items.filter { !$0.isSeparator }
+            case .column: columns.append(group)
+            case .bar:
+                for item in group.items where !item.isSeparator {
+                    if item.children == nil, item.symbol == "gearshape" { settings = item } else { bar.append(item) }
+                }
+            }
+        }
+    }
+}
+
+/// A chip in the card's bar: a click opens its items above it, and once one
+/// is open, pointing at another chip opens that one's instead.
+private struct PetCardChip: View {
+    let item: PetCardItem
+    let titled: Bool
+    let chip: (PetCardItem, CGRect, Bool) -> Void
+    @State private var frame = CGRect.zero
+
+    var body: some View {
+        Button { chip(item, frame, true) } label: {
+            HStack(spacing: 5) {
+                Image(systemName: item.symbol ?? "circle").foregroundStyle(.secondary)
+                if titled { Text(item.title).lineLimit(1) }
+                if let badge = item.badge { Text(badge).foregroundStyle(.secondary).lineLimit(1) }
+                if item.children != nil {
+                    Image(systemName: "chevron.up").font(.system(size: 9, weight: .semibold)).foregroundStyle(.tertiary)
+                }
+            }
+            .font(.system(size: 12))
+            .padding(.horizontal, titled ? DroppySpacing.smd : DroppySpacing.sm)
+            .frame(minWidth: 28, maxHeight: .infinity)
+            .contentShape(Rectangle())
+        }
+        .buttonStyle(PetChipStyle())
+        .disabled(!item.enabled)
+        .frame(height: 28)
+        .fixedSize(horizontal: true, vertical: false)
+        .background(GeometryReader { geo in
+            Color.clear
+                .onAppear { frame = geo.frame(in: .global) }
+                .onChange(of: geo.frame(in: .global)) { _, new in frame = new }
+        })
+        .onHover { inside in if inside { chip(item, frame, false) } }
+        .accessibilityLabel(item.spoken)
+        .accessibilityHint(item.children != nil ? "Opens above the card's bar" : "")
+        .help(item.title)
+    }
+}
+
+/// A chip: the row's wash, resting a little lit so it reads as a button.
+private struct PetChipStyle: ButtonStyle {
+    func makeBody(configuration: Configuration) -> some View {
+        PetWash(pressed: configuration.isPressed, radius: 8, resting: 0.07) { configuration.label }
     }
 }
 
@@ -578,9 +808,18 @@ private struct PetCardMenuView: View {
     let height: CGFloat?
     let run: (PetCardItem, CGRect) -> Void
     let hover: (PetCardItem, CGRect) -> Void
+    /// A bar chip's menu: its chip's symbol and title on top and a clear edge,
+    /// so it reads as that chip's menu over the card, not part of it.
+    var heading: PetCardItem? = nil
 
     var body: some View {
-        Group {
+        VStack(alignment: .leading, spacing: 4) {
+            if let heading {
+                Label(heading.title, systemImage: heading.symbol ?? "circle")
+                    .font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                    .padding(.horizontal, DroppySpacing.sm).padding(.top, 2)
+                    .accessibilityAddTraits(.isHeader)
+            }
             if height != nil {
                 ScrollView { list }
             } else {
@@ -591,6 +830,11 @@ private struct PetCardMenuView: View {
         .frame(width: 230, height: height)
         .background(PetCardSurface(look: look, level: level, radius: 14))
         .clipShape(RoundedRectangle(cornerRadius: 14, style: .continuous))
+        .overlay {
+            if heading != nil {
+                RoundedRectangle(cornerRadius: 14, style: .continuous).strokeBorder(.white.opacity(0.22), lineWidth: 1)
+            }
+        }
     }
 
     private var list: some View {
@@ -610,6 +854,8 @@ private struct PetCardMenuView: View {
 private struct PetCardRow: View {
     let item: PetCardItem
     let accent: Bool
+    /// 28 in a submenu, 24 in the card's right column.
+    var height: CGFloat = 28
     let run: (PetCardItem, CGRect) -> Void
     let hover: (PetCardItem, CGRect) -> Void
 
@@ -649,7 +895,7 @@ private struct PetCardRow: View {
             .accessibilityHint(item.children != nil ? "Opens beside the card" : "")
             .onHover { inside in if inside { hover(item, geo.frame(in: .global)) } }
         }
-        .frame(height: 28)
+        .frame(height: height)
     }
 }
 
@@ -698,46 +944,131 @@ private struct PetWash<Label: View>: View {
     }
 }
 
-/// A small card in the look picked, over a colourful desktop, so Settings
-/// shows what the glass and its level do before you open the real one.
+/// The wide card in miniature, in the look picked, over a colourful desktop,
+/// so Settings shows what the glass and its level do before you open the
+/// real one. Drawn at the card's own size (560 × 359) and scaled to fit.
 struct PetCardPreview: View {
     let look: PetCardLook
     let level: Double
 
+    private static let card = CGSize(width: 560, height: 359)
+    private static let margin: CGFloat = 24
+    private static let scene = CGSize(width: card.width + margin * 2, height: card.height + margin * 2)
+
     var body: some View {
+        GeometryReader { geo in
+            backdrop
+                .frame(width: Self.scene.width, height: Self.scene.height)
+                .scaleEffect(geo.size.width / Self.scene.width, anchor: .topLeading)
+        }
+        .aspectRatio(Self.scene.width / Self.scene.height, contentMode: .fit)
+        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("A preview of your pet's card in \(look.title.lowercased())")
+    }
+
+    private var backdrop: some View {
         ZStack {
             LinearGradient(colors: [Color(red: 0.17, green: 0.18, blue: 0.48), Color(red: 0.42, green: 0.29, blue: 0.72),
                                     Color(red: 0.91, green: 0.55, blue: 0.48)],
                            startPoint: .topLeading, endPoint: .bottomTrailing)
             // Something behind the glass to see through it.
-            Circle().fill(Color.yellow.opacity(0.9)).frame(width: 70).offset(x: -70, y: -28)
-            RoundedRectangle(cornerRadius: 6).fill(Color.teal).frame(width: 90, height: 26).offset(x: 80, y: 40)
-            VStack(alignment: .leading, spacing: 8) {
-                HStack {
-                    VStack(alignment: .leading, spacing: 1) {
-                        Text("Your pet").font(.system(size: 12, weight: .semibold))
-                        Text("Doing fine · 185 ★").font(.system(size: 10)).foregroundStyle(.secondary)
-                    }
-                    Spacer()
-                    Image(systemName: "mic").font(.system(size: 11))
-                }
-                HStack(spacing: 6) {
-                    ForEach(["fork.knife", "gamecontroller", "moon.zzz"], id: \.self) { symbol in
-                        Image(systemName: symbol).font(.system(size: 13))
-                            .frame(maxWidth: .infinity, minHeight: 32)
-                            .background(RoundedRectangle(cornerRadius: 8, style: .continuous).fill(Color.primary.opacity(0.08)))
-                    }
-                }
-                Label("Droppy", systemImage: "drop").font(.system(size: 11))
-            }
-            .padding(12)
-            .frame(width: 190)
-            .background(PetCardSurface(look: look, level: level, radius: 16))
-            .clipShape(RoundedRectangle(cornerRadius: 16, style: .continuous))
+            Circle().fill(Color.yellow.opacity(0.9)).frame(width: 180).offset(x: -190, y: -110)
+            RoundedRectangle(cornerRadius: 14).fill(Color.teal).frame(width: 220, height: 64).offset(x: 200, y: 140)
+            card
         }
-        .frame(height: 160)
-        .clipShape(RoundedRectangle(cornerRadius: 12, style: .continuous))
-        .accessibilityElement(children: .ignore)
-        .accessibilityLabel("A preview of your pet's card in \(look.title.lowercased())")
     }
+
+    private var card: some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.sm) {
+            HStack(alignment: .top, spacing: DroppySpacing.lg) {
+                VStack(alignment: .leading, spacing: DroppySpacing.md) {
+                    header
+                    rightNow
+                    LazyVGrid(columns: Array(repeating: GridItem(.flexible(), spacing: DroppySpacing.sm), count: 4), spacing: DroppySpacing.sm) {
+                        ForEach(Self.tiles, id: \.0) { tile($0.0, $0.1) }
+                    }
+                }
+                .frame(width: 272)
+                VStack(alignment: .leading, spacing: DroppySpacing.xsm) {
+                    ForEach(Self.groups, id: \.0) { group in
+                        VStack(alignment: .leading, spacing: 2) {
+                            Text(group.0).font(.system(size: 11, weight: .semibold)).foregroundStyle(.secondary)
+                                .padding(.horizontal, DroppySpacing.sm)
+                            ForEach(group.1, id: \.0) { row($0.0, $0.1) }
+                        }
+                    }
+                }
+                .frame(maxWidth: .infinity, alignment: .leading)
+            }
+            Spacer(minLength: 0)
+            Divider()
+            HStack(spacing: DroppySpacing.xsm) {
+                ForEach(Self.chips, id: \.0) { chip($0.0, $0.1) }
+                Spacer(minLength: 0)
+                chip(nil, "gearshape")
+            }
+        }
+        .padding(DroppySpacing.lg)
+        .frame(width: Self.card.width, height: Self.card.height)
+        .background(PetCardSurface(look: look, level: level, radius: 20))
+        .clipShape(RoundedRectangle(cornerRadius: 20, style: .continuous))
+    }
+
+    private var header: some View {
+        HStack(spacing: DroppySpacing.sm) {
+            VStack(alignment: .leading, spacing: 2) {
+                Text("Your pet").font(.system(size: 14, weight: .semibold))
+                Text("Doing fine · 185 ★").font(.system(size: 12)).foregroundStyle(.secondary)
+            }
+            Spacer(minLength: 0)
+            Image(systemName: "mic").font(.system(size: 12))
+                .frame(width: 28, height: 28)
+                .background(Circle().fill(Color.primary.opacity(0.1)))
+        }
+    }
+
+    private var rightNow: some View {
+        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+            HStack(spacing: DroppySpacing.xs) {
+                Image(systemName: "sparkles").font(.system(size: 11)).foregroundStyle(.tint)
+                Text("Right now: a screenshot just landed").font(.system(size: 12, weight: .medium)).lineLimit(1)
+            }
+            Label("To the shelf", systemImage: "tray.and.arrow.down").font(.system(size: 11))
+                .padding(.horizontal, DroppySpacing.sm).frame(height: 22)
+                .background(Capsule().fill(Color.primary.opacity(0.1)))
+        }
+    }
+
+    private func tile(_ title: String, _ symbol: String) -> some View {
+        VStack(spacing: 2) {
+            Image(systemName: symbol).font(.system(size: 16)).frame(height: 20)
+            Text(title).font(.system(size: 11, weight: .medium)).lineLimit(1)
+        }
+        .frame(maxWidth: .infinity, minHeight: 56, maxHeight: 56)
+        .background(RoundedRectangle(cornerRadius: 12, style: .continuous).fill(Color.primary.opacity(0.08)))
+    }
+
+    private func row(_ title: String, _ symbol: String) -> some View {
+        Label(title, systemImage: symbol).font(.system(size: 12)).lineLimit(1)
+            .padding(.horizontal, DroppySpacing.sm)
+            .frame(maxWidth: .infinity, minHeight: 24, alignment: .leading)
+    }
+
+    private func chip(_ title: String?, _ symbol: String) -> some View {
+        Group {
+            if let title { Label(title, systemImage: symbol) } else { Image(systemName: symbol) }
+        }
+        .font(.system(size: 11))
+        .padding(.horizontal, DroppySpacing.sm)
+        .frame(minWidth: 24, minHeight: 24)
+        .background(Capsule().fill(Color.primary.opacity(0.08)))
+    }
+
+    private static let tiles = [("Feed", "fork.knife"), ("Play", "gamecontroller"), ("Nap", "moon.zzz"), ("Pet", "hand.raised"),
+                                ("Fetch", "tennisball"), ("Ask", "bubble.left"), ("Focus", "timer"), ("Notes", "note.text")]
+    private static let groups = [("Desktop", [("Follow the cursor", "cursorarrow.motionlines"), ("Go home", "house")]),
+                                 ("Focus", [("Pomodoro", "timer"), ("Lofi", "music.note")]),
+                                 ("Tells you", [("Calendar events", "calendar"), ("Battery", "battery.75percent")])]
+    private static let chips = [("Droppy", "drop"), ("Wardrobe", "tshirt"), ("Pixel size", "square.grid.3x3"), ("Capture", "camera")]
 }

@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [2.2.0] - 2026-11-15
+
+### Added
+- Its own bowls: a hungry pet walks to the bowls by its home and eats by itself. Fill them under Care.
+- Playroom: Playroom… in the pet's menu opens one room across the shelf to throw toys, dress your pet up and arrange its home.
+- Guests: each Claude Code or Codex session your pet follows sends another pet to sit at a laptop by the home, with a "?" when it needs you.
+- Recorded voices for every pet: call, purr and chew.
+- Name your pet; Settings opens on your live pet in its outfit.
+- The cushion, bowls, plant, lamp, books and mailbox by the home get used, and after a focus round or agent run it sometimes finds you something.
+- Body doubling: focus asks what you're on, checks in halfway and stars it when done.
+- Days together (a day off never resets it), and Backup keeps the home, wardrobe, stars and stats in one file.
+- Drop a file on the shelf widget: a PNG becomes a coat or a framed picture, anything else a snack.
+- Off until you turn them on: Pixpaw Wrapped, an end-of-day recap, AI apps talking to your pet through Droppy's MCP, and In its own words (Apple Intelligence, on your Mac only).
+- Battery saver (opt-in): on battery or in Low Power Mode your pet stays put.
+
+### Changed
+- The shelf widget in Droppy's own style: rings for hunger, energy and mood, today with your pet, and your days together beside another widget.
+- Breaks, agents done or stuck and the late-night nudge use Droppy's HUD; the focus clock is a countdown on Droppy's compact clock.
+- Your pet keeps quiet while the app in front is full screen or presenting.
+- Each pet rests on its own spot: dog bed, nest, the dragon's hoard and more.
+- Notification bubbles start off on a new install (Droppy shows them too).
+- Needs Droppy 16.2.1 or later.
+
+### Fixed
+- Meeting notes hear quiet speech and keep your last words.
+- A pet on its resting spot no longer floats when the home moves; Settings text fields are left-aligned.
+
+## [2.0.4] - 2026-11-14
+
+### Fixed
+- Beside another widget on the shelf, what your pet is doing now reads in full instead of being cut off: it wraps onto a second line when it is too long for one, and the coding agents line shows as many agents as fit whole.
+
+## [2.0.3] - 2026-11-14
+
+### Fixed
+- The shelf widget's header no longer drops the photo button beside the camera: it rises beside the notch or the camera only where all five of its buttons fit, and otherwise sits whole just under it.
+
+## [2.0.2] - 2026-11-13
+
+### Changed
+- The shelf widget sits in Droppy's own widget box and header: alone on a Mac with a notch or the camera island, the header rises beside the camera like Droppy's own widgets, and its height, buttons and gaps come from Droppy itself.
+- The pet's mood and timer beside the notch use Droppy's own label font.
+
 ## [2.0.1] - 2026-11-11
 
 ### Changed

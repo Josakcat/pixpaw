@@ -2,6 +2,9 @@
 //  Scuffle.swift
 //  Pixpaw
 //
+//  The dust cloud is a CatPanel, so it sits under the pet panel's own-window
+//  waiver at the top of CatController.swift (lint reads it there).
+//
 //  Now and then the pet runs at its friend and the two disappear into a
 //  cartoon cloud of dust, stars flying, then pop out again as if nothing
 //  happened. Play-fighting, the way real cats and dogs do; nobody is hurt.

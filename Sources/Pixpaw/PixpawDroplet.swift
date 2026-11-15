@@ -31,6 +31,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private enum Key {
         static let coat = "coat"
         static let photoCoat = "photoCoat"
+        /// The framed picture from a PNG dropped on the widget, as art letters.
+        static let framedPicture = "framedPicture"
+        /// Today's moments with the pet, for the widget's timeline (`TodayMoments`).
+        static let todayMoments = "todayMoments"
         static let talks = "talks"
         static let notesModel = "meetingNotesModel"
         static let notesModelName = "meetingNotesModelName"
@@ -56,9 +60,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let welcomeBack = "welcomeBack"
         /// The first-day hello has been shown (or this was never a fresh install).
         static let helloSeen = "helloSeen"
+        /// The version the pet last said what's new for (or started fresh on).
+        static let lastVersion = "lastVersion"
         static let lateNights = "lateNights"
         static let lateNightTold = "lateNightTold"
         static let chases = "followsCursor"
+        static let batterySaver = "batterySaver"
         static let visible = "visible"
         static let pets = "pets"
         static let points = "points"
@@ -74,6 +81,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let lastFed = "lastFed"
         static let pounces = "pouncesOnDrags"
         static let chatty = "chatty"
+        static let ownWords = "ownWords"
         static let tellsNotifications = "tellsNotifications"
         static let tellsCalendar = "tellsCalendar"
         static let tellsBattery = "tellsBattery"
@@ -93,10 +101,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let carriesScreenshots = "carriesScreenshots"
         static let meals = "meals"
         static let giftDay = "giftDay"
+        /// Found things (Finds.saved) and whether the pet brings them.
+        static let finds = "finds"
+        static let bringsFinds = "bringsFinds"
         static let plays = "plays"
         static let firstMet = "firstMet"
         static let tellsMusic = "tellsMusic"
         static let tellsAgents = "tellsAgents"
+        static let guestsVisit = "guestsVisit"
         static let awakeForAgents = "awakeForAgents"
         static let answersAsks = "agentAsks"
         static let tellsScheduled = "tellsScheduled"
@@ -134,6 +146,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let friendCoat = "friendCoat"
         /// Each built-in pet's colourway by kind, the friend's as "friend.<kind>".
         static let petCoats = "petCoats"
+        /// A name you gave a built-in pet, by kind; drawn pets keep theirs in `OwnPet`.
+        static let petNames = "petNames"
         /// The friend's character; unset, the same as the pet's.
         static let friendKind = "friendKind"
         /// What the friend wears, chosen from its own menu.
@@ -156,8 +170,22 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         static let starsSpent = "starsSpent"
         static let decorOwned = "decorOwned"
         static let homeDecor = "homeDecor"
+        /// Meals left in its own bowls, and whether it eats from them by itself.
+        static let bowlMeals = "bowlMeals"
+        static let eatsFromBowls = "eatsFromBowls"
         static let focusMinutes = "focusMinutes"
+        static let bodyDoubling = "bodyDoubling"
+        static let dayRecap = "dayRecap"
+        static let dayRecapShown = "dayRecapShown"
+        static let dayTally = "dayTally"
+        static let stopTimes = "stopTimes"
+        static let aiAppTools = "aiAppTools"
         static let ownPets = "ownPets"
+        /// Days together, counted kindly (a missed day pauses, never resets).
+        static let kindStreak = "kindStreak"
+        /// Pixpaw Wrapped: the week and the month added up (off by default).
+        static let wrapped = "wrapped"
+        static let wrapLog = "wrapLog"
     }
 
     private var host: DropletHost?
@@ -186,9 +214,17 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var notchLastShortEnded: Date?
 
     // What the cat tells you about, and whether Droppy may read it.
-    @Published private(set) var tellsNotifications = true
+    @Published private(set) var tellsNotifications = false
+    /// Apple's on-device model rewrites its lines (off by default).
+    @Published private(set) var ownWords = false
     @Published private(set) var tellsCalendar = true
     @Published private(set) var tellsBattery = true
+    /// Battery saver: on battery or in Low Power Mode the pets stay put and
+    /// draw at 30 frames a second. Off by default: walking about is the pet.
+    @Published private(set) var batterySaver = false
+    /// Whether it is saving right now (the switch, and on battery).
+    @Published private(set) var savingPower = false
+    private var powerModeWatch: NSObjectProtocol?
     @Published private(set) var tellsHeat = true
     @Published private(set) var typesAlong = true
     @Published private(set) var carriesFiles = true
@@ -211,6 +247,15 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var firstMet = Date()
     @Published private(set) var tellsMusic = true
     @Published private(set) var tellsAgents = true
+    /// A guest in front of the home for each agent session (Guests.swift).
+    @Published private(set) var guestsVisit = true
+    /// The sessions the log watchers last saw, for the guests.
+    private var guestSessions: [GuestSeen] = []
+    /// The playroom on Droppy's shelf (Playroom.swift), and the one up now.
+    let playroom = PlayroomModel()
+    var playroomShown: ExpandedSurfacePresentation?
+    /// Droppy's takeover surfaces, for the playroom.
+    var notchSurfaces: (any DropletNotchSurfaceService)? { host?.notchSurface }
     /// Keep the Mac from sleeping while a coding agent works.
     @Published private(set) var awakeForAgents = false
     /// Scheduled runs (Desktop scheduled tasks, /loop): said when they
@@ -353,6 +398,33 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var focusMinutes = 25
     /// Pomodoro: four focus sessions with a break after each, the fourth a long one.
     @Published private(set) var pomodoroOn = false
+    /// Body doubling in its focus sessions: what you're working on, asked at
+    /// the start, checked halfway, and done or not at the end.
+    @Published private(set) var bodyDoubling = true
+    /// The end-of-day recap: once a day after your usual stop. Off by
+    /// default, since it learns when you usually stop (minutes of the day).
+    @Published private(set) var dayRecapOn = false
+    /// Today's counts for the recap and "Today so far" (counts only).
+    private var dayTally = DayTally()
+    private var stopTimes = StopTimes()
+    private var stopSavedMinute = -1
+    /// Days with your pet: a missed day pauses the count, never resets it.
+    @Published private(set) var kindStreak = KindStreak()
+    /// Pixpaw Wrapped: off by default, and its log is kept only while on.
+    @Published private(set) var wrappedOn = false
+    private var wrapLog = WrapLog()
+    /// What went wrong with the last backup saved or loaded, for Settings.
+    @Published private(set) var backupProblem: String?
+    /// Let AI apps talk to your pet: its tools in Droppy's MCP server. Off
+    /// by default (a door for other apps, so you open it).
+    @Published private(set) var aiAppTools = false
+    private var sayLimit = PetTools.RateLimit(every: PetTools.sayEvery)
+    private var noteLimit = PetTools.RateLimit(every: PetTools.noteEvery)
+    private var focusBuddy = FocusBuddy()
+    /// The pet's own question on its card, and when it answers itself.
+    private var buddyAskID: String?
+    private var buddyExpiry: Timer?
+    private var buddyUnanswered: (() -> Void)?
     @Published private(set) var pomodoroRound = 1
     @Published private(set) var breakStartedAt: Date?
     @Published private(set) var breakEndsAt: Date?
@@ -364,6 +436,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var ownPetProblem: String?
     @Published private(set) var photoCoatProblem: String?
     @Published private(set) var readingPhoto = false
+    /// A PNG just dropped on the widget, waiting for you to say what it
+    /// becomes; or a line about the last drop. Cleared after a while.
+    @Published private(set) var dropOffer: DropOffer?
+    private var dropOfferTask: Task<Void, Never>?
     @Published private(set) var hasPhotoCoat = false
     @Published private(set) var foldedEars = false
     @Published private(set) var classicPixels = false
@@ -377,9 +453,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var takingNotes = false
     @Published private(set) var summingUp = false
     /// Writing up the meeting just stopped; cancelled in deactivate().
-    private var summaryTask: Task<Void, Never>?
+    /// Each stopped meeting's finish and write-up; all called off in `deactivate`.
+    private var summaryTasks: [Task<Void, Never>] = []
     /// A stopped meeting whose notes file isn't written yet; deactivate saves it.
     private var unsavedNotes: (title: String?, startedAt: Date, minutes: Int, transcript: String)?
+    /// Meetings stopped but still waiting for their last words (a few seconds at most).
+    private var finishingMeetings: [MeetingRecorder] = []
     @Published private(set) var notesProblem: String?
     @Published private(set) var lastNotes: URL?
     @Published private(set) var notesModel = NoteModel.apple
@@ -422,6 +501,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     @Published private(set) var lateNightsOn = true
     /// To bed by itself in a call, on a shared screen and late at night.
     @Published private(set) var homeWhenQuiet = true
+    /// Brings a find now and then after a focus round or an agent run.
+    @Published private(set) var bringsFinds = true
+    /// A hungry pet goes to its own bowls by the home and eats by itself.
+    @Published private(set) var eatsFromBowls = true
     /// Why it went to bed by itself, while it is there.
     private var quietBed: QuietBed?
     /// When you last touched the Mac as a late-night bedtime began.
@@ -457,6 +540,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private let activitySubject = CurrentValueSubject<LiveActivityState?, Never>(nil)
     private let lockSubject = CurrentValueSubject<LockScreenStatusEntry?, Never>(nil)
     private var moodWatch: AnyCancellable?
+    /// Today with your pet, for the widget: moments noted as the pet's
+    /// counts go up (`TodayMoments`).
+    @Published private(set) var todayMoments = TodayMoments()
+    private var todayWatch: AnyCancellable?
+    private var todaySeen: [Int] = []
+    /// Clicks on Pixpaw's rows in Droppy's notification stack.
+    private var noticeWatch: AnyCancellable?
+    /// Read-later notices kept back while the pet is quiet (a call, a shared
+    /// screen, or quiet by hand), posted once it may talk again.
+    private var heldNotices: [DropletNotification] = []
+    /// The day the waiting gift was told about, so it is told once, and
+    /// whether that notice is still to be taken back.
+    private var giftNoticeDay = ""
+    private var giftNoticeUp = false
 
     public func activate(host: DropletHost) throws {
         self.host = host
@@ -472,6 +569,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         droppyToolsFound = DroppyTool.allCases.filter(tools.has)
         DispatchQueue.main.asyncAfter(deadline: .now() + 8) { [weak self] in self?.tellDroppyToolsOnce() }
         let prefs = host.preferences
+        // Someone who ran Pixpaw before: every run since 1.2.0 stores firstMet.
+        // Read before anything below writes it.
+        let returning = prefs.hasValue(forKey: Key.firstMet)
         ownPets = prefs.value(forKey: Key.ownPets, as: [OwnPet].self) ?? []
         OwnPets.soundFolder = host.environment.containerDirectory.appendingPathComponent("Own pet sounds", isDirectory: true)
         OwnPets.use(ownPets)
@@ -523,6 +623,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             // A new cat arrives fed.
             lastFed: Date(timeIntervalSince1970: prefs.value(forKey: Key.lastFed, default: Date().timeIntervalSince1970))
         )
+        cat.names = prefs.value(forKey: Key.petNames, as: [String: String].self) ?? [:]
         cat.homeOn = prefs.value(forKey: Key.homeOn, default: true)
         // Before 1.12 the home always stood: anyone who had it showing keeps
         // it that way; everyone else sees it only for naps.
@@ -533,6 +634,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             prefs.setValue(cat.keepsHomeOut, forKey: Key.homeKeptOut)
         }
         homeWhenQuiet = prefs.value(forKey: Key.homeWhenQuiet, default: true)
+        bringsFinds = prefs.value(forKey: Key.bringsFinds, default: true)
+        cat.bringsFinds = bringsFinds
+        cat.finds = Finds(saved: prefs.value(forKey: Key.finds, default: ""))
+        eatsFromBowls = prefs.value(forKey: Key.eatsFromBowls, default: true)
+        cat.eatsFromBowls = eatsFromBowls
+        // Bowls bought before they held meals start full.
+        cat.bowls = PetBowls(saved: prefs.value(forKey: Key.bowlMeals, default: PetBowls.holds))
+        FramedPicture.use(prefs.value(forKey: Key.framedPicture, as: [String: [String]].self))
         let decorOwned = DecorShop.owned(saved: prefs.value(forKey: Key.decorOwned, default: ""))
         cat.loadDecor(owned: decorOwned, spent: prefs.value(forKey: Key.starsSpent, default: 0),
                       placed: HomeDecorSet(saved: prefs.value(forKey: Key.homeDecor, default: ""), owned: decorOwned))
@@ -582,6 +691,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         let logger = host.log
         cat.log = { message in logger.debug(message) }
         self.cat = cat
+        playroom.cat = cat
+        playroom.picture = { [weak cat] id in
+            guard let item = HomeDecor(rawValue: id), let cat else { return nil }
+            return CatSprites.shared.decorIcon(item, fine: cat.drawsFine, look: cat.kind.decorLook)
+        }
         if let kept = prefs.value(forKey: Key.social, as: PetSocial.self) { social = kept } else { prefs.setValue(social, forKey: Key.social) }
         stats = prefs.value(forKey: Key.stats, as: PetStats.self) ?? PetStats()
         if let kept = prefs.value(forKey: Key.allTime, as: PetAllTime.self) {
@@ -595,8 +709,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat.daysTogether = { [weak self] in self?.daysTogether ?? 0 }
         cat.onStarsEarned = { [weak self] in self?.starsEarnedToday() }
         cat.onOpenWardrobe = { [weak self] in self?.openWardrobe() }
+        cat.onPlayroom = { [weak self] in self?.openPlayroom() }
         cat.onOpenSettings = { [weak self] in self?.host?.workspace.openSettings() }
         cat.onGesture = { [weak self] in self?.hello.did($0) }
+        cat.onUnlocked = { [weak self] item in self?.suggest(PetSuggestions.unlock(item.title, item: item.rawValue, at: Date())) }
         cat.onColour = { [weak self] in self?.setColour($0) }
         cat.onClassicPixels = { [weak self] in self?.setClassicPixels($0) }
         cat.traits = social.petTraits
@@ -614,9 +730,24 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             notchMomentsOff = Set(off.compactMap(NotchMomentKind.init(rawValue:)))
         }
         lightsNotch = prefs.value(forKey: Key.notchGlow, default: true)
-        tellsNotifications = prefs.value(forKey: Key.tellsNotifications, default: true)
+        ownWords = prefs.value(forKey: Key.ownWords, default: false)
+        PetLines.shared.enabled = ownWords
+        // Off for a new install, since Droppy's own notification HUD shows the
+        // banners too; anyone who had Pixpaw keeps what they had (on, unless changed).
+        if prefs.hasValue(forKey: Key.tellsNotifications) {
+            tellsNotifications = prefs.value(forKey: Key.tellsNotifications, default: true)
+        } else {
+            tellsNotifications = returning
+            prefs.setValue(returning, forKey: Key.tellsNotifications)
+        }
         tellsCalendar = prefs.value(forKey: Key.tellsCalendar, default: true)
         tellsBattery = prefs.value(forKey: Key.tellsBattery, default: true)
+        batterySaver = prefs.value(forKey: Key.batterySaver, default: false)
+        powerModeWatch = NotificationCenter.default.addObserver(
+            forName: .NSProcessInfoPowerStateDidChange, object: nil, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.refreshPowerSaver() }
+        }
         tellsHeat = prefs.value(forKey: Key.tellsHeat, default: true)
         typesAlong = prefs.value(forKey: Key.typesAlong, default: true)
         cat.typesAlong = typesAlong
@@ -628,13 +759,42 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         noteStreak = prefs.value(forKey: Key.noteStreak, as: NoteStreak.self) ?? NoteStreak()
         countdowns = (prefs.value(forKey: Key.countdowns, as: [Countdown].self) ?? []).filter { $0.daysLeft >= 0 }
         showTopNote()
-        cat.onSignDone = { [weak self] in self?.completeNote() ?? false }
+        cat.onSignDone = { [weak self] in
+            guard let self else { return false }
+            // The task on the sign clicked: done early, for its star.
+            if let task = self.focusBuddy.shownTask {
+                // "Still on…?" or Switch is up: the sign holds the task, not
+                // a note, so a click never takes a hidden note off the list.
+                guard self.focusBuddy.stage == .working else { return false }
+                self.closeBuddyCard()
+                self.finishFocusTask(done: true, task: task)
+                return false
+            }
+            return self.completeNote()
+        }
         cat.onAskSign = { [weak self] in self?.askForNote() }
         nudgesOn = prefs.value(forKey: Key.nudges, default: true)
         distractionWords = prefs.value(forKey: Key.distractions, as: [String].self) ?? DistractionWatcher.defaultWords
         distractions.words = distractionWords
         distractions.onNudge = { [weak self] _ in self?.nudgeBackToWork() }
         pomodoroOn = prefs.value(forKey: Key.pomodoro, default: false)
+        bodyDoubling = prefs.value(forKey: Key.bodyDoubling, default: true)
+        dayRecapOn = prefs.value(forKey: Key.dayRecap, default: false)
+        dayTally = prefs.value(forKey: Key.dayTally, as: DayTally.self) ?? DayTally()
+        stopTimes = prefs.value(forKey: Key.stopTimes, as: StopTimes.self) ?? StopTimes()
+        kindStreak = prefs.value(forKey: Key.kindStreak, as: KindStreak.self) ?? KindStreak()
+        cat.homeWide = kindStreak.days >= Wrapped.widerHomeAt
+        wrappedOn = prefs.value(forKey: Key.wrapped, default: false)
+        wrapLog = wrappedOn ? prefs.value(forKey: Key.wrapLog, as: WrapLog.self) ?? WrapLog() : WrapLog()
+        cat.wrappedOn = wrappedOn
+        cat.onTodaySoFar = { [weak self] span in
+            switch span {
+            case "week": self?.showWrapSoFar(.weekOfYear)
+            case "month": self?.showWrapSoFar(.month)
+            default: self?.showDayRecap(byHand: true)
+            }
+        }
+        aiAppTools = prefs.value(forKey: Key.aiAppTools, default: false)
         // Watching Downloads can make macOS ask for folder access, so it waits
         // until it is switched on in Settings.
         tellsDownloads = prefs.value(forKey: Key.tellsDownloads, default: false)
@@ -642,6 +802,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         carriesScreenshots = prefs.value(forKey: Key.carriesScreenshots, default: false)
         tellsMusic = prefs.value(forKey: Key.tellsMusic, default: true)
         tellsAgents = prefs.value(forKey: Key.tellsAgents, default: true)
+        guestsVisit = prefs.value(forKey: Key.guestsVisit, default: true)
         awakeForAgents = prefs.value(forKey: Key.awakeForAgents, default: false)
         answersAsks = prefs.value(forKey: Key.answersAsks, default: true)
         tellsScheduled = prefs.value(forKey: Key.tellsScheduled, default: true)
@@ -695,6 +856,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             // Published values arrive before they are stored; read them next turn.
             DispatchQueue.main.async { self?.publishActivity() }
         }
+        noticeWatch = host.notifications.events.sink { [weak self] event in self?.noticeEvent(event) }
+        watchToday(cat)
 
         host.shortcuts.register(
             id: "toggle-cat",
@@ -773,6 +936,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if freshInstall, isOut {
             hello.start()
         }
+        // After an update: what's new, in one bubble, once. Kept until the
+        // pet is out to say it.
+        let version = Bundle(for: PixpawDroplet.self).infoDictionary?["CFBundleShortVersionString"] as? String ?? ""
+        let previous = prefs.value(forKey: Key.lastVersion, as: String.self)
+        if !version.isEmpty, previous != version {
+            if let line = WhatsNew.line(previous: previous, current: version, freshInstall: freshInstall) {
+                if isOut, !freshInstall {
+                    hello.whatsNew(line)
+                    prefs.setValue(version, forKey: Key.lastVersion)
+                }
+            } else {
+                prefs.setValue(version, forKey: Key.lastVersion)
+            }
+        }
         prefs.setValue(true, forKey: Key.helloSeen)
         festivalsOn = prefs.value(forKey: Key.festivals, default: true)
         festivalsHidden = Set(prefs.value(forKey: Key.festivalsHidden, default: "").split(separator: ",")
@@ -793,6 +970,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                 self?.refreshMorning()
                 self?.remindDueNotes()
                 self?.refreshCountdowns()
+                self?.refreshDayRecap()
+                self?.refreshPowerSaver()
+                self?.refreshKindStreak()
+                self?.refreshWrapped()
             }
         }
         screenWatch = NotificationCenter.default.addObserver(
@@ -806,6 +987,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     public func deactivate() {
+        host?.hud.dismiss(id: MomentHUD.id)
+        host?.hud.dismiss(id: BreakHUD.id)
+        closePlayroom()
+        playroom.stop()
+        PetLines.shared.stop()
+        dropOfferTask?.cancel()
+        dropOfferTask = nil
+        dropOffer = nil
         hello.stop()
         PetCard.shared.close()
         stopCIWatches()
@@ -813,17 +1002,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         SoundOutput.shared.stopAll()
         meetingTimer?.invalidate()
         meetingTimer = nil
-        if let meeting {
-            let lines = meeting.stop()
+        // Nothing waits for last words here: both are cut off now, keeping what was heard.
+        var unsaved = [unsavedNotes].compactMap { $0 }
+        for meeting in finishingMeetings + [meeting].compactMap({ $0 }) {
+            let lines = meeting.cancel()
             if !lines.isEmpty {
-                unsavedNotes = (meeting.title, meeting.startedAt, meeting.minutes,
-                                MeetingNotes.transcript(lines, bothSides: meeting.hearsMicrophone && meeting.hearsOthers))
+                unsaved.append((meeting.title, meeting.startedAt, meeting.minutes,
+                                MeetingNotes.transcript(lines, bothSides: meeting.hearsMicrophone && meeting.hearsOthers)))
             }
         }
         meeting = nil
-        // Last chance for a transcript not yet on disk: one small write, no summary.
-        if let notes = unsavedNotes {
-            unsavedNotes = nil
+        finishingMeetings = []
+        unsavedNotes = nil
+        // Last chance for a transcript not yet on disk: one small write each, no summary.
+        for notes in unsaved {
             do {
                 _ = try MeetingNotes.save(title: notes.title, startedAt: notes.startedAt, minutes: notes.minutes,
                                           summary: "_Summary skipped: Pixpaw was turned off._", by: nil,
@@ -837,8 +1029,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         notePrompt.close()
         // A summary still to come is called off: no model or Claude runs after
         // this, and a file already saved stays where it is.
-        summaryTask?.cancel()
-        summaryTask = nil
+        summaryTasks.forEach { $0.cancel() }
+        summaryTasks = []
         summingUp = false
         anglePrompt.cancel()
         askBox.close()
@@ -858,12 +1050,20 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         focusTimer = nil
         focusStartedAt = nil
         focusEndsAt = nil
+        buddyExpiry?.invalidate()
+        buddyExpiry = nil
+        buddyUnanswered = nil
+        buddyAskID = nil
+        focusBuddy = FocusBuddy()
         breakTimer?.invalidate()
         breakTimer = nil
         breakStartedAt = nil
         breakEndsAt = nil
         distractions.stop()
         festivalCheck = nil
+        if let powerModeWatch { NotificationCenter.default.removeObserver(powerModeWatch) }
+        powerModeWatch = nil
+        savingPower = false
         if let screenWatch { NotificationCenter.default.removeObserver(screenWatch) }
         screenWatch = nil
         festivals.hide()
@@ -883,9 +1083,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         serverWatch = nil
         localServer = nil
         agents = [:]
+        guestSessions = []
         refreshKeepAwake()
         moodWatch?.cancel()
         moodWatch = nil
+        todayWatch?.cancel()
+        todayWatch = nil
+        noticeWatch?.cancel()
+        noticeWatch = nil
+        heldNotices = []
+        host?.notifications.withdrawAll()
         notchShort = nil
         notchShowing = nil
         notchLastShortEnded = nil
@@ -943,6 +1150,18 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     /// Puts a colourway on your pet, or on its friend.
+    /// Names your pet, the way a drawn pet is renamed: trimmed, at most 30
+    /// letters; empty goes back to the kind's own name.
+    func setPetName(_ name: String) {
+        guard let cat else { return }
+        if cat.kind.isOwn, let pet = OwnPets.pet(cat.kind) {
+            return renameOwnPet(pet.slot, to: name.isEmpty ? pet.name : name)
+        }
+        let name = name.trimmingCharacters(in: .whitespacesAndNewlines)
+        cat.names[cat.kind.rawValue] = name.isEmpty ? nil : String(name.prefix(30))
+        host?.preferences.setValue(cat.names, forKey: Key.petNames)
+    }
+
     func setPetCoat(_ coat: PetCoat, friend: Bool = false) {
         petCoats[(friend ? "friend." : "") + coat.kind.rawValue] = coat.id
         CatSprites.shared.petCoats = petCoats
@@ -982,6 +1201,131 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                 photoCoatProblem = error.localizedDescription
             }
         }
+    }
+
+    // MARK: Today with your pet
+
+    /// Notes a moment each time a pet, a meal, a game or a stretch is counted.
+    private func watchToday(_ cat: CatController) {
+        todayMoments = host?.preferences.value(forKey: Key.todayMoments, as: TodayMoments.self) ?? TodayMoments()
+        todaySeen = [cat.pets, cat.meals, cat.plays, cat.stretches]
+        todayWatch = Publishers.CombineLatest4(cat.$pets, cat.$meals, cat.$plays, cat.$stretches)
+            .dropFirst()
+            .sink { [weak self] pets, meals, plays, stretches in
+                self?.noteToday([pets, meals, plays, stretches])
+            }
+    }
+
+    private func noteToday(_ counts: [Int]) {
+        defer { todaySeen = counts }
+        guard todaySeen.count == counts.count else { return }
+        let kinds: [TodayMoments.Kind] = [.pet, .meal, .play, .stretch]
+        let now = Date(), calendar = Calendar.current
+        let minute = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
+        var changed = false
+        for (index, kind) in kinds.enumerated() {
+            let added = counts[index] - todaySeen[index]
+            // A loaded backup jumps by hundreds: that isn't a moment today.
+            guard added > 0, added <= 20 else { continue }
+            todayMoments.note(kind, added, minute: minute, today: StarDay.today)
+            changed = true
+        }
+        if changed { host?.preferences.setValue(todayMoments, forKey: Key.todayMoments) }
+    }
+
+    // MARK: Drops on the widget
+
+    /// What the widget shows after a drop.
+    enum DropOffer: Equatable {
+        /// A PNG: a coat, or a framed picture for the home?
+        case picture(URL)
+        /// Working on it.
+        case reading
+        /// How it went, in a line.
+        case said(String)
+    }
+
+    /// Files dropped on the shelf widget. The first one counts: a PNG asks
+    /// what to become, anything else is eaten for a star. Files are only
+    /// read, never moved or changed.
+    func widgetDrop(_ providers: [NSItemProvider]) -> Bool {
+        guard let provider = providers.first(where: { $0.hasItemConformingToTypeIdentifier(UTType.fileURL.identifier) }) else { return false }
+        _ = provider.loadObject(ofClass: URL.self) { [weak self] url, _ in
+            guard let url, url.isFileURL else { return }
+            let sorted = WidgetDrop.classify(url)
+            Task { @MainActor [weak self] in self?.dropped(sorted) }
+        }
+        return true
+    }
+
+    private func dropped(_ sorted: Result<WidgetDrop, WidgetDrop.Problem>) {
+        guard let cat else { return }
+        switch sorted {
+        case .success(.picture(let url)):
+            showDropOffer(.picture(url), for: 30)
+        case .success(.snack(let name)):
+            cat.eatDrop()
+            showDropOffer(.said("Crunch! \(name) was tasty. The file is just where it was."), for: 6)
+        case .failure(let problem):
+            showDropOffer(.said(problem.message), for: 6)
+        }
+    }
+
+    private func showDropOffer(_ offer: DropOffer?, for seconds: Double) {
+        dropOffer = offer
+        dropOfferTask?.cancel()
+        dropOfferTask = Task { [weak self] in
+            try? await Task.sleep(for: .seconds(seconds))
+            guard !Task.isCancelled else { return }
+            self?.dropOffer = nil
+        }
+    }
+
+    func dismissDropOffer() { showDropOffer(nil, for: 0) }
+
+    /// The dropped PNG as a coat, through the photo coat's reader.
+    func dropAsCoat() {
+        guard case .picture(let url)? = dropOffer else { return }
+        showDropOffer(.reading, for: 30)
+        Task { [weak self] in
+            let result = await Task.detached(priority: .userInitiated) { Result { try PhotoCoat.read(url) } }.value
+            guard let self else { return }
+            switch result {
+            case .success(let palette):
+                PhotoCoat.use(palette)
+                hasPhotoCoat = true
+                host?.preferences.setValue(palette, forKey: Key.photoCoat)
+                if cat?.kind.hasCoats == false { setKind(.cat) }
+                setCoat(.photo)
+                cat?.celebrate()
+                showDropOffer(.said("A new coat in those colours. Only the colours were kept."), for: 6)
+            case .failure(let error):
+                showDropOffer(.said(error.localizedDescription), for: 8)
+            }
+        }
+    }
+
+    /// The dropped PNG as a framed picture beside the home.
+    func dropAsPicture() {
+        guard case .picture(let url)? = dropOffer else { return }
+        showDropOffer(.reading, for: 30)
+        let classic = CatArt.homeColors, fine = FineArt.homeColors, scale = FineArt.scale
+        Task { [weak self] in
+            let art = await Task.detached(priority: .userInitiated) {
+                FramedPicture.read(url, classic: classic, fine: fine, fineScale: scale)
+            }.value
+            guard let self else { return }
+            guard let art else { return showDropOffer(.said(WidgetDrop.Problem.unreadable.message), for: 6) }
+            FramedPicture.use(art)
+            host?.preferences.setValue(art, forKey: Key.framedPicture)
+            cat?.hangPicture()
+            showDropOffer(.said("Framed, a few pixels big. The file is just where it was."), for: 6)
+        }
+    }
+
+    /// The AI agents page in Settings, from the widget's empty usage page.
+    func openAISettings() {
+        host?.workspace.openSettingsPage(SettingsPage.ai.rawValue, title: SettingsPage.ai.title)
     }
 
     func forgetPhotoCoat() {
@@ -1172,7 +1516,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// The pet's commands the box offers: id, title, symbol, other words for it.
     private var petAsks: [(id: String, title: String, symbol: String, keywords: [String])] {
         var asks: [(id: String, title: String, symbol: String, keywords: [String])] = [
-            ("feed", "Feed \(cat?.kind.title ?? "your pet")", "fork.knife", ["food", "eat", "hungry", "dinner"]),
+            ("feed", "Feed \(cat?.title ?? "your pet")", "fork.knife", ["food", "eat", "hungry", "dinner"]),
             ("treat", "Give a treat", "fish", ["snack"]),
             ("come", "Come here", "hand.wave", ["call", "over"]),
             ("nap", "Nap", "moon.zzz", ["rest", "bed"]),
@@ -1183,6 +1527,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             ("gif", "Record a GIF", "film", ["video"]),
             ("join", "Join the next meeting", "video", ["call", "meeting", "zoom", "meet"]),
             ("usage", "How much of my plan is left", "gauge.with.dots.needle.33percent", ["usage", "quota", "limit", "claude"]),
+            ("today", "Today so far", "sun.horizon", ["recap", "summary", "day", "done", "stats"]),
         ]
         asks.append(inSession ? ("stopFocus", "Stop focus", "stop.circle", ["focus", "pomodoro"])
                     : ("focus", "Focus for \(focusMinutes) min", "timer", ["pomodoro", "work", "timer"]))
@@ -1201,7 +1546,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         // Settings, Sounds and Colour all sit on Pixpaw's main page in Droppy's Settings.
         if let cat, cat.hasHome, !cat.isFriend {
             // Found by the current pet's own names too ("fish dish", "hamster wheel").
-            let look = cat.kind.actsLike.rawValue
+            let look = cat.kind.decorLook
             asks.append(("decorate", "Decorate my home…", "house", ["decor", "decorate", "decorations", "buy", "stars"]
                          + HomeDecor.allCases.map { $0.title(for: look).lowercased() }))
         }
@@ -1224,7 +1569,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         case let .note(note): (title, symbol) = ("Put “\(note.count > 40 ? note.prefix(39) + "…" : note)” on my sign", "signpost.right")
         case let .focus(minutes): (title, symbol) = ("Focus for \(minutes ?? focusMinutes) min", "timer")
         case let .play(game): (title, symbol) = (game.map { "Play with the \($0.title.lowercased())" } ?? "Play", "gamecontroller")
-        case .praise: (title, symbol) = ("Good \(cat?.kind.title.lowercased() ?? "pet")!", "heart")
+        case .praise: (title, symbol) = (cat?.isNamed == true ? "Good \(cat?.title ?? "pet")!" : "Good \(cat?.kind.title.lowercased() ?? "pet")!", "heart")
         default:
             let id: String = switch command {
             case .come: "come"
@@ -1296,6 +1641,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             case "play": perform(.play(nil))
             case "stretch": perform(.stretch)
             case "askNote": askForNote()
+            case "today": showDayRecap(byHand: true)
             case "photo": perform(.photo)
             case "gif": perform(.gif)
             case "join": perform(.join)
@@ -1340,7 +1686,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             case .openCI: ciFailedURL != nil
             case .focusAgain: !inSession && !droppyFocusing
             case .openNotes: lastNotes != nil
-            case .pickColour: true
+            case .pickColour, .nameMe: true
+            case .tryItOn: true
             }
         }
     }
@@ -1372,7 +1719,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         case .stretch: cat?.stretchWithMe()
         case .openNotes: if let lastNotes { host?.workspace.open(lastNotes) }
         // Colour is on Pixpaw's main page in Droppy's Settings.
-        case .pickColour: host?.workspace.openSettings()
+        case .pickColour, .nameMe: host?.workspace.openSettings()
+        case .tryItOn:
+            if let item = suggestion.item.flatMap(CatAccessory.init(rawValue:)) { wear(item, in: item.slot) }
         }
         // Done with it (a server stays while it's up, as before).
         suggestionList.removeAll { $0.kind == kind && kind != .meeting || ($0.kind == .meeting && action == .join) }
@@ -1455,12 +1804,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Droppy's timer ends), else the pet's own session.
     func focusByHand(minutes: Int? = nil) {
         guard usesDroppy(.pomodoro), runDroppyTool(.pomodoro, said: "Pomodoro's on in Droppy. Pause or stop it there.") else {
-            return startFocus(minutes: minutes)
+            return startFocus(minutes: minutes, byHand: true)
         }
         cat?.focusing = true
         droppyFocusTimer?.invalidate()
         droppyFocusTimer = Timer.scheduledTimer(withTimeInterval: TimeInterval((minutes ?? focusMinutes) * 60), repeats: false) { [weak self] _ in
-            MainActor.assumeIsolated { self?.endDroppyFocus() }
+            MainActor.assumeIsolated {
+                // Droppy's Pomodoro ran its time: a session done today too.
+                self?.countToday(.focusSessions)
+                self?.endDroppyFocus()
+            }
         }
     }
 
@@ -1521,7 +1874,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             try await recorder.start(notesSource)
             // Stopped or deactivated while it was starting: let go of what it started.
             guard meeting === recorder, host != nil else {
-                _ = recorder.stop()
+                _ = recorder.cancel()
                 return
             }
             liveTranscript.setBothSides(recorder.hearsMicrophone && recorder.hearsOthers)
@@ -1541,7 +1894,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             }
         } catch {
             guard meeting != nil else { return }
-            _ = meeting?.stop()
+            _ = meeting?.cancel()
             meeting = nil
             takingNotes = false
             liveTranscript.reset()
@@ -1577,13 +1930,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         guard let meeting else { return }
         meetingTimer?.invalidate()
         meetingTimer = nil
-        let lines = meeting.stop()
+        // Stopped for the user at once; the last words come in behind it
+        // (`finish`, a few seconds at most), into this meeting's notes only.
+        let heard = meeting.heardAnything
         self.meeting = nil
+        finishingMeetings.append(meeting)
         takingNotes = false
         liveTranscript.reset()
-        let transcript = MeetingNotes.transcript(lines, bothSides: meeting.hearsMicrophone && meeting.hearsOthers)
-        let model = lines.isEmpty ? .none : notesModel
-        unsavedNotes = lines.isEmpty ? nil : (meeting.title, meeting.startedAt, meeting.minutes, transcript)
+        let model = heard ? notesModel : .none
         let name = notesModelName
         let language = notesLanguage
         let by = model == .none ? nil : model == .apple ? "Apple Intelligence" : [model.title.components(separatedBy: " (").first ?? "", name].filter { !$0.isEmpty }.joined(separator: " ")
@@ -1604,28 +1958,36 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                 }, onCancel: { done.resume(returning: nil) })
             }
         }
-        summaryTask?.cancel()
-        summaryTask = Task { [weak self] in
+        // Not calling off an earlier meeting still finishing: each keeps its own lines.
+        let task = Task { [weak self] in
+            let lines = await meeting.finish()
+            // Deactivated meanwhile: deactivate kept the transcript.
+            guard !Task.isCancelled, let self else { return }
+            self.finishingMeetings.removeAll { $0 === meeting }
+            let transcript = MeetingNotes.transcript(lines, bothSides: meeting.hearsMicrophone && meeting.hearsOthers)
+            // Words were being made out but none came through: nothing to sum up.
+            let sums = !lines.isEmpty && model != .none
+            if !lines.isEmpty { self.unsavedNotes = (meeting.title, meeting.startedAt, meeting.minutes, transcript) }
             await meeting.stopped?.value
             let angle = await angle?.value
             guard !Task.isCancelled else { return }
             var summary = ""
             var failed: String?
-            if model != .none {
+            if sums {
                 do { summary = try await MeetingNotes.summarize(transcript, language: language, model: model, name: name, angle: angle) }
                 catch { failed = error.localizedDescription }
             }
             // Deactivated meanwhile: a late summary is dropped.
-            guard let self, !Task.isCancelled else { return }
+            guard !Task.isCancelled else { return }
             self.summingUp = false
             self.publishActivity()
             self.cat?.showTool(nil)
             if let failed { summary = "_\(failed)_" }
-            self.unsavedNotes = nil
+            if self.unsavedNotes?.startedAt == meeting.startedAt { self.unsavedNotes = nil }
             do {
                 // Written off the main actor; the answer comes back here, on main.
                 let title = meeting.title, startedAt = meeting.startedAt, minutes = meeting.minutes
-                let summary = summary, ok = failed == nil
+                let summary = summary, ok = failed == nil && sums
                 let file = try await Task.detached(priority: .utility) {
                     try MeetingNotes.save(title: title, startedAt: startedAt, minutes: minutes,
                                           summary: summary, by: ok ? by : nil, transcript: transcript,
@@ -1636,14 +1998,19 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                 self.suggest(PetSuggestions.meetingNotes(at: Date()))
                 // One line after the shelf answers, so "couldn't reach your shelf" isn't talked over.
                 self.addToShelf([file]) { [weak self] shelved in
-                    self?.cat?.say(!shelved ? CatWords.notesNotShelved : failed == nil ? CatWords.notesReady : CatWords.notesWithoutSummary)
+                    // Read later: in Droppy's stack, the bubble only if Droppy
+                    // turned it down (or the shelf couldn't take the file).
+                    guard let self else { return }
+                    if shelved, self.readLater(Notice.meetingSaved(title: title, summarised: ok), always: true) { return }
+                    self.cat?.say(!shelved ? CatWords.notesNotShelved : ok ? CatWords.notesReady : CatWords.notesWithoutSummary)
                 }
-                if failed == nil { self.cat?.celebrate() }
+                if ok { self.cat?.celebrate() }
             } catch {
                 self.notesProblem = error.localizedDescription
                 self.cat?.say(CatLine(text: "I couldn't save the notes: \(error.localizedDescription)", symbol: "exclamationmark.triangle", seconds: 6))
             }
-        }
+            }
+        summaryTasks.append(task)
     }
 
     /// What's left of each plan, in a line.
@@ -1703,6 +2070,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         guard !text.isEmpty, notes.count < PetNote.limit else { return }
         notes.append(PetNote(text: text, due: timed ? NoteTime.due(in: text) : nil))
         saveNotes()
+        countToday(.notesAdded)
     }
 
     /// Done: the first note, or the one named, off the list for a star, and
@@ -1742,6 +2110,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// The first note, the nearest countdown under it; or the countdown alone.
     private func showTopNote() {
         let next = countdowns.filter { $0.daysLeft >= 0 }.min { $0.day < $1.day }
+        // In a focus session, what you're working on goes up first.
+        if focusEndsAt != nil || breakEndsAt != nil, let task = focusBuddy.shownTask {
+            cat?.signIsNote = false
+            return cat?.holdSign(task, footer: "Working on it together") ?? ()
+        }
         cat?.signIsNote = !notes.isEmpty
         if let note = notes.first {
             cat?.holdSign(note.text, more: notes.count - 1, footer: next.map { "\($0.title) · \($0.whenText)" })
@@ -1828,6 +2201,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         let note = notes.remove(at: index)
         notes.insert(note, at: 0)
         saveNotes()
+        // Away: read later in Droppy's stack instead.
+        if readLater(Notice.missedReminder(note.text, id: note.id.uuidString)) { return }
         cat.callOver()
         cat.say(CatWords.noteDue(note.text), essential: true)
     }
@@ -1919,6 +2294,22 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         host?.preferences.setValue(on, forKey: Key.typesAlong)
     }
 
+    func setBatterySaver(_ on: Bool) {
+        batterySaver = on
+        host?.preferences.setValue(on, forKey: Key.batterySaver)
+        refreshPowerSaver()
+    }
+
+    /// Every 30 s, on a Low Power Mode change and when the pet comes out:
+    /// one IOKit call for the power source.
+    private func refreshPowerSaver() {
+        let on = PowerSaverRule.active(switchOn: batterySaver, onBattery: batterySaver && PowerSource.onBattery,
+                                       lowPowerMode: PowerSource.lowPowerMode)
+        if savingPower != on { savingPower = on }
+        cat?.savesPower = on
+        friend?.savesPower = on
+    }
+
     func setChases(_ chases: Bool) {
         cat?.chasesPointer = chases
         persist()
@@ -1960,6 +2351,12 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     func setChatty(_ chatty: Bool) {
         cat?.chatty = chatty
         host?.preferences.setValue(chatty, forKey: Key.chatty)
+    }
+
+    func setOwnWords(_ on: Bool) {
+        ownWords = on
+        PetLines.shared.enabled = on
+        host?.preferences.setValue(on, forKey: Key.ownWords)
     }
 
     func setTells(
@@ -2024,6 +2421,93 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         refreshQuietBed()
         refreshFestival()
         publishActivity()
+        if reason == nil { postHeldNotices() }
+    }
+
+    // MARK: Read later
+
+    /// Whether the pet keeps quiet right now: by hand, or in a call, a shared
+    /// or mirrored screen while it quiets itself.
+    private var keepsQuiet: Bool { quietByHand || (quietsAutomatically && autoQuietReason != nil) }
+
+    /// Something worth reading later goes to Droppy's notification stack
+    /// instead of a bubble nobody would see: you're away (the screen locked,
+    /// or no key or mouse for a minute) or the pet is put away. `always`: it
+    /// goes there even while you're here (a meeting summary, which you read
+    /// later anyway). Live moments stay bubbles. While the pet keeps quiet the
+    /// notice waits and comes once it may talk again (a call or a shared
+    /// screen may show it to others). True when it went (or will go) there,
+    /// so the bubble is left out; false when Droppy turned it down (its
+    /// notifications off, Focus) and the bubble should say it as before.
+    @discardableResult
+    private func readLater(_ notice: DropletNotification, always: Bool = false) -> Bool {
+        guard always || !(isOut && cat != nil && Self.atTheMac), let host else { return false }
+        if keepsQuiet {
+            heldNotices.removeAll { $0.id == notice.id }
+            heldNotices.append(notice)
+            if heldNotices.count > 5 { heldNotices.removeFirst(heldNotices.count - 5) }
+            return true
+        }
+        return host.notifications.post(notice)
+    }
+
+    private func postHeldNotices() {
+        guard !heldNotices.isEmpty, !keepsQuiet, let host else { return }
+        let held = heldNotices
+        heldNotices = []
+        // Droppy turned one down (its notifications off, Focus, its per-minute
+        // budget): said in a bubble instead, so nothing held is lost unseen.
+        for notice in held where !host.notifications.post(notice) {
+            let text = [notice.title, notice.body].compactMap { $0 }.joined(separator: ": ")
+            cat?.say(CatLine(text: String(text.prefix(140)), symbol: notice.systemImage, seconds: 6))
+        }
+    }
+
+    /// A click on one of Pixpaw's notifications: the meeting notes open, the
+    /// gift is taken.
+    private func noticeEvent(_ event: DropletNotificationEvent) {
+        switch event {
+        case let .action(id, "open") where id.hasPrefix(Notice.meetingPrefix), let .opened(id) where id.hasPrefix(Notice.meetingPrefix):
+            if let lastNotes { host?.workspace.open(lastNotes) }
+        case .action(Notice.gift, "take"):
+            if !isOut { setOut(true) }
+            cat?.takeWaitingGift()
+        default:
+            break
+        }
+    }
+
+    /// The gift left today and still not picked up while you're away: one
+    /// notice, taken back once the gift is.
+    private func tickGiftNotice() {
+        guard let cat else { return }
+        guard let since = cat.giftWaitingSince else {
+            if giftNoticeUp {
+                giftNoticeUp = false
+                heldNotices.removeAll { $0.id == Notice.gift }
+                host?.notifications.withdraw(id: Notice.gift)
+            }
+            return
+        }
+        guard giftNoticeDay != StarDay.today, Date().timeIntervalSince(since) >= 120, !Self.atTheMac else { return }
+        giftNoticeDay = StarDay.today
+        giftNoticeUp = readLater(Notice.giftWaiting(from: cat.isNamed ? cat.title : nil))
+    }
+
+    // MARK: Finds
+
+    func setBringsFinds(_ on: Bool) {
+        bringsFinds = on
+        cat?.bringsFinds = on
+        host?.preferences.setValue(on, forKey: Key.bringsFinds)
+    }
+
+    // MARK: Its own bowls
+
+    func setEatsFromBowls(_ on: Bool) {
+        eatsFromBowls = on
+        cat?.eatsFromBowls = on
+        host?.preferences.setValue(on, forKey: Key.eatsFromBowls)
     }
 
     // MARK: To bed when it should be quiet
@@ -2094,7 +2578,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// A portrait of the pet as it is now, saved where you choose.
     func takePhoto() {
         guard let cat, let data = PetPhoto.render(cat, days: daysTogether) else { return }
-        PetPhoto.save(data, named: "\(cat.kind.title) by Pixpaw.png")
+        PetPhoto.save(data, named: "\(cat.title) by Pixpaw.png")
     }
 
     /// Five seconds of the pet as a looping GIF, saved where your screenshots
@@ -2262,7 +2746,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// beside the notch, and when it is up the pet comes to say so.
     /// `lofi: false` for a session a URL started: any app or page can open a
     /// URL, so it never starts music, in this round or the rounds after.
-    func startFocus(minutes: Int? = nil, round: Int = 1, lofi: Bool = true) {
+    /// `byHand`: you started it (its menu, shortcut, card or words), so the
+    /// pet may ask what you're working on; a link or the next round never does.
+    func startFocus(minutes: Int? = nil, round: Int = 1, lofi: Bool = true, byHand: Bool = false) {
         if round == 1 { focusLofi = lofi }
         if !isOut { setOut(true) }
         clearBreak()
@@ -2280,6 +2766,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if lofiWithFocus && focusLofi { playLofi(forFocus: true) }
         applyQuiet()
         publishActivity()
+        if round == 1 {
+            closeBuddyCard()
+            if focusBuddy.start(on: bodyDoubling, byHand: byHand && !keepsQuiet) { askFocusTask() }
+            showTopNote()
+        }
     }
 
     /// Ends the session, a Pomodoro break included.
@@ -2291,6 +2782,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         cat?.keepSaying(nil)
         applyQuiet()
         publishActivity()
+        endFocusBuddy()
     }
 
     private func clearFocus() {
@@ -2313,11 +2805,14 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     private func finishFocus() {
         countStat(.focusRounds)
+        countToday(.focusSessions)
+        cat?.bringFind(.focus)
         let minutes = Int(((focusEndsAt ?? Date()).timeIntervalSince(focusStartedAt ?? Date()) / 60).rounded())
         guard pomodoroOn else {
             stopFocus()
             cat?.callOver()
-            cat?.say(CatWords.focusDone(minutes: minutes))
+            let cue = playCue(.success)
+            cat?.say(CatWords.focusDone(minutes: minutes), meows: !cue)
             suggest(PetSuggestions.pomodoro(at: Date()))
             return
         }
@@ -2372,6 +2867,132 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         host?.preferences.setValue(minutes, forKey: Key.focusMinutes)
     }
 
+    // MARK: Body doubling
+
+    func setBodyDoubling(_ on: Bool) {
+        bodyDoubling = on
+        host?.preferences.setValue(on, forKey: Key.bodyDoubling)
+        if !on {
+            closeBuddyCard()
+            focusBuddy = FocusBuddy()
+            showTopNote()
+        }
+    }
+
+    /// "What are you working on?" on its card, its field ready for you
+    /// (you just started the session); Skip, Return or 45 s without an answer.
+    private func askFocusTask() {
+        cat?.callOver()
+        showBuddyCard(.pet(id: "focus-task", title: "What are you working on?", symbolTitle: "Focus",
+                           options: [], prompt: "e.g. Write the report", focusesField: true),
+                      waits: FocusBuddy.askWaits) { [weak self] answer in
+            guard let self else { return }
+            self.focusBuddy.answer(answer.flatMap(Self.typedText))
+            if let task = self.focusBuddy.shownTask { self.cat?.say(CatWords.focusOn(task)) }
+            self.showTopNote()
+        }
+    }
+
+    /// Each second in a session: about halfway, once, "Still on …?", never
+    /// while it keeps quiet or you're away, nor over an agent's question.
+    private func tickFocusBuddy() {
+        guard let started = focusStartedAt, let ends = focusEndsAt, let task = focusBuddy.task, let cat else { return }
+        let quiet = keepsQuiet || autoQuietReason != nil
+        let busy = !isOut || cat.askShown != nil || !Self.atTheMac
+        guard focusBuddy.wantsCheck(elapsed: Date().timeIntervalSince(started), length: ends.timeIntervalSince(started),
+                                    quiet: quiet, busy: busy) else { return }
+        focusBuddy.check()
+        // Clicks only: it never takes the keyboard from what you're doing.
+        showBuddyCard(.pet(id: "focus-check", title: "Still on \(task)?", symbolTitle: "Focus", options: ["Yes", "Switch"]),
+                      waits: FocusBuddy.checkWaits) { [weak self] answer in
+            guard let self else { return }
+            if answer == "Switch" {
+                self.focusBuddy.switchTask()
+                self.showBuddyCard(.pet(id: "focus-switch", title: "What are you on now?", symbolTitle: "Focus",
+                                        options: [], prompt: "The new task", focusesField: true),
+                                   waits: FocusBuddy.askWaits) { [weak self] typed in
+                    guard let self else { return }
+                    self.focusBuddy.answer(typed.flatMap(Self.typedText))
+                    self.showTopNote()
+                }
+            } else {
+                self.focusBuddy.stillOn()
+            }
+        }
+    }
+
+    /// The session is over: "Did … get done?", or nothing without a task.
+    private func endFocusBuddy() {
+        closeBuddyCard()
+        guard let task = focusBuddy.task, focusBuddy.end() else { return showTopNote() }
+        showTopNote()
+        guard cat != nil, isOut, !keepsQuiet, autoQuietReason == nil else {
+            _ = focusBuddy.finish(done: nil)
+            return
+        }
+        showBuddyCard(.pet(id: "focus-end", title: "Did \(task) get done?", symbolTitle: "Focus", options: ["Done", "Not yet"]),
+                      waits: FocusBuddy.endWaits) { [weak self] answer in
+            self?.finishFocusTask(done: answer.map { $0 == "Done" }, task: task)
+        }
+    }
+
+    /// Done earns a star (within the day's stars); Not yet a kind word.
+    private func finishFocusTask(done: Bool?, task: String) {
+        let outcome = focusBuddy.finish(done: done)
+        showTopNote()
+        switch outcome {
+        case .star:
+            countToday(.focusTasks)
+            cat?.earn(.focusTask)
+            let cue = playCue(.success)
+            cat?.say(CatWords.focusTaskDone(task), meows: !cue)
+            cat?.celebrate()
+        case .kindWord:
+            if let line = CatWords.focusNotYet.randomElement() { cat?.say(line) }
+        case nil:
+            break
+        }
+    }
+
+    /// The text of a typed answer, nil for a button or Skip.
+    private static func typedText(_ answer: String) -> String? {
+        answer.hasPrefix(AgentAsk.typedPrefix) ? String(answer.dropFirst(AgentAsk.typedPrefix.count)) : nil
+    }
+
+    /// Holds up one of the pet's own questions on its card. `onAnswer` gets
+    /// the button or typed answer, or nil for Skip or no answer in `waits`;
+    /// once. An agent's question that came meanwhile goes up after it.
+    private func showBuddyCard(_ ask: AgentAsk, waits: TimeInterval, onAnswer: @escaping (String?) -> Void) {
+        guard let cat, cat.askShown == nil || cat.askShown?.fromPet == true else { return onAnswer(nil) }
+        closeBuddyCard(showsNext: false)
+        buddyAskID = ask.id
+        cat.showAsk(ask) { [weak self] choice in
+            guard let self, self.buddyAskID == ask.id else { return }
+            self.closeBuddyCard()
+            onAnswer(choice == AgentAsk.skip ? nil : choice)
+        }
+        buddyUnanswered = { onAnswer(nil) }
+        let id = ask.id
+        buddyExpiry = Timer.scheduledTimer(withTimeInterval: waits, repeats: false) { [weak self] _ in
+            MainActor.assumeIsolated {
+                guard let self, self.buddyAskID == id else { return }
+                let unanswered = self.buddyUnanswered
+                self.closeBuddyCard()
+                unanswered?()
+            }
+        }
+    }
+
+    private func closeBuddyCard(showsNext: Bool = true) {
+        buddyExpiry?.invalidate()
+        buddyExpiry = nil
+        buddyUnanswered = nil
+        guard let id = buddyAskID else { return }
+        buddyAskID = nil
+        if cat?.askShown?.id == id { cat?.showAsk(nil) { _ in } }
+        if showsNext, !askQueue.isEmpty { showNextAsk() }
+    }
+
     func setHome(_ on: Bool) {
         cat?.homeOn = on
         host?.preferences.setValue(on, forKey: Key.homeOn)
@@ -2393,6 +3014,23 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         let own = Reminder.builtIn.map { builtIn in saved.first { $0.id == builtIn.id } ?? builtIn }
         return own + saved.filter(\.isYours)
+    }
+
+    /// The reminder as Droppy's HUD card with "Stretched" and "Later";
+    /// false when Droppy turned it down (the bubble says it then).
+    private func presentBreakCard(_ reminder: Reminder) -> Bool {
+        guard let host else { return false }
+        let id = reminder.id
+        host.hud.dismiss(id: BreakHUD.id)
+        let request = BreakHUD.request(reminder, done: { [weak self] in
+            self?.host?.hud.dismiss(id: BreakHUD.id)
+            if id == Reminder.stretchID { self?.cat?.stretchedByHand() }
+        }, later: { [weak self] in
+            self?.host?.hud.dismiss(id: BreakHUD.id)
+            self?.health?.snooze(id, minutes: BreakHUD.laterMinutes)
+            if id == Reminder.stretchID { self?.cat?.skipStretch() }
+        })
+        return host.hud.present(request)
     }
 
     func updateReminder(_ reminder: Reminder) {
@@ -2640,6 +3278,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// Starts the sources that are on, allowed, and have a cat to talk through;
     /// stops the rest.
     private func refreshAlerts() {
+        refreshPowerSaver()
         guard let cat, let host, !host.environment.isHarness else { return }
         let say: @MainActor (CatLine) -> Void = { [weak cat] line in cat?.say(line) }
         // The level you are changing yourself still shows while quiet.
@@ -2732,23 +3371,31 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
         if out, healthOn {
             if health == nil {
-                let coach = ReminderCoach(reminders: reminders) { [weak cat] reminder in
+                let coach = ReminderCoach(reminders: reminders) { [weak self, weak cat] reminder in
                     guard let cat else { return }
+                    let carded = self?.presentBreakCard(reminder) ?? false
                     if reminder.id == Reminder.stretchID {
                         cat.stretchWithMe()
                     } else {
-                        // Comes over to you, then says it.
+                        // Comes over to you; says it too when Droppy's card isn't up.
                         cat.callOver()
-                        cat.say(CatLine(text: reminder.text, symbol: reminder.symbol, seconds: 5))
+                        if !carded { cat.say(CatLine(text: reminder.text, symbol: reminder.symbol, seconds: 5)) }
                     }
                 }
-                // A focus session ends with its own break.
-                coach.canRemind = { [weak self, weak cat] in cat?.quietReason == nil && self?.focusEndsAt == nil }
+                // A focus session ends with its own break, and Droppy's
+                // Pomodoro (started from the pet) has breaks of its own.
+                coach.canRemind = { [weak self, weak cat] in
+                    cat?.quietReason == nil && self?.focusEndsAt == nil && self?.droppyFocusing == false
+                }
+                coach.onMissed = { [weak self] reminder in
+                    self?.readLater(Notice.missedReminder(reminder.text, symbol: reminder.symbol, id: reminder.id))
+                }
                 health = coach
             }
             health?.start()
         } else {
             health?.stop()
+            host.hud.dismiss(id: BreakHUD.id)
         }
         if out, tellsHeadphones {
             if headphones == nil {
@@ -2857,11 +3504,18 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             refreshPlanUsage()
         }
         guard previous != state else { return }
+        if state == .done {
+            countToday(.agentRuns)
+            cat?.bringFind(.agent)
+        }
 
         let detail = text.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(90)) }.flatMap { $0.isEmpty ? nil : $0 }
         if let task = task.map({ String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(40)) }), !task.isEmpty, tellsScheduled {
             return scheduledRun(task, state: state, result: result.map { String($0.trimmingCharacters(in: .whitespacesAndNewlines).prefix(140)) })
         }
+        // Away (or the pet put away): finished, failed or waiting goes to
+        // Droppy's stack to read later, not into a bubble nobody sees.
+        if let notice = Notice.agent(name, state: state, detail: detail), readLater(notice) { return }
         switch state {
         case .working:
             cat?.say(CatLine(text: CatWords.agentWorking(name), symbol: "sparkles"))
@@ -2870,7 +3524,9 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             // "3 files · +84 −12 · 5h 76% · week 59% left".
             let left = usage.map { String($0.prefix(40)) }.flatMap { $0.isEmpty ? nil : $0 }
             let after = [changed, left].compactMap { $0 }.joined(separator: " · ")
-            cat?.say(CatLine(text: after.isEmpty ? CatWords.agentDone(name) : "\(CatWords.agentDone(name)) \(after)", symbol: "checkmark.circle.fill"))
+            cat?.sayOwnWords(CatWords.agentDone(name), keep: [name]) { [weak self] said in
+                self?.cat?.say(CatLine(text: after.isEmpty ? said : "\(said) \(after)", symbol: "checkmark.circle.fill"))
+            }
             cat?.celebrate()
         case .waiting:
             // Already over its head with the buttons to answer.
@@ -3235,7 +3891,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         }
     }
 
-    /// Claude Code's status line keeps its rate limits (Tools/agent-hooks/
+    /// Claude Code's status line keeps its rate limits (.droppykit/Tools/agent-hooks/
     /// usage.py): read now and then, so a warning comes mid-turn, not only
     /// when Claude stops.
     private func checkClaudeUsage() {
@@ -3294,8 +3950,32 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if !on {
             fileEvents = []
             fileUsage = [:]
+            guestSessions = []
             refreshPlanUsage()
+            refreshGuests()
         }
+    }
+
+    // MARK: Guests
+
+    func setGuestsVisit(_ on: Bool) {
+        guestsVisit = on
+        host?.preferences.setValue(on, forKey: Key.guestsVisit)
+        refreshGuests()
+    }
+
+    /// Who sits in front of the home now: a guest per session the watchers
+    /// follow, else per agent the hooks told of. Each second; the home
+    /// redraws only when someone comes, goes or changes pose.
+    private func refreshGuests() {
+        guard let cat else { return }
+        guard guestsVisit, tellsAgents else { return cat.setGuests([]) }
+        let heard = agents.values.map { status in
+            // A hook's "Claude Code" is the logs' "Claude": one guest, not two.
+            let agent = status.name.lowercased().hasPrefix("claude") ? "Claude" : status.name.lowercased() == "codex" ? "Codex" : status.name
+            return GuestHeard(agent: agent, pose: status.state == .working ? .working : status.state == .waiting ? .waiting : .done, at: status.at)
+        }
+        cat.setGuests(HomeGuests.list(sessions: readsAgentFiles ? guestSessions : [], heard: heard, now: Date()))
     }
 
     /// Reads what's saved again. The harness always gets a made-up example,
@@ -3339,6 +4019,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             Self.filesQueue.async {
                 let found = [("Claude", claude.poll(now: now)), ("Codex", codex.poll(now: now)),
                              ("Antigravity", antigravity.poll(now: now)), ("Gemini", gemini.poll(now: now))]
+                let sessions = claude.guests() + codex.guests()
                 DispatchQueue.main.async { [weak self] in
                     MainActor.assumeIsolated {
                         guard let self else { return }
@@ -3346,6 +4027,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                         // Turned off while it looked: drop what it found.
                         guard self.readsAgentFiles else { return }
                         for (agent, events) in found { self.fileEvents += events.map { (now, agent, $0) } }
+                        self.guestSessions = sessions
                     }
                 }
             }
@@ -3438,6 +4120,232 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         host?.preferences.setValue(stats, forKey: Key.stats)
         cat?.noteUnlocks { allTime.add(stat, count) }
         host?.preferences.setValue(allTime, forKey: Key.allTime)
+    }
+
+    /// One more for today's line (counts only; a new day starts again).
+    func countToday(_ count: DayCount, _ n: Int = 1) {
+        dayTally.add(count, n, today: StarDay.today)
+        host?.preferences.setValue(dayTally, forKey: Key.dayTally)
+        if wrappedOn {
+            wrapLog.add(count.rawValue, n, day: StarDay.today)
+            host?.preferences.setValue(wrapLog, forKey: Key.wrapLog)
+        }
+    }
+
+    // MARK: Pixpaw Wrapped
+
+    func setWrapped(_ on: Bool) {
+        wrappedOn = on
+        cat?.wrappedOn = on
+        host?.preferences.setValue(on, forKey: Key.wrapped)
+        // Off: the log goes with it. On: it starts from today's counts.
+        wrapLog = WrapLog()
+        if on {
+            for count in DayCount.allCases {
+                wrapLog.add(count.rawValue, dayTally.count(count, today: StarDay.today), day: StarDay.today)
+            }
+        } else {
+            host?.notifications.withdraw(id: Notice.wrappedID)
+        }
+        host?.preferences.setValue(wrapLog, forKey: Key.wrapLog)
+    }
+
+    /// Every half minute while on: notes the day's stars and that you were
+    /// here, and once a new week or month has begun, at a pause, wraps up
+    /// the one before (the month first, one at a time).
+    private func refreshWrapped() {
+        guard wrappedOn, let host else { return }
+        let now = Date(), today = StarDay.today
+        var changed = Self.atTheMac && wrapLog.raise(WrapLog.here, to: 1, day: today)
+        let stars = cat.map { $0.starDay.day == today ? $0.starDay.stars : 0 } ?? 0
+        if wrapLog.raise(WrapLog.stars, to: stars, day: today) { changed = true }
+        if wrapLog.days.count > WrapLog.keptDays {
+            wrapLog.trim(keeping: Wrapped.recentDays(now: now))
+            changed = true
+        }
+        let quiet = keepsQuiet || autoQuietReason != nil
+        let busy = inSession || takingNotes || cat?.askShown != nil
+        let idle = CatController.secondsSinceInput()
+        for (span, isMonth) in [(Wrapped.lastMonth(before: now), true), (Wrapped.lastWeek(before: now), false)] {
+            guard let span else { continue }
+            let line = Wrapped.line(wrapLog.totals(of: span.days))
+            guard let line, Wrapped.due(on: wrappedOn, shown: isMonth ? wrapLog.monthShown : wrapLog.weekShown, key: span.key,
+                                        hasNews: true, quiet: quiet, busy: busy, idle: idle) else { continue }
+            if isMonth { wrapLog.monthShown = span.key } else { wrapLog.weekShown = span.key }
+            host.preferences.setValue(wrapLog, forKey: Key.wrapLog)
+            showWrap(span.title, line, byHand: false)
+            return
+        }
+        if changed { host.preferences.setValue(wrapLog, forKey: Key.wrapLog) }
+    }
+
+    /// "This week so far" or "This month so far", from the pet's menu.
+    private func showWrapSoFar(_ component: Calendar.Component) {
+        guard let span = Wrapped.soFar(component, now: Date()) else { return }
+        guard let line = Wrapped.line(wrapLog.totals(of: span.days)) else {
+            if !isOut { setOut(true) }
+            cat?.say(CatLine(text: "Nothing counted \(span.title.lowercased()) yet. Early days!", symbol: "calendar"))
+            return
+        }
+        showWrap(span.title, line, byHand: true)
+    }
+
+    private func showWrap(_ title: String, _ line: String, byHand: Bool) {
+        if !byHand, readLater(Notice.wrapped(title, line)) { return }
+        if byHand, !isOut { setOut(true) }
+        cat?.say(CatLine(text: "\(title) with your pet: \(line)", symbol: "calendar", seconds: 9))
+    }
+
+    // MARK: Days together and the backup
+
+    /// Every half minute: today counts once you're at your Mac with your pet.
+    private func refreshKindStreak() {
+        guard Self.atTheMac, kindStreak.lastDay != StarDay.today else { return }
+        guard kindStreak.saw(day: StarDay.today) else { return }
+        host?.preferences.setValue(kindStreak, forKey: Key.kindStreak)
+        // A milestone of days together: the home grows a spot, far right.
+        if kindStreak.days == Wrapped.widerHomeAt, let cat, !cat.homeWide {
+            cat.homeWide = true
+            if cat.hasHome, !cat.isFriend {
+                cat.say(CatLine(text: "\(Wrapped.widerHomeAt) days together! My home grew a spot on the far right.", symbol: "house.fill", seconds: 8))
+            }
+        } else if kindStreak.days >= Wrapped.widerHomeAt {
+            cat?.homeWide = true
+        }
+    }
+
+    /// Asks where to save the backup (home, wardrobe, stars, stats, days
+    /// together) and writes it there. Nothing else leaves the droplet.
+    func exportBackup() {
+        guard let prefs = host?.preferences else { return }
+        persist()
+        var values: [String: JSONValue] = [:]
+        for key in PixpawBackup.keys {
+            if let value = prefs.value(forKey: key, as: JSONValue.self) { values[key] = value }
+        }
+        let backup = PixpawBackup(values: values, saved: StarDay.today)
+        let panel = NSSavePanel()
+        panel.nameFieldStringValue = PixpawBackup.fileName
+        panel.allowedContentTypes = [UTType(filenameExtension: PixpawBackup.fileExtension) ?? .json]
+        panel.message = "Your pet's home, wardrobe, stars and stats, in one file."
+        NSApp.activate()
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated {
+                do {
+                    try backup.encoded().write(to: url, options: .atomic)
+                    self?.backupProblem = nil
+                    self?.host?.workspace.revealInFinder(url)
+                } catch {
+                    self?.backupProblem = "Couldn't save the backup: \(error.localizedDescription)"
+                }
+            }
+        }
+    }
+
+    /// Asks for a backup, checks it, and only after you say yes in Droppy's
+    /// own dialog puts it in place of what your pet has now.
+    func importBackup() {
+        let panel = NSOpenPanel()
+        panel.allowedContentTypes = [UTType(filenameExtension: PixpawBackup.fileExtension) ?? .json, .json]
+        panel.allowsMultipleSelection = false
+        panel.message = "Choose a Pixpaw backup."
+        NSApp.activate()
+        panel.begin { [weak self] response in
+            guard response == .OK, let url = panel.url else { return }
+            MainActor.assumeIsolated { self?.loadBackup(from: url) }
+        }
+    }
+
+    private func loadBackup(from url: URL) {
+        let backup: PixpawBackup
+        do {
+            let size = (try? url.resourceValues(forKeys: [.fileSizeKey]))?.fileSize ?? 0
+            guard size <= PixpawBackup.maxBytes else { throw PixpawBackup.Problem.tooBig }
+            backup = try PixpawBackup.read(try Data(contentsOf: url))
+        } catch let problem as PixpawBackup.Problem {
+            backupProblem = problem.message
+            return
+        } catch {
+            backupProblem = PixpawBackup.Problem.notABackup.message
+            return
+        }
+        backupProblem = nil
+        guard DropletConfirmationDialog.present(
+            title: "Load this backup?",
+            message: "\(backup.summary). It takes the place of your pet's home, wardrobe, stars and stats now. Days together keep the larger count.",
+            confirmTitle: "Load backup", symbol: "arrow.down.doc") else { return }
+        guard let host else { return }
+        // Off and on again around the write, so the pet loads it like a fresh start.
+        deactivate()
+        for (key, value) in backup.values where key != Key.kindStreak {
+            host.preferences.setValue(value, forKey: key)
+        }
+        if case .object? = backup.values[Key.kindStreak],
+           let data = try? JSONEncoder().encode(backup.values[Key.kindStreak]),
+           let theirs = try? JSONDecoder().decode(KindStreak.self, from: data) {
+            let ours = host.preferences.value(forKey: Key.kindStreak, as: KindStreak.self) ?? KindStreak()
+            host.preferences.setValue(ours.merged(with: theirs), forKey: Key.kindStreak)
+        }
+        do { try activate(host: host) } catch { host.log.info("Pixpaw couldn't start again after the backup: \(error.localizedDescription)") }
+    }
+
+    // MARK: End-of-day recap
+
+    func setDayRecap(_ on: Bool) {
+        dayRecapOn = on
+        host?.preferences.setValue(on, forKey: Key.dayRecap)
+        if !on {
+            // Off: what it learned of your stops goes with it.
+            stopTimes = StopTimes()
+            stopSavedMinute = -1
+            host?.preferences.setValue(stopTimes, forKey: Key.stopTimes)
+            host?.notifications.withdraw(id: Notice.dayRecapID)
+        }
+    }
+
+    /// Today in a line, or nil when nothing was counted yet.
+    private var todayLine: String? {
+        let stars = cat.map { $0.starDay.day == StarDay.today ? $0.starDay.stars : 0 } ?? 0
+        return DayRecap.line(dayTally, stars: stars, today: StarDay.today)
+    }
+
+    /// Every half minute: notes when you're at the Mac (for your usual stop),
+    /// and once a day, after it, at a pause, sums the day up.
+    private func refreshDayRecap() {
+        guard dayRecapOn, let host else { return }
+        let now = Date(), calendar = Calendar.current
+        let minute = calendar.component(.hour, from: now) * 60 + calendar.component(.minute, from: now)
+        let today = StarDay.today
+        if Self.atTheMac {
+            stopTimes.saw(day: today, minute: minute)
+            // Kept every five minutes, not every half minute.
+            if abs(minute - stopSavedMinute) >= 5 {
+                stopSavedMinute = minute
+                host.preferences.setValue(stopTimes, forKey: Key.stopTimes)
+            }
+        }
+        let busy = inSession || takingNotes || cat?.askShown != nil
+        let quiet = keepsQuiet || autoQuietReason != nil
+        guard DayRecap.due(on: dayRecapOn, shownDay: host.preferences.value(forKey: Key.dayRecapShown, default: ""),
+                           today: today, minute: minute, usualStop: stopTimes.usual(before: today),
+                           quiet: quiet, busy: busy, idle: CatController.secondsSinceInput(), hasNews: todayLine != nil) else { return }
+        host.preferences.setValue(today, forKey: Key.dayRecapShown)
+        showDayRecap(byHand: false)
+    }
+
+    /// The day so far: from the menu, a bubble now; on its own, a bubble at
+    /// a pause, or Droppy's stack when you've stepped away. Never takes
+    /// the keyboard.
+    func showDayRecap(byHand: Bool) {
+        guard let line = todayLine else {
+            if byHand { cat?.say(CatWords.todayNothingYet) }
+            return
+        }
+        if !byHand, readLater(Notice.dayRecap(line)) { return }
+        if byHand, !isOut { setOut(true) }
+        let together = kindStreak.line(today: StarDay.today, yesterday: StarDay.yesterday).map { " · \($0)" } ?? ""
+        cat?.say(CatLine(text: "Today so far: \(line)\(together)", symbol: "sun.horizon.fill", seconds: 8))
     }
 
     /// Stars came in today: the run of days with stars goes on (once a day).
@@ -3567,6 +4475,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     private func showNextAsk() {
         guard let cat else { return }
+        // The pet's own question first; agents' go up once it's answered.
+        if cat.askShown?.fromPet == true { return }
         askQueue.removeAll { !$0.isOpen }
         guard !askQueue.isEmpty else { return putUp(nil) }
         let ask = askQueue.removeFirst()
@@ -3623,7 +4533,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         if let shown = cat?.askShown { shown.answer(AgentAsk.skip) }
         askQueue.forEach { $0.answer(AgentAsk.skip) }
         askQueue = []
-        putUp(nil)
+        // The pet's own question stays; it answers itself in time.
+        if cat?.askShown?.fromPet != true { putUp(nil) }
     }
 
     /// Holds a question up on the card, and in the menu bar's menu; nil
@@ -3658,6 +4569,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         // A short moment's time up, a command past its wait.
         if notchMode == .moments { publishActivity() }
         readAgentFiles()
+        refreshGuests()
         if Date().timeIntervalSince(usageCheckedAt) >= 60 {
             usageCheckedAt = Date()
             checkClaudeUsage()
@@ -3677,6 +4589,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             aliveAt = .distantPast
             skipAllAsks()
         }
+        tickGiftNotice()
+        tickFocusBuddy()
         // A tool's tag comes down once the agent has gone quiet a while.
         if Date() >= toolAt { cat?.showTool(nil) }
         // Up a while and you've walked away: back to Claude with it.
@@ -3737,13 +4651,16 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     }
 
     /// "Claude Code working · Codex done", busiest first.
-    var agentSummary: String? {
+    var agentSummary: String? { agentSummary(first: 3) }
+
+    /// The busiest `count` agents only, for a row too narrow for all three.
+    func agentSummary(first count: Int) -> String? {
         let order: [AgentStatus.State] = [.waiting, .working, .error, .done]
         let sorted = agents.values.sorted {
             (order.firstIndex(of: $0.state) ?? 9, $0.name) < (order.firstIndex(of: $1.state) ?? 9, $1.name)
         }
         guard !sorted.isEmpty else { return nil }
-        return sorted.prefix(3).map { "\($0.name) \($0.state.title)" }.joined(separator: " · ")
+        return sorted.prefix(count).map { "\($0.name) \($0.state.title)" }.joined(separator: " · ")
     }
 
     /// Short enough for the wing: the agent that most needs attention.
@@ -3869,6 +4786,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
             friend.buddy = cat
             cat.buddy = friend
             self.friend = friend
+            friend.savesPower = savingPower
         }
         friend?.show()
         friend?.setQuiet(cat.quietReason)
@@ -3936,11 +4854,31 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
 
     /// One stable state: the same priority and flags every time, only the
     /// title changes, and nothing sent when nothing did.
+    /// While a focus or break clock runs, the row is a countdown (its band,
+    /// and the time left for VoiceOver and Droppy's stale check); the kind
+    /// stays custom, since `.timer` is Droppy's own Pomodoro's.
     private func sendActivity(_ title: String?) {
-        guard activitySubject.value?.accessibilityTitle != title || (activitySubject.value == nil) != (title == nil) else { return }
-        activitySubject.send(title.map {
-            LiveActivityState(priority: .ambient, accessibilityTitle: $0, isInteractive: false, joinsPersistentActivitySet: true)
-        })
+        var state: LiveActivityState?
+        if let title {
+            if clockEnd != nil {
+                let left: @MainActor @Sendable () -> String = { [weak self] in self?.clockLeftSpoken ?? "" }
+                state = LiveActivityState(priority: DropletLiveActivityPriority.countdown, accessibilityTitle: title,
+                                          accessibilityValue: left, isInteractive: false, joinsPersistentActivitySet: true)
+            } else {
+                state = LiveActivityState(priority: DropletLiveActivityPriority.ambient, accessibilityTitle: title,
+                                          isInteractive: false, joinsPersistentActivitySet: true)
+            }
+        }
+        guard activitySubject.value != state else { return }
+        activitySubject.send(state)
+    }
+
+    /// When the running focus session or break ends, if one does.
+    var clockEnd: Date? { focusEndsAt ?? breakEndsAt }
+
+    private var clockLeftSpoken: String {
+        guard let end = clockEnd else { return "" }
+        return ClockText.spoken(from: Date(), to: end)
     }
 
     /// What wants the row in Moments, from what the pet already knows.
@@ -3980,8 +4918,29 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     /// in Moments.
     private func notchMoment(_ scene: NotchScene, _ text: String) {
         guard notchMode == .moments else { return }
+        if presentMomentHUD(scene, text) { return }
         notchShort = .short(scene, text)
         publishActivity()
+    }
+
+    /// The short moment as Droppy's own HUD strip, under the same rules the
+    /// row would show it by; false when it isn't one or Droppy turned it
+    /// down (the row takes it then).
+    private func presentMomentHUD(_ scene: NotchScene, _ text: String) -> Bool {
+        guard let host, let cat, isOut, cat.quietReason == nil, showsNotchMoment(scene.kind),
+              scene == .lateNight || (tellsAgents && !droppyShowsUsage),
+              let request = MomentHUD.request(scene, text: text, cat: cat) else { return false }
+        return host.hud.present(request)
+    }
+
+    /// Droppy's own success or failure sound in place of the pet's call,
+    /// when the pet may make sounds and isn't keeping quiet. Droppy plays it
+    /// only if its own sounds are on. True when it was asked for.
+    @discardableResult
+    private func playCue(_ cue: DropletFeedbackCue) -> Bool {
+        guard let host, CatSounds.shared.isEnabled, !keepsQuiet, autoQuietReason == nil else { return false }
+        host.feedback.play(cue)
+        return true
     }
 
     private func persist() {
@@ -3993,6 +4952,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         prefs.setValue(cat.pets, forKey: Key.pets)
         prefs.setValue(cat.meals, forKey: Key.meals)
         prefs.setValue(cat.giftDay, forKey: Key.giftDay)
+        prefs.setValue(cat.finds.saved, forKey: Key.finds)
         prefs.setValue(cat.plays, forKey: Key.plays)
         prefs.setValue(cat.stretches, forKey: Key.stretches)
         prefs.setValue(cat.homeX.map(Double.init) ?? -1, forKey: Key.homeX)
@@ -4001,6 +4961,7 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         prefs.setValue(cat.starsSpent, forKey: Key.starsSpent)
         prefs.setValue(DecorShop.saved(cat.decorOwned), forKey: Key.decorOwned)
         prefs.setValue(cat.homeDecor.saved, forKey: Key.homeDecor)
+        prefs.setValue(cat.bowls.saved, forKey: Key.bowlMeals)
         prefs.setValue(cat.starDay, forKey: Key.starDay)
         prefs.setValue(cat.hat?.rawValue ?? "", forKey: Key.hat)
         prefs.setValue(cat.collar?.rawValue ?? "", forKey: Key.collar)
@@ -4067,7 +5028,7 @@ extension PixpawDroplet: LockScreenStatusProviding {
         guard let cat else { return nil }
         return LockScreenStatusEntry(id: "pixpaw.pet", systemImage: isOut ? "pawprint.fill" : "moon.zzz.fill",
                                      text: isOut ? cat.statusTitle : "Napping in the notch", roundedCenterText: isOut ? "♥" : "Zzz",
-                                     roundedBottomText: cat.kind.title, ticksEverySecond: false)
+                                     roundedBottomText: cat.title, ticksEverySecond: false)
     }
 }
 
@@ -4327,28 +5288,57 @@ private struct PixpawMenuBarMenu: View {
     }
 }
 
-extension PixpawDroplet: ShelfWidgetProviding {
+/// Droppy owns the widget's box (DroppyKit 1.23): it pads, fills and clips
+/// it, and Pixpaw supplies the content. A host that mounts widgets the
+/// classic way gets the same box from `makeWidgetView`'s default.
+extension PixpawDroplet: ShelfWidgetCompositionProviding {
     public var widgetDescriptors: [ShelfWidgetDescriptor] {
         [
             ShelfWidgetDescriptor(
                 id: "pixpaw",
                 title: "Pixpaw",
                 systemImage: "pawprint.fill",
+                // Content heights; Droppy adds its own insets. Alone: header
+                // (34), the pet and its lines (about 78), the rings beside
+                // today's moments (60), the control row (34) and three 8pt
+                // gaps. In a row: the header, the pet and its days together.
                 layoutTraits: ShelfWidgetLayoutTraits(
-                    preferredSoloWidth: 420,
-                    preferredPairedWidth: 210,
-                    // Header (28), the pet and its lines (about 94 laid out), the control
-                    // row (34) and two 8pt gaps, plus the 16pt the host's
-                    // insets take: nothing squeezed against the floor.
-                    contentHeight: .fixed(190)
+                    // Alone: Droppy's header row and its gap to the pet, the pet
+                    // and its lines (about 94 laid out), the rings beside
+                    // today's moments (60), the control row, with 8pt gaps.
+                    // Content only: Droppy adds the insets its clip needs.
+                    single: ShelfWidgetModeSize(
+                        width: 420,
+                        contentHeight: DroppyWidgetMetrics.single.headerHeight + DroppyWidgetMetrics.single.sectionSpacing
+                            + 94 + DroppySpacing.sm + 60 + DroppySpacing.sm + DroppyWidgetMetrics.single.controlRowHeight
+                    ),
+                    // In a row: the header, the pet and its days together, the
+                    // same room a row had before the composition.
+                    split: ShelfWidgetModeSize(
+                        width: 210,
+                        contentHeight: DroppyWidgetMetrics.single.headerHeight + DroppyWidgetMetrics.single.sectionSpacing
+                            + 94 + DroppySpacing.sm + DroppyWidgetMetrics.single.controlRowHeight
+                    ),
+                    // Droppy's header wraps beside the camera when the widget is
+                    // alone on a notched Mac or the camera island, but only where
+                    // the wider half fits whole: every one of the header's discs,
+                    // the photo included. Where it does not, Droppy starts the
+                    // whole header just under the cutout instead.
+                    header: ShelfWidgetHeaderTraits(
+                        height: ShelfWidgetHeaderTraits.standard.height,
+                        besideExtent: max(
+                            ShelfWidgetHeaderTraits.standard.besideExtent,
+                            PixpawWidget.wrappedHeaderBesideExtent()
+                        )
+                    )
                 )
             )
         ]
     }
 
-    public func makeWidgetView(_ id: ShelfWidgetID, context: ShelfWidgetContext) -> AnyView {
+    public func makeWidgetContent(_ id: ShelfWidgetID, layout: ShelfWidgetLayout) -> AnyView {
         guard let cat else { return AnyView(EmptyView()) }
-        return AnyView(PixpawWidget(droplet: self, cat: cat, context: context))
+        return AnyView(PixpawWidget(droplet: self, cat: cat, context: WidgetMount(layout)))
     }
 
     public func makeWidgetSettingsPopover(_ id: ShelfWidgetID) -> AnyView? { nil }
@@ -4388,7 +5378,7 @@ struct AgentLook {
 /// paired, each plan's emptier window.
 private struct UsageLeftPage: View {
     @ObservedObject var droplet: PixpawDroplet
-    let context: ShelfWidgetContext
+    let context: WidgetMount
 
     private static let nameWidth: CGFloat = 112
     private static let barWidth: CGFloat = 44
@@ -4424,16 +5414,14 @@ private struct UsageLeftPage: View {
         }
     }
 
+    /// Droppy's own empty state, with the way to the AI settings.
     private var empty: some View {
-        VStack(alignment: .leading, spacing: DroppySpacing.xs) {
-            Text("No numbers yet")
-                .font(.system(size: 13, weight: .semibold))
-                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
-            Text("They show up after Claude Code, Antigravity or Codex finishes a turn with Pixpaw's hooks on.")
-                .font(.system(size: 11))
-                .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
-                .fixedSize(horizontal: false, vertical: true)
-        }
+        ShelfWidgetEmptyState(
+            "No numbers yet",
+            systemImage: "gauge.with.dots.needle.0percent",
+            message: "They show up after Claude Code, Antigravity or Codex finishes a turn with Pixpaw's hooks on.",
+            action: .init("AI settings", systemImage: "gearshape") { droplet.openAISettings() }
+        )
     }
 
     // MARK: The question
@@ -4671,14 +5659,38 @@ private struct UsageLeftPage: View {
     }
 }
 
+/// What the widget's views read of their mount, from Droppy's
+/// `ShelfWidgetLayout`: in a row or alone, and the wash controls' size.
+struct WidgetMount {
+    let isPaired: Bool
+    let washControlSize: CGFloat
+    let usesAdaptiveForegrounds: Bool
+    /// Droppy's layout itself, for its widget metrics (header row, discs).
+    let layout: ShelfWidgetLayout
+
+    init(_ layout: ShelfWidgetLayout) {
+        self.layout = layout
+        isPaired = layout.isSplit
+        washControlSize = layout.metrics.controlSize
+        usesAdaptiveForegrounds = layout.usesAdaptiveForegrounds
+    }
+
+    var isCompact: Bool { isPaired }
+}
+
 private struct PixpawWidget: View {
     @ObservedObject var droplet: PixpawDroplet
     @ObservedObject var cat: CatController
-    let context: ShelfWidgetContext
+    let context: WidgetMount
+    @State private var dropTargeted = false
 
     /// Droppy's shelf sizes: a control alone on the shelf is 34pt, beside
     /// another widget 28, the header's toggles 28, a small choice 24.
     private var actionSize: CGFloat { context.washControlSize }
+
+    /// Droppy's widget numbers for this mount (header row, its controls,
+    /// the gap under it), read from the host's DroppyKit.
+    private var metrics: DroppyWidgetMetrics { context.layout.metrics }
 
     var body: some View {
         // The header on the card's top edge, the control row on its bottom
@@ -4687,60 +5699,214 @@ private struct PixpawWidget: View {
         VStack(alignment: .leading, spacing: 0) {
             header
             if droplet.widgetShowsPlans {
-                Spacer(minLength: DroppySpacing.sm)
+                Spacer(minLength: metrics.sectionSpacing)
                 UsageLeftPage(droplet: droplet, context: context)
                 Spacer(minLength: 0)
             } else {
                 petPage
             }
         }
-        .padding(context.contentInsets)
+        // Droppy mounts this in its DropletWidgetBox (the same box 2.0.2
+        // built by hand): it pads, fills and clips it. The drop zone is
+        // Droppy's own too.
         .frame(minWidth: 0, maxWidth: .infinity, minHeight: 0, maxHeight: .infinity, alignment: .topLeading)
-        // One family of controls on the shelf: the header's buttons draw the
-        // same flat wash as the row of controls under the pet.
+        // Droppy's own drop zone: a PNG asks what to become, any other file is a snack.
+        // DroppyKit's outline is dashed even at rest (a faint line round the
+        // card in the notch), so it's drawn only while a file is over the pet.
+        .onDrop(of: [.fileURL], isTargeted: $dropTargeted) { droplet.widgetDrop($0) }
+        .overlay {
+            if dropTargeted {
+                Color.clear.droppyWidgetDropTarget(isTargeted: true)
+            }
+        }
     }
 
     @ViewBuilder private var petPage: some View {
-            Spacer(minLength: DroppySpacing.sm)
+            Spacer(minLength: metrics.sectionSpacing)
             HStack(alignment: .center, spacing: DroppySpacing.md) {
                 portrait
                 VStack(alignment: .leading, spacing: DroppySpacing.xs) {
-                    Text(droplet.isOut ? cat.statusTitle : "Napping in the notch")
-                        .font(.system(size: context.isCompact ? 15 : 18, weight: .semibold, design: .rounded))
-                        .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
-                        .lineLimit(1)
+                    statusLine
                     subline
                         .font(.system(size: 12, weight: .medium).monospacedDigit())
                         .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
-                    fullnessBar
-                    togetherLine
-                    if let summary = droplet.agentSummary {
-                        symbolText("sparkles", summary)
-                            .font(.system(size: 11, weight: .medium))
-                            .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
-                            .lineLimit(1)
+                    if context.isPaired {
+                        // In a row: your days together as Droppy's readout.
+                        daysReadout
+                    } else {
+                        togetherLine
                     }
+                    agentLine
                 }
                 Spacer(minLength: 0)
             }
+            if !context.isPaired {
+                // Hunger, energy and mood, and beside them today with your pet.
+                Spacer(minLength: DroppySpacing.sm)
+                HStack(alignment: .center, spacing: DroppySpacing.md) {
+                    rings
+                    todayList
+                }
+            }
             Spacer(minLength: DroppySpacing.sm)
-            if !context.isCompact {
+            if let offer = droplet.dropOffer {
+                dropRow(offer)
+            } else if !context.isCompact {
                 controls
             }
     }
 
-    private var header: some View {
-        HStack(spacing: DroppySpacing.xsm) {
-            Image(systemName: droplet.widgetShowsPlans ? "gauge.with.dots.needle.67percent" : "pawprint.fill")
-                .font(.system(size: 12, weight: .medium))
-            Text(droplet.widgetShowsPlans ? "AI usage left" : "Pixpaw")
-                .font(.system(size: 12, weight: .semibold))
+    /// What the pet is doing. Alone it is one line, as before. Beside another
+    /// widget the cell is narrow, so the line stays whole: on one line where
+    /// it fits, otherwise wrapped onto a second line, never cut off (Jordy's 2.0.4).
+    @ViewBuilder private var statusLine: some View {
+        let words = droplet.isOut ? cat.statusTitle : "Napping in the notch"
+        let font = Font.system(size: context.isCompact ? 15 : 18, weight: .semibold, design: .rounded)
+        if context.isPaired {
+            ViewThatFits(in: .horizontal) {
+                Text(words).font(font).lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                Text(words).font(font).lineLimit(2).minimumScaleFactor(0.8)
+                    .fixedSize(horizontal: false, vertical: true)
+            }
+            .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+        } else {
+            Text(words)
+                .font(font)
+                .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
                 .lineLimit(1)
-                .fixedSize()
-            Spacer(minLength: 0)
-            if droplet.widgetShowsPlans, !context.isPaired, let other = droplet.planToSwitchTo, let left = other.lowest {
+                .minimumScaleFactor(0.8)
+        }
+    }
+
+    /// Which coding agents are busy. Beside another widget, as many agents as
+    /// fit whole on the line, busiest first, instead of cutting the list off.
+    @ViewBuilder private var agentLine: some View {
+        if let summary = droplet.agentSummary {
+            Group {
+                if context.isPaired {
+                    ViewThatFits(in: .horizontal) {
+                        symbolText("sparkles", summary)
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        symbolText("sparkles", droplet.agentSummary(first: 2) ?? summary)
+                            .lineLimit(1).fixedSize(horizontal: true, vertical: false)
+                        symbolText("sparkles", droplet.agentSummary(first: 1) ?? summary)
+                            .lineLimit(2).fixedSize(horizontal: false, vertical: true)
+                    }
+                } else {
+                    symbolText("sparkles", summary).lineLimit(1)
+                }
+            }
+            .font(.system(size: 11, weight: .medium))
+            .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+        }
+    }
+
+    /// After a drop, in the control row's place: what a PNG becomes, or how it went.
+    private func dropRow(_ offer: PixpawDroplet.DropOffer) -> some View {
+        HStack(spacing: DroppySpacing.sm) {
+            switch offer {
+            case .picture:
+                Text("Make it…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                    .lineLimit(1)
+                Spacer(minLength: 0)
+                Button("A coat") { droplet.dropAsCoat() }
+                    .buttonStyle(DroppyWashPillButtonStyle(height: actionSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+                    .help("Your pet's coat in the picture's colours (only the colours are kept)")
+                Button("For the home") { droplet.dropAsPicture() }
+                    .buttonStyle(DroppyWashPillButtonStyle(height: actionSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+                    .help("A tiny framed copy beside your pet's home (the file stays where it is)")
+            case .reading:
+                ProgressView().controlSize(.small)
+                Text("Looking at it…")
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                Spacer(minLength: 0)
+            case .said(let line):
+                Text(line)
+                    .font(.system(size: 12, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                    .lineLimit(2)
+                    .minimumScaleFactor(0.8)
+                Spacer(minLength: 0)
+            }
+            Button {
+                droplet.dismissDropOffer()
+            } label: {
+                Image(systemName: "xmark")
+            }
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: actionSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+            .help("Never mind")
+            .accessibilityLabel("Never mind")
+        }
+        .frame(height: actionSize)
+    }
+
+    /// Droppy's own header: it draws the title and symbol, sizes the row
+    /// and its discs, and wraps itself beside the camera only where every
+    /// disc fits (`wrappedHeaderBesideExtent()`). Its right half still drops
+    /// what does not fit: the "Most left" line, then, as a safety net, the
+    /// photo disc (the pet's menu has it too).
+    private var header: some View {
+        ShelfWidgetHeader(
+            droplet.widgetShowsPlans ? "AI usage left" : "Pixpaw",
+            systemImage: droplet.widgetShowsPlans ? "gauge.with.dots.needle.67percent" : "pawprint.fill"
+        ) {
+            ViewThatFits(in: .horizontal) {
+                headerControls(showsMostLeft: true, showsPhoto: !context.isPaired, showsQuiet: !context.isPaired)
+                headerControls(showsMostLeft: false, showsPhoto: false, showsQuiet: !context.isPaired)
+            }
+        }
+    }
+
+    /// How far the wrapped header's wider half reaches from the card's edge
+    /// with everything in full: the pet page's five discs (AI usage, photo,
+    /// character, quiet, show), or a title half ("Pixpaw", "AI usage left")
+    /// when that is wider. Measured offscreen from the real controls at the
+    /// wrapped row's sizes, in the current language, and cached per
+    /// language. The "Most left" line is not counted: it is a hint the row
+    /// drops before any disc.
+    static func wrappedHeaderBesideExtent() -> CGFloat {
+        let language = Locale.preferredLanguages.first ?? ""
+        if let cached = besideExtentCache, cached.language == language {
+            return cached.extent
+        }
+        let metrics = DroppyWidgetMetrics.singleWrapped
+        func width<V: View>(_ view: V) -> CGFloat {
+            NSHostingView(rootView: view.fixedSize()).fittingSize.width
+        }
+        func title(_ text: String, _ symbol: String) -> CGFloat {
+            width(HStack(spacing: metrics.headerSpacing) {
+                Image(systemName: symbol).font(metrics.headerSymbolFont)
+                Text(text).font(metrics.font(.header)).lineLimit(1)
+            })
+        }
+        let discs = width(HStack(spacing: metrics.controlSpacing) {
+            ForEach(["gauge.with.dots.needle.67percent", "camera", "pawprint", "bell", "eye"], id: \.self) { symbol in
+                Button {} label: { Image(systemName: symbol) }
+                    .buttonStyle(DroppyWashCircleButtonStyle(diameter: metrics.headerControlSize))
+            }
+        })
+        let extent = max(
+            discs,
+            title("Pixpaw", "pawprint.fill"),
+            title("AI usage left", "gauge.with.dots.needle.67percent")
+        ).rounded(.up)
+        besideExtentCache = (language, extent)
+        return extent
+    }
+
+    private static var besideExtentCache: (language: String, extent: CGFloat)?
+
+    /// Paired, the quiet bell gives way too, so the title keeps its word at
+    /// the header's own spacing; quiet mode stays on its keyboard shortcut.
+    private func headerControls(showsMostLeft: Bool, showsPhoto: Bool, showsQuiet: Bool) -> some View {
+        HStack(spacing: metrics.controlSpacing) {
+            if showsMostLeft, droplet.widgetShowsPlans, !context.isPaired, let other = droplet.planToSwitchTo, let left = other.lowest {
                 Text("Most left: \(AgentLook.name(other)) \(left)%")
                     .font(.system(size: 11, weight: .medium))
+                    .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
                     .lineLimit(1)
                     .truncationMode(.middle)
             }
@@ -4750,25 +5916,25 @@ private struct PixpawWidget: View {
                 Image(systemName: droplet.widgetShowsPlans ? "pawprint.fill" : droplet.openAsk != nil ? "hand.raised.fill" : "gauge.with.dots.needle.67percent")
                     .foregroundStyle(droplet.openAsk != nil && !droplet.widgetShowsPlans ? Color.orange : AdaptiveColors.notchSurfaceSecondaryText)
             }
-            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: metrics.headerControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help(droplet.widgetShowsPlans ? "Back to your pet" : "AI usage left: what's left of each AI's plan")
             .accessibilityLabel(droplet.widgetShowsPlans ? "Show your pet" : "Show AI usage left")
             if !droplet.widgetShowsPlans {
-                petButtons
+                petButtons(showsPhoto: showsPhoto, showsQuiet: showsQuiet)
             }
         }
         .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
     }
 
-    @ViewBuilder private var petButtons: some View {
+    @ViewBuilder private func petButtons(showsPhoto: Bool, showsQuiet: Bool) -> some View {
             // Paired, the photo makes room for the plan button; it's in the pet's menu too.
-            if !context.isPaired {
+            if showsPhoto {
                 Button {
                     droplet.takePhoto()
                 } label: {
                     Image(systemName: "camera")
                 }
-                .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+                .buttonStyle(DroppyWashCircleButtonStyle(diameter: metrics.headerControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
                 .help("Take a photo of your pet")
                 .accessibilityLabel("Take a photo of your pet")
             }
@@ -4785,23 +5951,25 @@ private struct PixpawWidget: View {
                     Image(systemName: "pawprint")
                 }
             }
-            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: metrics.headerControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help("Character: \(cat.kind.title). Click to change.")
             .accessibilityLabel("Change character, now \(cat.kind.title)")
-            Button {
-                droplet.toggleQuiet()
-            } label: {
-                Image(systemName: cat.quietReason == nil ? "bell" : "bell.slash.fill")
+            if showsQuiet {
+                Button {
+                    droplet.toggleQuiet()
+                } label: {
+                    Image(systemName: cat.quietReason == nil ? "bell" : "bell.slash.fill")
+                }
+                .buttonStyle(DroppyWashCircleButtonStyle(diameter: metrics.headerControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+                .help(droplet.quietByHand ? "Let your pet talk again" : "Quiet: no speech bubbles")
+                .accessibilityLabel(droplet.quietByHand ? "Turn quiet mode off" : "Turn quiet mode on")
             }
-            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
-            .help(droplet.quietByHand ? "Let your pet talk again" : "Quiet: no speech bubbles")
-            .accessibilityLabel(droplet.quietByHand ? "Turn quiet mode off" : "Turn quiet mode on")
             Button {
                 droplet.toggle()
             } label: {
                 Image(systemName: droplet.isOut ? "eye.slash" : "eye")
             }
-            .buttonStyle(DroppyWashCircleButtonStyle(diameter: context.washControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
+            .buttonStyle(DroppyWashCircleButtonStyle(diameter: metrics.headerControlSize, usesAdaptiveForegrounds: context.usesAdaptiveForegrounds))
             .help(droplet.isOut ? "Bring your pet inside" : "Let your pet out")
             .accessibilityLabel(droplet.isOut ? "Hide your pet" : "Show your pet")
     }
@@ -4844,17 +6012,7 @@ private struct PixpawWidget: View {
         return Text(pointsLine)
     }
 
-    /// "★ 37 · next: Bow at 45"
-    /// Once the home is out, what's left to spend on decorations follows.
-    private var pointsLine: String {
-        let today = cat.starDay.day == StarDay.today ? cat.starDay.stars : 0
-        let spend = cat.hasHome ? " · \(cat.wallet) to spend" : ""
-        if let next = CatAccessory.nextByStars(after: cat.points), case .stars(let at) = next.unlock {
-            return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today · \(next.title) at \(at)" + spend
-        }
-        guard cat.hasHome else { return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today · Home at \(CatController.homeUnlockAt)" }
-        return "★ \(cat.points) · \(today)/\(StarSource.dailyTotal) today" + spend
-    }
+    private var pointsLine: String { cat.starsLine }
 
     private var days: Int { droplet.daysTogether }
 
@@ -4888,26 +6046,73 @@ private struct PixpawWidget: View {
         .accessibilityLabel("Together \(days) days, \(cat.pets) pets, \(cat.meals) meals, \(cat.plays) games, \(cat.stretches) stretches")
     }
 
-    /// How full the cat is; amber once it is hungry.
-    private var fullnessBar: some View {
-        HStack(spacing: DroppySpacing.xsm) {
-            Image(systemName: "fork.knife")
-                .font(.system(size: 11, weight: .semibold))
-            ZStack(alignment: .leading) {
-                Capsule(style: .continuous)
-                    .fill(AdaptiveColors.notchSurfaceCardFill)
-                GeometryReader { box in
-                    Capsule(style: .continuous)
-                        .fill(cat.isHungry ? Color.orange : Color.green.opacity(0.85))
-                        .frame(width: box.size.width * max(0.06, cat.fullness))
+    /// Hunger, energy and mood as Droppy's rings, redrawn each minute
+    /// (energy comes back with quiet time) and only while the widget shows.
+    private var rings: some View {
+        DroppyWidgetTimeline(every: 60) { date in
+            let today = droplet.todayMoments.shown(today: StarDay.today)
+            let fullness = PetGauges.hunger(fullness: cat.fullness)
+            let energy = PetGauges.energy(today, now: Self.minute(of: date), asleep: cat.mood == .sleeping)
+            let mood = PetGauges.mood(today)
+            HStack(spacing: DroppySpacing.sm) {
+                ring(fullness, tint: cat.isHungry ? .orange : .green, symbol: "fork.knife", name: "Fullness")
+                ring(energy, tint: .yellow, symbol: "bolt.fill", name: "Energy")
+                ring(mood, tint: .pink, symbol: "heart.fill", name: "Mood")
+            }
+        }
+    }
+
+    private func ring(_ value: Double, tint: Color, symbol: String, name: String) -> some View {
+        ShelfWidgetRing(progress: value, tint: tint, systemImage: symbol)
+            .help("\(name) \(Int(value * 100))%")
+            .accessibilityElement()
+            .accessibilityLabel("\(name) \(Int(value * 100)) percent")
+    }
+
+    /// Today with your pet, newest first, a line each: "Fed 12 min ago".
+    private var todayList: some View {
+        DroppyWidgetTimeline(every: 60) { date in
+            let now = Self.minute(of: date)
+            let moments = Array(droplet.todayMoments.shown(today: StarDay.today).reversed().prefix(3))
+            VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+                Text("Today")
+                    .font(.system(size: 11, weight: .semibold))
+                    .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
+                if moments.isEmpty {
+                    Text("A new day together. Say hi when you like.")
+                        .lineLimit(2)
+                } else {
+                    ForEach(Array(moments.enumerated()), id: \.offset) { _, moment in
+                        symbolText(moment.kind.symbol, "\(moment.kind.words(moment.count)) \(TodayMoments.ago(moment.last, now: now))")
+                            .lineLimit(1)
+                    }
                 }
             }
-            .frame(maxWidth: 72)
-            .frame(height: 5)
+            .font(.system(size: 11, weight: .medium).monospacedDigit())
+            .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+            .frame(maxWidth: .infinity, alignment: .leading)
+            .accessibilityElement(children: .ignore)
+            .accessibilityLabel(moments.isEmpty ? "Nothing yet today"
+                                : "Today: " + moments.map { "\($0.kind.words($0.count)) \(TodayMoments.ago($0.last, now: now))" }.joined(separator: ", "))
         }
-        .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
-        .accessibilityElement()
-        .accessibilityLabel("Fullness \(Int(cat.fullness * 100)) percent")
+    }
+
+    /// Your days together, the number as Droppy's readout.
+    private var daysReadout: some View {
+        HStack(alignment: .firstTextBaseline, spacing: DroppySpacing.xs) {
+            ShelfWidgetReadout("\(days)", tint: .pink)
+            Text(days == 1 ? "day together" : "days together")
+                .font(.system(size: 11, weight: .medium))
+                .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                .lineLimit(1)
+        }
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("Together \(days) days")
+    }
+
+    private static func minute(of date: Date) -> Int {
+        let calendar = Calendar.current
+        return calendar.component(.hour, from: date) * 60 + calendar.component(.minute, from: date)
     }
 
     private var controls: some View {
@@ -4988,6 +6193,9 @@ private struct PixpawWidget: View {
 }
 
 // MARK: - Live activity
+
+/// Short moments go up as Droppy's own HUD strip (MomentHUD).
+extension PixpawDroplet: HUDPresenting {}
 
 extension PixpawDroplet: LiveActivityProviding {
     public var liveActivityState: AnyPublisher<LiveActivityState?, Never> {
@@ -5081,11 +6289,14 @@ private struct CatWingMood: View {
     }
 
     @ViewBuilder private var text: some View {
-        if let start = droplet.focusStartedAt ?? droplet.breakStartedAt, let end = droplet.focusEndsAt ?? droplet.breakEndsAt {
-            // The time left, ticking down by itself.
-            Text(timerInterval: start...end, countsDown: true)
+        if let end = droplet.clockEnd {
+            // The time left, on Droppy's own compact clock: it ticks only
+            // while the row is up and at rest.
+            DroppyCompactClock { now in
+                Text(verbatim: ClockText.left(from: now, to: end))
+            }
                 .monospacedDigit()
-                .font(.system(size: DroppyLiveActivityMetrics.labelFontSize, weight: .medium, design: .rounded))
+                .font(.system(size: DroppyLiveActivityMetrics.labelFontSize, weight: .semibold))
                 .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
                 .lineLimit(1)
                 .accessibilityLabel(droplet.focusEndsAt != nil ? "Focus time left" : "Break time left")
@@ -5098,7 +6309,7 @@ private struct CatWingMood: View {
         Text(label)
             .id(label)
             .transition(DroppyTransition.compactContent)
-            .font(.system(size: DroppyLiveActivityMetrics.labelFontSize, weight: .medium, design: .rounded))
+            .font(.system(size: DroppyLiveActivityMetrics.labelFontSize, weight: .semibold))
             .foregroundStyle(AdaptiveColors.notchSurfacePrimaryText)
             .lineLimit(1)
             // Shrink to fit the wing rather than end in "…" (the user's ask).
@@ -5194,10 +6405,117 @@ enum WardrobeTab: String, CaseIterable, Identifiable {
     }
 }
 
+// MARK: - Tools for AI apps
+
+extension PixpawDroplet: MCPToolProviding {
+    /// None unless "Let AI apps talk to your pet" is on. Only what Droppy's
+    /// own MCP tools don't do: focus, timers, reminders and calendars are
+    /// Droppy's.
+    public var mcpTools: [DropletMCPTool] {
+        guard aiAppTools else { return [] }
+        return [
+            DropletMCPTool(
+                name: PetTools.say,
+                title: "Say something in the pet's bubble",
+                summary: "Shows one short line of plain text (at most 140 characters, no links) in the speech bubble of the user's desktop pet, Pixpaw. Use it for a friendly heads-up such as \"Tests passed\". At most once every 10 seconds; refused while the pet keeps quiet (a call, a shared screen). Returns \"said\".",
+                inputSchemaJSON: PetTools.schema(limit: PetTools.textLimit)
+            ),
+            DropletMCPTool(
+                name: PetTools.addNote,
+                title: "Add a to-do to the pet's sign",
+                summary: "Adds one short to-do (plain text, at most 140 characters, no links) to the end of the list the user's desktop pet holds up on its sign, the same list as its notes shortcut. Returns how many notes the sign now holds.",
+                inputSchemaJSON: PetTools.schema(limit: PetTools.textLimit)
+            ),
+            DropletMCPTool(
+                name: PetTools.status,
+                title: "How the pet is doing",
+                summary: "Read-only. Returns JSON with what the user's desktop pet is doing (mood), whether it is out on the screen, keeping quiet or in a focus session, and how many notes are on its sign (not their text)."
+            ),
+        ]
+    }
+
+    public func performMCPTool(named name: String, argumentsJSON: String) async throws -> String {
+        guard aiAppTools else { throw PetTools.Problem.off }
+        switch name {
+        case PetTools.say:
+            let text = try PetTools.text(from: argumentsJSON)
+            guard isOut, let cat else { throw PetTools.Problem.away }
+            if keepsQuiet || autoQuietReason != nil {
+                throw PetTools.Problem.quiet(quietByHand ? "turned on by the user" : autoQuietReason?.rawValue ?? "quiet")
+            }
+            if let wait = sayLimit.allow() { throw PetTools.Problem.tooSoon(seconds: wait) }
+            cat.say(CatLine(text: text, symbol: "sparkles", seconds: 5))
+            return "said"
+        case PetTools.addNote:
+            let text = try PetTools.text(from: argumentsJSON)
+            guard notes.count < PetNote.limit else { throw PetTools.Problem.notesFull(PetNote.limit) }
+            if let wait = noteLimit.allow() { throw PetTools.Problem.tooSoon(seconds: wait) }
+            addNote(text)
+            return "added; \(notes.count) on the sign"
+        case PetTools.status:
+            guard argumentsJSON.utf8.count <= 4096 else { throw PetTools.Problem.badArguments }
+            let status: [String: Any] = [
+                "mood": cat?.statusShortTitle ?? "Put away",
+                "out": isOut,
+                "quiet": keepsQuiet || autoQuietReason != nil,
+                "focusing": focusEndsAt != nil,
+                "notes": notes.count,
+            ]
+            let data = try JSONSerialization.data(withJSONObject: status, options: [.sortedKeys])
+            return String(decoding: data, as: UTF8.self)
+        default:
+            throw PetTools.Problem.unknown(name)
+        }
+    }
+
+    func setAIAppTools(_ on: Bool) {
+        aiAppTools = on
+        host?.preferences.setValue(on, forKey: Key.aiAppTools)
+    }
+}
+
 extension PixpawDroplet: SettingsPagesProviding {
     public func makeSettingsPage(id: String, context: SettingsPaneContext) -> AnyView? {
         guard let cat, let page = SettingsPage(rawValue: id) else { return nil }
         return AnyView(PixpawSettings(droplet: self, cat: cat, shown: page))
+    }
+
+    /// Droppy's own toolbar pills: a page's on/off switch, and a way to the
+    /// Shortcuts page where the page's shortcuts are set.
+    public func makeSettingsPageToolbar(id: String, context: SettingsPaneContext) -> AnyView? {
+        guard let page = SettingsPage(rawValue: id) else { return nil }
+        switch page {
+        case .friend, .festivals, .notes, .talk, .meetings, .capture:
+            return AnyView(PixpawPageToolbar(droplet: self, page: page))
+        default:
+            return nil
+        }
+    }
+
+    /// Opens Droppy's Shortcuts page on Pixpaw's section.
+    func openShortcuts() {
+        host?.workspace.openShortcuts()
+    }
+}
+
+/// The pills at the trailing end of Droppy's Settings toolbar for one of
+/// Pixpaw's pages. State lives in the droplet, so the toolbar and the page
+/// always agree.
+private struct PixpawPageToolbar: View {
+    @ObservedObject var droplet: PixpawDroplet
+    let page: SettingsPage
+
+    var body: some View {
+        HStack(spacing: DropletSettingsToolbarMetrics.pillSpacing) {
+            switch page {
+            case .friend:
+                DropletSettingsToolbarSwitch("A second pet", isOn: Binding(get: { droplet.hasFriend }, set: { droplet.setFriend($0) }))
+            case .festivals:
+                DropletSettingsToolbarSwitch("Festival decorations", isOn: Binding(get: { droplet.festivalsOn }, set: { droplet.setFestivals($0) }))
+            default:
+                DropletSettingsToolbarButton("Shortcuts", systemImage: "command") { droplet.openShortcuts() }
+            }
+        }
     }
 }
 
@@ -5209,14 +6527,16 @@ extension PixpawDroplet: SettingsPaneProviding {
 
     public var settingsSearchEntries: [SettingsSearchEntry] {
         [
+            SettingsSearchEntry(title: "Name", keywords: ["name", "rename", "call", "nickname"], anchorID: nil),
             SettingsSearchEntry(title: "A second pet", keywords: ["cat", "friend", "two", "companion", "dog", "second", "pair"], anchorID: SettingsPage.friend.rawValue),
-            SettingsSearchEntry(title: "Wardrobe", keywords: ["cat", "hat", "collar", "glasses", "sunglasses", "beanie", "headset", "tie", "points", "happiness", "unlock", "achievement", "outfit"], anchorID: SettingsPage.wardrobe.rawValue),
+            SettingsSearchEntry(title: "Wardrobe", keywords: ["cat", "hat", "collar", "glasses", "sunglasses", "beanie", "headset", "tie", "points", "happiness", "unlock", "achievement", "outfit", "find", "found", "present", "collect"], anchorID: SettingsPage.wardrobe.rawValue),
+            SettingsSearchEntry(title: "Backup", keywords: ["backup", "export", "import", "save", "load", "restore", "days together", "streak"], anchorID: SettingsPage.wardrobe.rawValue),
             SettingsSearchEntry(title: "Festival decorations", keywords: ["festival", "halloween", "new year", "christmas", "songkran", "valentine", "fireworks", "ghost", "snow"], anchorID: SettingsPage.festivals.rawValue),
             SettingsSearchEntry(title: "Focus session", keywords: ["focus", "pomodoro", "timer", "work", "break"], anchorID: SettingsPage.focus.rawValue),
             SettingsSearchEntry(title: "Lofi", keywords: ["lofi", "lo-fi", "music", "study", "focus", "youtube", "spotify", "apple music", "lofi girl"], anchorID: SettingsPage.focus.rawValue),
             SettingsSearchEntry(title: "Home", keywords: ["home", "house", "kennel", "hive", "nap", "sleep", "500", "unlock", "challenge"], anchorID: SettingsPage.home.rawValue),
             SettingsSearchEntry(title: "Keep the home out", keywords: ["home", "house", "always", "stand", "fold", "put away"], anchorID: SettingsPage.home.rawValue),
-            SettingsSearchEntry(title: "Decorations", keywords: ["decor", "decorate", "decorations", "rug", "doormat", "lamp", "plant", "cushion", "bowls", "basket", "bookshelf", "books", "mailbox", "buy", "spend", "stars"]
+            SettingsSearchEntry(title: "Decorations", keywords: ["decor", "decorate", "decorations", "rug", "doormat", "lamp", "plant", "cushion", "bowls", "bowl", "food", "eat", "hungry", "refill", "basket", "bookshelf", "books", "mailbox", "buy", "spend", "stars"]
                 + Set(HomeDecor.variants.values.flatMap { $0.values.map { $0.title.lowercased() } }).sorted(),
                 anchorID: SettingsPage.home.rawValue),
             SettingsSearchEntry(title: "Go home when it should be quiet", keywords: ["home", "quiet", "call", "bed", "night", "share", "screen", "sleep"], anchorID: SettingsPage.home.rawValue),
@@ -5224,7 +6544,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Sounds", keywords: ["cat", "meow", "purr", "sound", "mute"]),
             SettingsSearchEntry(title: "Bubble effects", keywords: ["bubble", "speech", "effect", "animation", "sparkle", "fire", "paw", "plain"]),
             SettingsSearchEntry(title: "Your own pets", keywords: ["draw", "design", "custom", "own", "sprite", "pixel", "png", "aseprite", "piskel", "template", "import"], anchorID: SettingsPage.ownPets.rawValue),
-            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dragon", "three heads", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "pig", "piggy", "hog", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal", "coat", "colour", "color", "photo", "picture", "my cat", "fold", "folded", "ears", "scottish", "classic", "pixels", "pixel", "pixel size", "hd", "fine", "finer", "chunky", "retro"]),
+            SettingsSearchEntry(title: "Character", keywords: ["cat", "bee", "parrot", "bird", "dinosaur", "dino", "dragon", "three heads", "dog", "puppy", "hamster", "chicken", "hen", "giraffe", "hippo", "pig", "piggy", "hog", "hippopotamus", "rabbit", "bunny", "shark", "pet", "character", "animal", "coat", "colour", "color", "photo", "picture", "my cat", "fold", "folded", "ears", "scottish", "classic", "pixels", "pixel", "pixel size", "hd", "fine", "finer", "chunky", "retro", "old", "old look", "old design", "original", "previous", "before"]),
             SettingsSearchEntry(title: "Colour", keywords: ["colour", "color", "coat", "breed", "orange", "tabby", "black", "white", "siamese", "calico"]
                 + CatArt.petCoats.keys.sorted().flatMap { CatArt.petCoats[$0, default: []].map { $0.title.lowercased() } }),
             SettingsSearchEntry(title: "Where it walks", keywords: ["cat", "roam", "windows", "bottom", "screen"], anchorID: SettingsPage.moving.rawValue),
@@ -5232,13 +6552,19 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "Countdowns", keywords: ["countdown", "days", "until", "trip", "deadline", "launch", "date"], anchorID: SettingsPage.notes.rawValue),
             SettingsSearchEntry(title: "Join your next video call", keywords: ["meeting", "zoom", "meet", "teams", "webex", "join", "call"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Pomodoro", keywords: ["pomodoro", "focus", "break", "timer", "rounds", "tomato"], anchorID: SettingsPage.focus.rawValue),
+            SettingsSearchEntry(title: "Let AI apps talk to your pet", keywords: ["mcp", "ai apps", "claude", "cursor", "codex", "tools", "say", "note"], anchorID: SettingsPage.ai.rawValue),
+            SettingsSearchEntry(title: "End-of-day recap", keywords: ["recap", "summary", "today so far", "end of day", "day", "stats", "done"], anchorID: SettingsPage.focus.rawValue),
+            SettingsSearchEntry(title: "Week and month wrap-up", keywords: ["wrapped", "week", "month", "weekly", "monthly", "summary", "so far"], anchorID: SettingsPage.focus.rawValue),
+            SettingsSearchEntry(title: "Body doubling", keywords: ["body doubling", "focus", "task", "working on", "check in", "adhd", "accountability"], anchorID: SettingsPage.focus.rawValue),
             SettingsSearchEntry(title: "Nudge me back to work", keywords: ["distraction", "focus", "youtube", "procrastinate", "nudge", "social"], anchorID: SettingsPage.focus.rawValue),
             SettingsSearchEntry(title: "Carry files to your shelf", keywords: ["shelf", "file", "drop", "carry", "fetch", "drag"], anchorID: SettingsPage.moving.rawValue),
             SettingsSearchEntry(title: "Type along", keywords: ["typing", "keyboard", "keys", "bongo", "laptop", "type"], anchorID: SettingsPage.moving.rawValue),
             SettingsSearchEntry(title: "Follow the cursor", keywords: ["cat", "chase", "pointer", "mouse"], anchorID: SettingsPage.moving.rawValue),
             SettingsSearchEntry(title: "Pounce on dragged files", keywords: ["cat", "drag", "file", "pounce", "play"], anchorID: SettingsPage.moving.rawValue),
-            SettingsSearchEntry(title: "Quiet during calls and screen sharing", keywords: ["cat", "quiet", "meeting", "privacy", "share", "zoom"], anchorID: SettingsPage.tells.rawValue),
+            SettingsSearchEntry(title: "Battery saver", keywords: ["battery", "energy", "cpu", "power", "low power", "frame rate", "walk"], anchorID: SettingsPage.moving.rawValue),
+            SettingsSearchEntry(title: "Quiet during calls and screen sharing", keywords: ["cat", "quiet", "meeting", "privacy", "share", "zoom", "full screen", "presenting", "keynote", "slides"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Mac notifications", keywords: ["cat", "speech", "bubble", "alert", "banner"], anchorID: SettingsPage.tells.rawValue),
+            SettingsSearchEntry(title: "In its own words", keywords: ["apple intelligence", "ai", "model", "on-device", "words", "lines", "speech", "bubble", "foundation"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Calendar events", keywords: ["cat", "meeting", "reminder", "event", "appointment"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Battery", keywords: ["cat", "battery", "charge", "power", "sleepy", "yawn"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Busy Mac", keywords: ["cpu", "heat", "hot", "busy", "fan", "load", "runcat", "sweat"], anchorID: SettingsPage.tells.rawValue),
@@ -5250,6 +6576,7 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "A whole web page", keywords: ["screenshot", "full page", "safari", "chrome", "arc", "capture", "scroll", "web"], anchorID: SettingsPage.capture.rawValue),
             SettingsSearchEntry(title: "Your birthday", keywords: ["birthday", "party", "confetti", "cake"], anchorID: SettingsPage.festivals.rawValue),
             SettingsSearchEntry(title: "Good morning", keywords: ["morning", "greeting", "wake", "calendar", "stretch"], anchorID: SettingsPage.tells.rawValue),
+            SettingsSearchEntry(title: "Keyboard shortcuts", keywords: ["shortcut", "hotkey", "keyboard", "keys", "bind", "record"]),
             SettingsSearchEntry(title: "Say hello again", keywords: ["hello", "tips", "intro", "tutorial", "how to", "gestures", "first"]),
             SettingsSearchEntry(title: "Welcome back", keywords: ["away", "return", "back", "hello", "greeting", "idle"], anchorID: SettingsPage.tells.rawValue),
             SettingsSearchEntry(title: "Late nights", keywords: ["night", "late", "bedtime", "sleep", "nightcap", "midnight"], anchorID: SettingsPage.tells.rawValue),
@@ -5260,13 +6587,15 @@ extension PixpawDroplet: SettingsPaneProviding {
             SettingsSearchEntry(title: "What it's working on", keywords: ["claude", "agent", "file", "editing", "tool", "command"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Answer from your pet", keywords: ["claude", "permission", "allow", "deny", "question", "agent", "approve", "type", "other", "answer", "instead"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Touch ID to allow a risky one", keywords: ["touch id", "fingerprint", "password", "risky", "allow", "security", "rm", "sudo"], anchorID: SettingsPage.ai.rawValue),
-            SettingsSearchEntry(title: "Wait for CI after a push", keywords: ["ci", "github", "actions", "gh", "push", "checks", "build", "workflow"], anchorID: SettingsPage.ai.rawValue),
+            SettingsSearchEntry(title: "Wait for CI after a push", keywords: ["ci", "github", "actions", "gh", "push", "checks", "build", "workflow"], anchorID: SettingsPage.advanced.rawValue),
+            SettingsSearchEntry(title: "Coat from a photo", keywords: ["photo", "coat", "colour", "color", "fur", "my cat", "picture", "advanced"], anchorID: SettingsPage.advanced.rawValue),
             SettingsSearchEntry(title: "Talk to your pet", keywords: ["voice", "talk", "speak", "say", "microphone", "speech", "dictation", "siri", "command"], anchorID: SettingsPage.talk.rawValue),
             SettingsSearchEntry(title: "Meeting notes", keywords: ["meeting", "notes", "minutes", "transcript", "summary", "summarize", "record", "call", "zoom", "meet", "teams", "microphone", "claude", "apple intelligence"], anchorID: SettingsPage.meetings.rawValue),
             SettingsSearchEntry(title: "Show live transcript while taking notes", keywords: ["meeting", "transcript", "live", "captions", "subtitles", "words"], anchorID: SettingsPage.meetings.rawValue),
             SettingsSearchEntry(title: "Ask how to sum it up after Stop", keywords: ["meeting", "angle", "summary style", "sum up", "how to summarise", "how to summarize", "action items"], anchorID: SettingsPage.meetings.rawValue),
             SettingsSearchEntry(title: "Listen to", keywords: ["meeting", "microphone", "mac sound", "system audio", "screen recording", "call"], anchorID: SettingsPage.meetings.rawValue),
             SettingsSearchEntry(title: "Agent updates", keywords: ["cat", "claude", "codex", "cursor", "agent"], anchorID: SettingsPage.ai.rawValue),
+            SettingsSearchEntry(title: "Guests in the home", keywords: ["guest", "visit", "visitor", "home", "house", "session", "agent", "claude", "codex"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Keep the Mac awake while agents work", keywords: ["sleep", "awake", "caffeinate", "agent", "claude", "codex"], anchorID: SettingsPage.ai.rawValue),
             SettingsSearchEntry(title: "Beside the notch", keywords: ["cat", "live activity", "status", "notch", "moments", "always", "island", "late night"], anchorID: SettingsPage.notch.rawValue),
             SettingsSearchEntry(title: "Light up while something runs", keywords: ["notch", "glow", "light", "lamp", "colour", "color", "agent", "running"], anchorID: SettingsPage.notch.rawValue),
@@ -5287,7 +6616,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
     case wardrobe, home, friend, moving, ownPets
     case ai, focus, notes, meetings, talk
     case notch, tells, capture, festivals
-    case permissions
+    case advanced, permissions
 
     /// The main page's groups, by what you're there to do.
     static let groups: [(title: String, pages: [SettingsPage])] = [
@@ -5314,6 +6643,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .tells: "What it tells you"
         case .capture: "Capture"
         case .festivals: "Festivals and birthday"
+        case .advanced: "Advanced"
         case .permissions: "Permissions"
         }
     }
@@ -5334,6 +6664,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .tells: "Notifications, calendar, music · quiet in calls"
         case .capture: "A photo or GIF of your pet, a whole web page"
         case .festivals: "Your birthday and festival days"
+        case .advanced: "Waiting for CI after a push, a coat from a photo"
         case .permissions: "What Droppy is allowed, and your agents' hooks"
         }
     }
@@ -5354,6 +6685,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .tells: "bubble.left.fill"
         case .capture: "camera.fill"
         case .festivals: "party.popper.fill"
+        case .advanced: "slider.horizontal.3"
         case .permissions: "lock.shield.fill"
         }
     }
@@ -5374,6 +6706,7 @@ enum SettingsPage: String, CaseIterable, Identifiable {
         case .tells: .blue
         case .capture: .brown
         case .festivals: .yellow
+        case .advanced: Color(red: 0.36, green: 0.40, blue: 0.48)
         case .permissions: .gray
         }
     }
@@ -5471,6 +6804,9 @@ private struct PixpawSettings: View {
     @State private var newCountdownDay = Calendar.current.date(byAdding: .day, value: 7, to: Date()) ?? Date()
     @State private var renamingSlot: Int?
     @State private var newName = ""
+    /// Settings › Name, saved on Return or when the field loses focus.
+    @State private var petNameDraft = ""
+    @FocusState private var naming: Bool
 
     /// A reminder: how often and whether it is on; one of yours can go.
     private func reminderRow(_ reminder: Reminder) -> some View {
@@ -5502,6 +6838,7 @@ private struct PixpawSettings: View {
                 if renamingSlot == pet.slot {
                     TextField("Name", text: $newName, prompt: Text("Your pet"))
                         .labelsHidden()
+                        .multilineTextAlignment(.leading)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 150)
                         .onSubmit { finishRenaming(pet) }
@@ -5532,7 +6869,14 @@ private struct PixpawSettings: View {
                             ownSoundMenu(sound, of: pet)
                         }
                         Divider()
-                        Button("Remove") { droplet.removeOwnPet(pet.slot) }
+                        Button("Remove…") {
+                            if DropletConfirmationDialog.present(
+                                title: "Remove \(pet.name)?",
+                                message: "Its picture and sounds go from this Mac. Keep a copy first with Share as a .pixpaw file if you might want it back.",
+                                confirmTitle: "Remove", symbol: "trash") {
+                                droplet.removeOwnPet(pet.slot)
+                            }
+                        }
                     } label: {
                         Image(systemName: "ellipsis.circle")
                     }
@@ -5640,24 +6984,73 @@ private struct PixpawSettings: View {
         return calendar.monthSymbols
     }()
 
-    /// Your pet as the main page names it: "your cat", or the name you gave one you drew.
-    private var petName: String { cat.kind.isOwn ? cat.kind.title : cat.kind.title.lowercased() }
+    /// Your pet as the main page names it: "your cat", or the name you gave it.
+    private var petName: String { cat.isNamed ? cat.title : "your \(cat.kind.title.lowercased())" }
+
+    /// The page opens on your pet: live, at its desktop size, in its coat
+    /// and outfit, with its name and stars. A click pets it, as on the desktop.
+    private var hero: some View {
+        let frame: CatFrame = droplet.isOut ? cat.frame : .sleep1
+        return HStack(spacing: DroppySpacing.lg) {
+            Button {
+                if droplet.isOut { cat.petByVoiceOver() } else { droplet.setOut(true) }
+            } label: {
+                Group {
+                    if let image = CatSprites.shared.image(frame, coat: cat.coat, hat: cat.hat, collar: cat.collar, glasses: cat.glasses,
+                                                           costume: droplet.isOut ? cat.costume : nil, kind: cat.kind, fine: true) {
+                        Image(decorative: image, scale: 1)
+                            .interpolation(.none)
+                            .resizable()
+                            .aspectRatio(contentMode: .fit)
+                            .scaleEffect(x: cat.facesRight ? 1 : -1, y: 1)
+                    }
+                }
+                .frame(width: CatSprites.catSize.width, height: CatSprites.catSize.height)
+                .contentShape(Rectangle())
+            }
+            .buttonStyle(.borderless)
+            .help(droplet.isOut ? "Pet \(cat.title)" : "Let \(cat.title) out")
+            .accessibilityLabel(droplet.isOut ? "Pet \(cat.title)" : "Let \(cat.title) out")
+            VStack(alignment: .leading, spacing: DroppySpacing.xs) {
+                Text(cat.title)
+                    .font(.title3.weight(.semibold))
+                Text(droplet.isOut ? cat.statusTitle : "Inside, napping")
+                    .foregroundStyle(.secondary)
+                Text(cat.starsLine)
+                    .monospacedDigit()
+                    .foregroundStyle(.secondary)
+            }
+            .lineLimit(1)
+            .truncationMode(.tail)
+            Spacer(minLength: 0)
+        }
+        .padding(.vertical, DroppySpacing.xs)
+        .accessibilityElement(children: .contain)
+    }
 
     private var pane: some View {
         DropletSettingsPane {
             DropletSettingsCard {
-                DropletControlRow(title: "Show your \(petName)",
+                hero
+            }
+            DropletSettingsCard {
+                DropletControlRow(title: "Show \(petName)",
                                   infoTip: "Lets your pet out onto your desktop." + (droplet.shortcutText("toggle-cat").map { " \($0) does the same." } ?? "")) {
-                    HStack(spacing: DroppySpacing.sm) {
-                        if let face = CatSprites.shared.menuImage(cat.kind, coat: cat.coat, points: 2) {
-                            Image(nsImage: face)
-                                .interpolation(.none)
-                                .accessibilityHidden(true)
-                        }
-                        Toggle("Show your \(petName)", isOn: Binding(get: { droplet.isOut }, set: { droplet.setOut($0) }))
-                            .toggleStyle(.switch)
-                            .labelsHidden()
-                    }
+                    Toggle("Show \(petName)", isOn: Binding(get: { droplet.isOut }, set: { droplet.setOut($0) }))
+                        .toggleStyle(.switch)
+                        .labelsHidden()
+                }
+                DropletControlRow(title: "Name", infoTip: "Optional. Your pet's card, VoiceOver and the lock screen use it.") {
+                    TextField("Name", text: $petNameDraft, prompt: Text(cat.kind.title))
+                        .labelsHidden()
+                        .multilineTextAlignment(.leading)
+                        .textFieldStyle(.roundedBorder)
+                        .frame(width: 150)
+                        .focused($naming)
+                        .onSubmit { droplet.setPetName(petNameDraft) }
+                        .onChange(of: naming) { _, focused in if !focused { droplet.setPetName(petNameDraft) } }
+                        .onAppear { petNameDraft = cat.isNamed ? cat.title : "" }
+                        .onChange(of: cat.kind) { _, _ in petNameDraft = cat.isNamed ? cat.title : "" }
                 }
                 DropletGroupedPickerRow(
                     title: "Character",
@@ -5698,30 +7091,6 @@ private struct PixpawSettings: View {
                     }
                 }
                 if cat.kind.hasCoats {
-                    DropletControlRow(title: "Coat from a photo", icon: "photo",
-                                      infoTip: "Pixpaw paints the cat in your own cat's colours: fur, stripes or patches, white and eyes. Only the colours are kept, never the photo.") {
-                        HStack(spacing: DroppySpacing.sm) {
-                            if droplet.readingPhoto {
-                                ProgressView().controlSize(.small)
-                            } else if droplet.hasPhotoCoat {
-                                Circle()
-                                    .fill(Color(nsColor: CatCoat.photo.swatch))
-                                    .frame(width: 14, height: 14)
-                                    .accessibilityHidden(true)
-                                Button("Forget") { droplet.forgetPhotoCoat() }
-                                    .buttonStyle(.bordered)
-                            }
-                            Button(droplet.hasPhotoCoat ? "Another photo…" : "Choose…") { droplet.coatFromPhoto() }
-                                .disabled(droplet.readingPhoto)
-                        }
-                    }
-                    if let problem = droplet.photoCoatProblem {
-                        Label(problem, systemImage: "exclamationmark.triangle.fill")
-                            .font(.callout)
-                            .foregroundStyle(.orange)
-                            .padding(.horizontal, 12)
-                            .padding(.vertical, 6)
-                    }
                     DropletToggleRow(
                         title: "Folded ears",
                         subtitle: "Ears folded down, like a Scottish Fold's.",
@@ -5729,7 +7098,7 @@ private struct PixpawSettings: View {
                     )
                 }
                 if CatSprites.hasFineArt(cat.kind) || (droplet.hasFriend && CatSprites.hasFineArt(droplet.friendsKind)) {
-                    DropletGroupedPickerRow(title: "Pixel size", subtitle: "Fine (HD) on the desktop, or the original chunky pixels. For both pets.") {
+                    DropletGroupedPickerRow(title: "Pixel size", subtitle: "Fine (HD) on the desktop, or Chunky for the original look from before 2.0. For both pets.") {
                         Picker("Pixel size", selection: Binding(get: { droplet.classicPixels }, set: { droplet.setClassicPixels($0) })) {
                             Text("Fine (HD)").tag(false)
                             Text("Chunky (classic)").tag(true)
@@ -5764,10 +7133,16 @@ private struct PixpawSettings: View {
             }
 
             DropletSettingsCard {
+                pageLink(.advanced)
                 pageLink(.permissions)
                 DropletControlRow(title: "Say hello again", icon: "hand.wave",
                                   infoTip: "Your pet shows its three tips again: how to pet it, how to open its card, and that you can drag it anywhere.") {
                     Button("Say hello") { droplet.sayHelloAgain() }
+                        .buttonStyle(.bordered)
+                }
+                DropletControlRow(title: "Keyboard shortcuts", icon: "command",
+                                  infoTip: "Call your pet over, add a note, talk to it and more: every Pixpaw shortcut is set on Droppy's Shortcuts page, with the rest of Droppy's.") {
+                    Button("Open Shortcuts") { droplet.openShortcuts() }
                         .buttonStyle(.bordered)
                 }
             }
@@ -5818,7 +7193,7 @@ private struct PixpawSettings: View {
                                droplet.carriesScreenshots ? "carries them to the shelf" : nil].compactMap { $0 }
             return screenshots.isEmpty ? page.subtitle : "Photo, GIF, a whole page · " + screenshots.joined(separator: ", ")
         case .friend: return droplet.hasFriend ? "\(droplet.friendsKind.title) · \(droplet.social.friendTraits.map(\.title).joined(separator: ", "))" : "Off · a second pet of any kind"
-        case .moving: return "\(cat.roaming.title)\(droplet.typesAlong ? " · types along" : "")\(cat.chasesPointer ? " · follows the cursor" : "")"
+        case .moving: return "\(cat.roaming.title)\(droplet.typesAlong ? " · types along" : "")\(cat.chasesPointer ? " · follows the cursor" : "")\(droplet.batterySaver ? " · battery saver" : "")"
         case .meetings: return "\(droplet.notesSource.title) · summed up by \(droplet.notesModel.title.components(separatedBy: " (").first ?? "")"
         case .talk: return droplet.talks ? "\(droplet.shortcutText("talk") ?? "From its menu") · English" : "Off · say what you'd like and it does it"
         case .permissions:
@@ -5839,6 +7214,7 @@ private struct PixpawSettings: View {
                 scheduledSection
                 asksSection
                 usageSection
+                aiAppsSection
             case .notes:
                 notesSection
                 countdownsSection
@@ -5857,6 +7233,7 @@ private struct PixpawSettings: View {
                 quietSection
             case .capture: captureSection
             case .festivals: festivalsSection
+            case .advanced: advancedSection
             case .permissions:
                 permissionsSection
                 hooksSection
@@ -5938,6 +7315,7 @@ private struct PixpawSettings: View {
                         }
                         TextField("Note", text: $newSign, prompt: Text("Buy milk…"))
                             .labelsHidden()
+                            .multilineTextAlignment(.leading)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 170)
                             .onSubmit(holdSign)
@@ -5968,6 +7346,7 @@ private struct PixpawSettings: View {
                         HStack(spacing: 6) {
                             TextField("Countdown", text: $newCountdown, prompt: Text("Trip to Japan…"))
                                 .labelsHidden()
+                                .multilineTextAlignment(.leading)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 150)
                                 .onSubmit(addCountdown)
@@ -6050,7 +7429,7 @@ private struct PixpawSettings: View {
         }
     }
 
-    private var movingSection: some View {
+    @ViewBuilder private var movingSection: some View {
         DropletSettingsSection {
             settingsSectionHeader("Moving about")
         } content: {
@@ -6089,6 +7468,20 @@ private struct PixpawSettings: View {
                 )
             }
         }
+        DropletSettingsSection {
+            settingsSectionHeader("Battery")
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Battery saver",
+                    subtitle: droplet.savingPower
+                        ? "Saving now: your pet stays where it is, naps and grooms, and moves at 30 frames a second. It still comes when you call it."
+                        : "On battery or in Low Power Mode, your pet stays where it is, naps and grooms, and moves at 30 frames a second. It still comes when you call it.",
+                    isOn: Binding(get: { droplet.batterySaver }, set: { droplet.setBatterySaver($0) })
+                )
+                PetEnergyRow()
+            }
+        }
     }
 
     private var wardrobeSection: some View {
@@ -6096,7 +7489,7 @@ private struct PixpawSettings: View {
             DropletSettingsSection {
                 VStack(alignment: .leading, spacing: 2) {
                     settingsSectionHeader("Wardrobe")
-                    Text("Petting (+1, up to 10 a day), meals (+3, +5 when hungry, 3 a day), play (+5, 3 a day), catches (+2, 5 a day), treats (+2, 3 a day), a gift (+3, once a day), stretches (+2, 5 a day) and notes done (+2, 5 a day) earn up to 30 stars a day. Stars unlock things to wear, and at 500 a home of its own; some things come from what you do together instead.")
+                    Text("Petting (+1, up to 10 a day), meals (+3, +5 when hungry, 3 a day), play (+5, 3 a day), catches (+2, 5 a day), treats (+2, 3 a day), a gift (+3, once a day), stretches (+2, 5 a day), notes done (+2, 5 a day) and things it finds (+2, 3 a day) earn up to 30 stars a day. Stars unlock things to wear, and at 500 a home of its own; some things come from what you do together instead.")
                         .font(.body)
                         .foregroundStyle(.secondary)
                 }
@@ -6112,6 +7505,14 @@ private struct PixpawSettings: View {
                     DropletControlRow(title: "Days in a row", infoTip: "Days you earned stars, one after another. A week of them grows a little sprout.") {
                         DropletValuePill(text: wardrobeProgress.streak == 1 ? "1 day" : "\(wardrobeProgress.streak) days")
                     }
+                    DropletToggleRow(
+                        title: "Bring things it finds",
+                        subtitle: "After a focus round or an agent run finishes, your pet sometimes leaves something it found in front of it: up to \(Finds.dailyLimit) a day, +2 stars each, and every \(Finds.decorEvery)th one (with a home) a decoration you don't have yet. Nothing runs out or goes away. Found so far: \(cat.finds.total).",
+                        isOn: Binding(get: { droplet.bringsFinds }, set: { droplet.setBringsFinds($0) })
+                    )
+                    DropletControlRow(title: "Days together", infoTip: "Each day you're at your Mac with your pet counts once. A day off only pauses it: it never goes back to zero. At 28 days its home grows a spot on the far right.") {
+                        DropletValuePill(text: droplet.kindStreak.days == 1 ? "1 day" : "\(droplet.kindStreak.days) days")
+                    }
                     DropletStackedRow(title: "This year together", icon: "calendar",
                                       infoTip: "Counts only (minutes focused, bugs caught, games won, notes done), kept on this Mac, for a card at the end of the year.") {
                         HStack(spacing: DroppySpacing.sm) {
@@ -6119,8 +7520,30 @@ private struct PixpawSettings: View {
                                 .foregroundStyle(.secondary)
                                 .frame(maxWidth: .infinity, alignment: .leading)
                             if droplet.stats.summary != nil {
-                                Button("Clear") { droplet.clearStats() }
+                                Button("Clear…") {
+                                    if DropletConfirmationDialog.present(
+                                        title: "Clear the yearly counts?",
+                                        message: "Minutes focused, bugs caught, games won and notes done start again from zero, for every year. Stars, hats and decorations stay.",
+                                        confirmTitle: "Clear", symbol: "calendar") {
+                                        droplet.clearStats()
+                                    }
+                                }
                                     .buttonStyle(.bordered)
+                            }
+                        }
+                    }
+                    DropletStackedRow(title: "Backup", icon: "externaldrive",
+                                      infoTip: "One file with the home and its decorations, what's worn, stars, the year's counts and days together. Never notes, meetings or anything about your work.") {
+                        VStack(alignment: .leading, spacing: DroppySpacing.xsm) {
+                            HStack(spacing: DroppySpacing.sm) {
+                                Button("Save a backup…") { droplet.exportBackup() }
+                                    .buttonStyle(.bordered)
+                                Button("Load a backup…") { droplet.importBackup() }
+                                    .buttonStyle(.bordered)
+                                Spacer(minLength: 0)
+                            }
+                            if let problem = droplet.backupProblem {
+                                Text(problem).foregroundStyle(.secondary)
                             }
                         }
                     }
@@ -6254,7 +7677,7 @@ private struct PixpawSettings: View {
                                   infoTip: "Decorations are bought with stars. Spending never takes stars off your total, so nothing you've unlocked locks again. Each one changes with your pet: a cat's bowls are a fish dish, a hamster's lamp a water bottle.") {
                     DropletValuePill(text: "\(cat.wallet) ★")
                 }
-                ForEach(HomeDecor.allCases) { item in
+                ForEach(HomeDecor.shown(owned: cat.decorOwned)) { item in
                     // One line, centred: art, name, then the eye and the control.
                     // Not a LabeledContent: the Form pins its control to the label's
                     // first text baseline, which leaves the tall art riding high.
@@ -6270,8 +7693,22 @@ private struct PixpawSettings: View {
                         decorPreview(item)
                     }
                 }
+                DropletToggleRow(
+                    title: "Eats from its bowls by itself",
+                    subtitle: bowlsSubtitle,
+                    isOn: Binding(get: { droplet.eatsFromBowls }, set: { droplet.setEatsFromBowls($0) })
+                )
             }
         }
+    }
+
+    /// What the bowls toggle says: how it works, and what's left in them.
+    private var bowlsSubtitle: String {
+        let name = HomeDecor.bowls.title(for: decorLook).lowercased()
+        let how = "With the \(name) placed by its home, a hungry pet with nothing else on walks over and eats. They hold \(PetBowls.holds) meals; fill them from the pet's menu, under Care. Empty ones just get a sniff."
+        guard cat.homeDecor.spot(of: .bowls) != nil else { return how }
+        let left = cat.bowls.saved
+        return how + " Now: \(left == 1 ? "1 meal" : "\(left) meals") left."
     }
 
     /// Before the home: the goal in view. The pet's home and every
@@ -6280,7 +7717,7 @@ private struct PixpawSettings: View {
     private var lockedHomeStrip: some View {
         let fine = cat.drawsFine, look = decorLook
         let toGo = max(0, CatController.homeUnlockAt - cat.points)
-        let items = HomeDecor.allCases
+        let items = HomeDecor.shown(owned: [])
         let spoken = "Locked until \(CatController.homeUnlockAt) stars, \(toGo) to go: a home, then "
             + items.map { "\($0.title(for: look)), \($0.price) stars" }.joined(separator: "; ")
         return HStack(alignment: .bottom, spacing: DroppySpacing.xs) {
@@ -6343,7 +7780,7 @@ private struct PixpawSettings: View {
 
     /// Whose version of each decoration shows: the kind the home is drawn
     /// for (a pet you drew gets the animal it acts like).
-    private var decorLook: String { cat.kind.actsLike.rawValue }
+    private var decorLook: String { cat.kind.decorLook }
 
     /// The eye on every row: opens (or closes) the preview under it, so
     /// anything can be looked at beside the home before it's bought.
@@ -6373,7 +7810,7 @@ private struct PixpawSettings: View {
         let fine = cat.drawsFine
         let owned = cat.decorOwned.contains(item)
         let placedAt = cat.homeDecor.spot(of: item)
-        let spot = placedAt ?? cat.homeDecor.freeSpot(for: item)
+        let spot = placedAt ?? cat.homeDecor.freeSpot(for: item, wide: cat.homeWide)
         let decor = placedAt != nil ? cat.homeDecor : spot.map { cat.homeDecor.placing(item, in: $0) }
         // Both sides taken: Buy keeps it to place later, so it's shown on its own.
         let art = decor.flatMap { CatSprites.shared.home(cat.kind, occupied: false, fine: fine, decor: $0) }
@@ -6384,6 +7821,7 @@ private struct PixpawSettings: View {
         case .left: "on the left of its home"
         case .right: "on the right of its home"
         case .front: "in front of its home"
+        case .outer: "at the far right of its home"
         case nil: nil as String?
         }
         let short = DecorShop.short(of: item, points: cat.points, spent: cat.starsSpent)
@@ -6430,7 +7868,7 @@ private struct PixpawSettings: View {
                 if let spot { cat.place(item, in: spot) } else if let was = cat.homeDecor.spot(of: item) { cat.place(nil, in: was) }
             })) {
                 Text("Put away").tag(HomeDecor.Spot?.none)
-                ForEach(item.spots) { Text($0.title).tag(HomeDecor.Spot?.some($0)) }
+                ForEach(item.spots(wide: cat.homeWide)) { Text($0.title).tag(HomeDecor.Spot?.some($0)) }
             }
             .pickerStyle(.menu)
             .labelsHidden()
@@ -6680,13 +8118,41 @@ private struct PixpawSettings: View {
                                       infoTip: "When both sit about they play for make-believe coins, each in its own character. Start over draws new characters and \(PetSocial.startingCoins) coins each.") {
                         HStack(spacing: DroppySpacing.sm) {
                             DropletValuePill(text: "\(droplet.social.petCoins) vs \(droplet.social.friendCoins) coins · \(droplet.social.petWins)–\(droplet.social.friendWins)")
-                            Button("Start over") { droplet.resetSocial() }
+                            Button("Start over…") {
+                                if DropletConfirmationDialog.present(
+                                    title: "Start the game over?",
+                                    message: "Both pets draw new characters and get \(PetSocial.startingCoins) coins each. The score goes back to 0–0.",
+                                    confirmTitle: "Start over", symbol: "hand.raised.fingers.spread") {
+                                    droplet.resetSocial()
+                                }
+                            }
                                 .buttonStyle(.bordered)
                         }
                     }
                 }
             }
         }
+    }
+
+    private static func ownWordsNote(_ status: PetLines.Status) -> String {
+        switch status {
+        case .ready: "Apple Intelligence rewrites what it says from its mood, the time and what just finished, now and then. Runs on your Mac; nothing is sent anywhere."
+        case .language: "Apple Intelligence doesn't write in your Mac's language yet (Thai isn't supported), so your pet keeps its usual lines."
+        case .turnedOff: "Needs Apple Intelligence: turn it on in System Settings, then come back."
+        case .notReady: "Apple Intelligence is still getting ready on this Mac. Try again in a little while."
+        case .notEligible, .tooOld: "Needs a Mac with Apple Intelligence (Apple silicon, macOS 26 or later)."
+        }
+    }
+
+    /// Apple's on-device model, when this Mac has it in its language.
+    @ViewBuilder private var ownWordsRow: some View {
+        let status = PetLines.status
+        DropletToggleRow(
+            title: "In its own words",
+            subtitle: Self.ownWordsNote(status),
+            isOn: Binding(get: { droplet.ownWords && status == .ready }, set: { droplet.setOwnWords($0) })
+        )
+        .disabled(status != .ready || !cat.chatty && !droplet.tellsAgents)
     }
 
     private var speechSection: some View {
@@ -6704,6 +8170,7 @@ private struct PixpawSettings: View {
                     subtitle: "Hungry, full, sleepy, awake, and a word when it catches a file.",
                     isOn: Binding(get: { cat.chatty }, set: { droplet.setChatty($0) })
                 )
+                ownWordsRow
                 DropletToggleRow(
                     title: "Mac notifications",
                     subtitle: "Reads out the banners other apps show. Droppy reads them with Accessibility; nothing is kept.",
@@ -6761,7 +8228,7 @@ private struct PixpawSettings: View {
             DropletSettingsCard {
                 DropletToggleRow(
                     title: "Quiet during calls and screen sharing",
-                    subtitle: "No bubbles while a microphone or camera is in use or a screen is shared, so nothing private shows in a meeting.",
+                    subtitle: "No bubbles or sounds while a microphone or camera is in use, a screen is shared, or the app in front is full screen or presenting, so nothing private shows in a meeting.",
                     isOn: Binding(get: { droplet.quietsAutomatically }, set: { droplet.setQuietsAutomatically($0) })
                 )
                 if droplet.quietsAutomatically {
@@ -6962,11 +8429,74 @@ private struct PixpawSettings: View {
                     isOn: Binding(get: { droplet.readsAgentFiles }, set: { droplet.setReadsAgentFiles($0) })
                 )
                 DropletToggleRow(
+                    title: "Guests in the home",
+                    subtitle: "While the home is out, each agent session sends one of the other pets to sit in front of it: at a laptop while it works, a question mark when it needs you, pleased when it's done.",
+                    isOn: Binding(get: { droplet.guestsVisit }, set: { droplet.setGuestsVisit($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+                DropletToggleRow(
                     title: "Keep the Mac awake while agents work",
-                    subtitle: "The Mac stays awake while an agent works, so a long run can finish. The screen still turns off, and closing the lid still sleeps.",
+                    subtitle: "The Mac stays awake while an agent works, so a long run can finish. The screen still turns off, and closing the lid still sleeps. Droppy's own Stay Awake can do this too, under Automatic, with its Agents droplet on: then leave this off.",
                     isOn: Binding(get: { droplet.awakeForAgents }, set: { droplet.setAwakeForAgents($0) })
                 )
                 .disabled(!droplet.tellsAgents)
+            }
+        }
+    }
+
+    /// Things few people need, kept out of the way: each still works as before.
+    private var advancedSection: some View {
+        DropletSettingsSection {
+            settingsSectionHeader("Advanced")
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Wait for CI after a push",
+                    subtitle: droplet.hasGH
+                        ? "When your agent pushes to GitHub, your pet waits for its Actions with you: it jumps for joy when they pass, and a bug turns up when they fail, until a push makes them green. Asks GitHub's gh command every 20 seconds, signed in as you, so it goes online. Needs the hooks in the README."
+                        : "When your agent pushes to GitHub, your pet waits for its Actions with you. Needs GitHub's gh command, signed in (brew install gh, then gh auth login).",
+                    isOn: Binding(get: { droplet.watchesCI }, set: { droplet.setWatchesCI($0) })
+                )
+                .disabled(!droplet.tellsAgents)
+                if cat.kind.hasCoats {
+                    DropletControlRow(title: "Coat from a photo", icon: "photo",
+                                      infoTip: "Pixpaw paints the cat in your own cat's colours: fur, stripes or patches, white and eyes. Only the colours are kept, never the photo.") {
+                        HStack(spacing: DroppySpacing.sm) {
+                            if droplet.readingPhoto {
+                                ProgressView().controlSize(.small)
+                            } else if droplet.hasPhotoCoat {
+                                Circle()
+                                    .fill(Color(nsColor: CatCoat.photo.swatch))
+                                    .frame(width: 14, height: 14)
+                                    .accessibilityHidden(true)
+                                Button("Forget…") {
+                                    if DropletConfirmationDialog.present(
+                                        title: "Forget the photo coat?",
+                                        message: "Your pet goes back to its usual coat. You can read a photo again any time.",
+                                        confirmTitle: "Forget", symbol: "photo") {
+                                        droplet.forgetPhotoCoat()
+                                    }
+                                }
+                                    .buttonStyle(.bordered)
+                            }
+                            Button(droplet.hasPhotoCoat ? "Another photo…" : "Choose…") { droplet.coatFromPhoto() }
+                                .disabled(droplet.readingPhoto)
+                        }
+                    }
+                    if let problem = droplet.photoCoatProblem {
+                        Label(problem, systemImage: "exclamationmark.triangle.fill")
+                            .font(.callout)
+                            .foregroundStyle(.orange)
+                            .padding(.horizontal, 12)
+                            .padding(.vertical, 6)
+                    }
+                } else {
+                    Text("A coat from a photo is for cats: pick a cat as your pet to use it.")
+                        .font(.callout)
+                        .foregroundStyle(.secondary)
+                        .padding(.horizontal, 12)
+                        .padding(.vertical, 6)
+                }
             }
         }
     }
@@ -6985,14 +8515,6 @@ private struct PixpawSettings: View {
                     title: "What it's working on",
                     subtitle: "A tag at your pet's side: “Editing App.swift”, “Running swift build”. Only a file's name and a command's first words; hidden while quiet.",
                     isOn: Binding(get: { droplet.showsAgentTools }, set: { droplet.setShowsAgentTools($0) })
-                )
-                .disabled(!droplet.tellsAgents)
-                DropletToggleRow(
-                    title: "Wait for CI after a push",
-                    subtitle: droplet.hasGH
-                        ? "When your agent pushes to GitHub, your pet waits for its Actions with you: it jumps for joy when they pass, and a bug turns up when they fail, until a push makes them green. Asks GitHub's gh command every 20 seconds, signed in as you, so it goes online. Needs the hooks in the README."
-                        : "When your agent pushes to GitHub, your pet waits for its Actions with you. Needs GitHub's gh command, signed in (brew install gh, then gh auth login).",
-                    isOn: Binding(get: { droplet.watchesCI }, set: { droplet.setWatchesCI($0) })
                 )
                 .disabled(!droplet.tellsAgents)
                 DropletToggleRow(
@@ -7104,6 +8626,28 @@ private struct PixpawSettings: View {
         }
     }
 
+    /// Tools for AI apps through Droppy's MCP server; off by default.
+    private var aiAppsSection: some View {
+        DropletSettingsSection {
+            settingsSectionHeader("AI apps")
+        } content: {
+            DropletSettingsCard {
+                DropletToggleRow(
+                    title: "Let AI apps talk to your pet",
+                    subtitle: "Claude, Cursor or Codex, through Droppy's MCP: say a short line in its bubble and add a to-do to its sign. Plain text only, nothing is opened or run.",
+                    isOn: Binding(get: { droplet.aiAppTools }, set: { droplet.setAIAppTools($0) })
+                )
+                // Droppy rereads mcpTools only when droplets start or change;
+                // DroppyKit has no call to say the list changed.
+                Text("The AI app may need Pixpaw turned off and on in Droppy, or a reconnect, before the tools appear or go away.")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .padding(.horizontal, 12)
+                    .padding(.vertical, 6)
+            }
+        }
+    }
+
     private var asksSection: some View {
         DropletSettingsSection {
             VStack(alignment: .leading, spacing: 2) {
@@ -7210,6 +8754,7 @@ private struct PixpawSettings: View {
                         HStack(spacing: 6) {
                             TextField("Reminder", text: $newReminder, prompt: Text("Take a pill…"))
                                 .labelsHidden()
+                                .multilineTextAlignment(.leading)
                                 .textFieldStyle(.roundedBorder)
                                 .frame(width: 170)
                                 .onSubmit(addReminder)
@@ -7237,6 +8782,21 @@ private struct PixpawSettings: View {
                     subtitle: "Four focus sessions with 5-minute breaks, and 15 minutes off after the fourth. Each break starts with a stretch.",
                     isOn: Binding(get: { droplet.pomodoroOn }, set: { droplet.setPomodoro($0) })
                 )
+                DropletToggleRow(
+                    title: "Body doubling",
+                    subtitle: "When you start a session it asks what you're working on and holds it up on its sign, checks in once about halfway (clicks only, never in a call) and asks at the end. Done earns a star.",
+                    isOn: Binding(get: { droplet.bodyDoubling }, set: { droplet.setBodyDoubling($0) })
+                )
+                DropletToggleRow(
+                    title: "End-of-day recap",
+                    subtitle: "Once a day, at a pause after the time you usually stop, it sums up the day: focus sessions, tasks done, agent runs, notes and stars. It learns when you stop from when you're at your Mac (times only, on this Mac). Never in a call; \"Today so far\" in its menu any time.",
+                    isOn: Binding(get: { droplet.dayRecapOn }, set: { droplet.setDayRecap($0) })
+                )
+                DropletToggleRow(
+                    title: "Week and month wrap-up",
+                    subtitle: "Pixpaw Wrapped: the same counts added up. When a new week or month starts, at a pause, it sums up the one before, and \"So far\" in its menu shows this week or month. Counts only, kept on this Mac for two months; turning it off forgets them.",
+                    isOn: Binding(get: { droplet.wrappedOn }, set: { droplet.setWrapped($0) })
+                )
                 DropletGroupedPickerRow(
                     title: "Lofi",
                     subtitle: "Play lofi from your pet's menu or a shortcut, in your browser, Spotify or Apple Music. Your pet puts its headphones on and studies along."
@@ -7254,6 +8814,7 @@ private struct PixpawSettings: View {
                         TextField("Your lofi link", text: Binding(get: { lofiLinkText ?? droplet.lofiLink }, set: { lofiLinkText = $0 }),
                                   prompt: Text("https://…"))
                             .labelsHidden()
+                            .multilineTextAlignment(.leading)
                             .textFieldStyle(.roundedBorder)
                             .frame(width: 260)
                             .onSubmit { saveLofiLink() }
@@ -7277,6 +8838,7 @@ private struct PixpawSettings: View {
                             set: { distractionText = $0 }
                         ))
                         .labelsHidden()
+                        .multilineTextAlignment(.leading)
                         .textFieldStyle(.roundedBorder)
                         .frame(width: 260)
                         .onSubmit { saveDistractions() }
@@ -7496,4 +9058,18 @@ struct AgentStatus: Equatable {
     var at: Date
     /// What the turn changed, when it's done: "3 files · +84 −12".
     var diff: String? = nil
+}
+
+extension CatController {
+    /// "★ 37 · 4/12 today · Bow at 45", for the shelf widget and Settings.
+    /// Once the home is out, what's left to spend on decorations follows.
+    var starsLine: String {
+        let today = starDay.day == StarDay.today ? starDay.stars : 0
+        let spend = hasHome ? " · \(wallet) to spend" : ""
+        if let next = CatAccessory.nextByStars(after: points), case .stars(let at) = next.unlock {
+            return "★ \(points) · \(today)/\(StarSource.dailyTotal) today · \(next.title) at \(at)" + spend
+        }
+        guard hasHome else { return "★ \(points) · \(today)/\(StarSource.dailyTotal) today · Home at \(CatController.homeUnlockAt)" }
+        return "★ \(points) · \(today)/\(StarSource.dailyTotal) today" + spend
+    }
 }

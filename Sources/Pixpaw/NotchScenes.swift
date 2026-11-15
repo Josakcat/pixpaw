@@ -5,7 +5,7 @@
 //  Beside the notch, a moment at a time: the pet comes out beside the
 //  notch when something happens and goes back in when it is over. Which
 //  moment shows is decided here, by a pure function the droplet feeds,
-//  so it can be checked on its own (Tools/notch-scenes-check.swift).
+//  so it can be checked on its own (.droppykit/Tools/notch-scenes-check.swift).
 //
 //  Droppy's own activities (music, timers, meetings, its HUDs, an open
 //  shelf) always own the notch first. A short moment that gets hidden is

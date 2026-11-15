@@ -7,8 +7,11 @@
 //  buzz, the parrot's squawk, the dinosaur's rawr, the dog's bark, the
 //  hamster's squeak, the chicken's bawk, the giraffe's hum, the hippo's
 //  honk, the rabbit's thump, the shark's chomp and the pig's oink. Made from sine waves and noise in
-//  code, so there are no sound files to license or ship. Pets you draw
-//  yourself can bring sounds of their own (OwnPets.swift).
+//  code. Where Pixpaw ships a recorded voice (CC0 recordings in
+//  Assets/Sounds, credited in README.md: every pet's call, the cat's purr and
+//  the chew) that plays instead, the synthesised one behind it in case the
+//  file is missing or won't decode. Pets you draw yourself can bring sounds
+//  of their own (OwnPets.swift).
 //
 //  What to play is decided here, on the main actor; making a voice's samples,
 //  reading a pet's own sound file and the playing all happen on SoundOutput's
@@ -40,6 +43,8 @@ final class CatSounds {
     private var voices: [PetKind: Voice] = [:]
     private var lastMeow = Date.distantPast
     private lazy var hiss = Self.clip(Self.hissSamples())
+    /// One chew for everyone: a recording, shared by every pet's voice.
+    private lazy var chew = Self.recorded("all-chew", else: Self.clip(Self.chewSamples()))
 
     private init() {}
 
@@ -94,7 +99,7 @@ final class CatSounds {
 
     private func builtIn(_ kind: PetKind) -> Voice {
         if let made = voices[kind] { return made }
-        let voice: Voice
+        var voice: Voice
         switch kind {
         case .cat, .own1, .own2, .own3, .own4, .own5:
             voice = Voice(calls: [Self.clip(Self.meow(pitch: 1)), Self.clip(Self.meow(pitch: 1.18))],
@@ -136,8 +141,62 @@ final class CatSounds {
             voice = Voice(calls: [Self.clip(Self.oink(pitch: 1, times: 2)), Self.clip(Self.oink(pitch: 1.12, times: 1))],
                           content: Self.clip(Self.oink(pitch: 0.85, times: 3)), chew: Self.clip(Self.chewSamples()))
         }
+        // The recorded voices, the synthesised ones kept behind them.
+        voice.calls = [Self.recorded(Self.recordedCall(kind), else: voice.calls.first)]
+        if kind == .cat { voice.content = Self.recorded("cat-purr", else: voice.content) }
+        voice.chew = chew
         voices[kind] = voice
         return voice
+    }
+
+    /// The name of a character's recorded call in Assets/Sounds.
+    private static func recordedCall(_ kind: PetKind) -> String {
+        switch kind {
+        case .cat, .own1, .own2, .own3, .own4, .own5: "cat-call"
+        case .bee: "bee-call"
+        case .parrot: "parrot-call"
+        case .dino: "dino-call"
+        case .dragon: "dragon-call"
+        case .dog: "dog-call"
+        case .hamster: "hamster-call"
+        case .chicken: "chicken-call"
+        case .giraffe: "giraffe-call"
+        case .hippo: "hippo-call"
+        case .rabbit: "rabbit-call"
+        case .shark: "shark-call"
+        case .pig: "pig-call"
+        }
+    }
+
+    // MARK: Recordings
+
+    /// A recorded sound from the droplet's bundle, found and decoded the
+    /// first time it plays, on the sound queue, never on the main thread. One
+    /// that is missing or won't decode plays the synthesised `fallback`.
+    /// Played a little faster or slower each time, so repeats differ.
+    private nonisolated static func recorded(_ name: String, else fallback: SoundClip?) -> SoundClip {
+        SoundClip(varies: true) {
+            let url = Bundle(for: SoundClip.self)
+                .url(forResource: name, withExtension: "m4a", subdirectory: "Assets/Sounds")
+            if let url, let data = decoded(url) { return data }
+            return fallback?.bytes()
+        }
+    }
+
+    /// A compressed sound file as 16-bit mono PCM WAV, or nil.
+    private nonisolated static func decoded(_ url: URL) -> Data? {
+        do {
+            let file = try AVAudioFile(forReading: url, commonFormat: .pcmFormatFloat32, interleaved: false)
+            guard file.length > 0,
+                  let buffer = AVAudioPCMBuffer(pcmFormat: file.processingFormat,
+                                                frameCapacity: AVAudioFrameCount(file.length)) else { return nil }
+            try file.read(into: buffer)
+            guard let channel = buffer.floatChannelData, buffer.frameLength > 0 else { return nil }
+            let samples = Array(UnsafeBufferPointer(start: channel[0], count: Int(buffer.frameLength)))
+            return wav(samples, rate: file.processingFormat.sampleRate)
+        } catch {
+            return nil
+        }
     }
 
     // MARK: Synthesis
@@ -600,7 +659,7 @@ final class CatSounds {
     }
 
     /// 16-bit mono PCM in a WAV container, which AVAudioPlayer plays directly.
-    private nonisolated static func wav(_ samples: [Float]) -> Data {
+    private nonisolated static func wav(_ samples: [Float], rate sampleRate: Double = sampleRate) -> Data {
         var data = Data()
         func append<T: FixedWidthInteger>(_ value: T) {
             var little = value.littleEndian
@@ -628,8 +687,11 @@ final class SoundClip: @unchecked Sendable {
     private var made: Data?
     /// Made and touched only on SoundOutput's queue.
     fileprivate var player: AVAudioPlayer?
+    /// A recording, played a little faster or slower each time (±5%).
+    let varies: Bool
 
-    init(make: @escaping @Sendable () -> Data?) {
+    init(varies: Bool = false, make: @escaping @Sendable () -> Data?) {
+        self.varies = varies
         self.make = make
     }
 
@@ -668,9 +730,13 @@ final class SoundOutput: @unchecked Sendable {
         let asked = DispatchTime.now().uptimeNanoseconds
         queue.async { [self] in
             guard Self.isOnTime(asked) else { return }
-            if clip.player == nil, let data = clip.bytes() { clip.player = try? AVAudioPlayer(data: data) }
+            if clip.player == nil, let data = clip.bytes() {
+                clip.player = try? AVAudioPlayer(data: data)
+                clip.player?.enableRate = clip.varies
+            }
             guard let player = clip.player else { return }
             player.currentTime = 0
+            if clip.varies { player.rate = Float.random(in: 0.95...1.05) }
             start(player, volume: volume)
         }
     }

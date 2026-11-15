@@ -4,7 +4,7 @@
 //
 //  A fresh install's hello: three short bubbles that teach the pet's
 //  gestures, each moving on once you do it or after six seconds. Only on a
-//  first install (upgraders get Droppy's changelog popover instead), and
+//  first install (upgraders get one bubble of what's new, WhatsNew), and
 //  again from Settings › Say hello again. One timer, stopped in `stop()`.
 //
 
@@ -51,6 +51,16 @@ final class FirstHello {
     func start(after delay: TimeInterval = 2) {
         stop()
         schedule(delay) { [weak self] in self?.show(.pet) }
+    }
+
+    /// After an update: one bubble of what's new, once the pet is out.
+    /// Shares the hello's single timer, so `stop()` ends it too.
+    func whatsNew(_ text: String, after delay: TimeInterval = 3) {
+        stop()
+        schedule(delay) { [weak self] in
+            self?.say(CatLine(text: text, symbol: "sparkles", key: FirstHello.key, seconds: 8))
+            self?.timer = nil
+        }
     }
 
     /// You did something: if it's the one being taught, on to the next.

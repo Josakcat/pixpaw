@@ -39,13 +39,13 @@ share it.
 To add a character to Pixpaw itself, then:
 
 ```
-python3 Tools/sprites.py preview out.png   # every cat frame in every coat
-python3 Tools/sprites.py swift             # writes Sources/Pixpaw/CatSprites.generated.swift
+python3 .droppykit/Tools/sprites.py preview out.png   # every cat frame in every coat
+python3 .droppykit/Tools/sprites.py swift             # writes Sources/Pixpaw/CatSprites.generated.swift
 ```
 
 and build the droplet. Hats sit where the head was before, so keep heads
 roughly where they are. Effects, hats and headphones are small text grids
-in `Tools/sprites.py`.
+in `.droppykit/Tools/sprites.py`.
 
 ## Cells, left to right
 
@@ -84,7 +84,7 @@ in `Tools/sprites.py`.
 The parrot (an orange-fronted conure) has letters of its own: `o` `#16201a`, `G` `#5aa838`, `D` `#2f7d2c`, `H` `#3b8540`, `C` `#2f7a62`, `P` `#f26a3d`, `E` `#f1e9a6`, `K` `#16161a`, `W` `#ead9c8`, `T` `#7c8a3a`, `L` `#bccf3a`, `B` `#2b4a8c`, `O` `#4f9a30`, `F` `#8f8a86`. See its comment in `KIND_COLORS` for what each one paints.
 
 A brand-new character needs a sheet here, a palette in `KIND_COLORS`, hat
-spots in `KIND_ANCHORS` and `KIND_HEADPHONES_AT` (`Tools/sprites.py`) and
+spots in `KIND_ANCHORS` and `KIND_HEADPHONES_AT` (`.droppykit/Tools/sprites.py`) and
 a case in `PetKind` (`Sources/Pixpaw/CatSprites.swift`).
 
 ## Finer pixels (`fine/`)
@@ -95,7 +95,7 @@ pixels on. The notch, menus and cards keep the 20 x 16 art. Today that is
 `fine/cat.gray.png`, the gray tabby, which every coat wears: the others
 (and the one from a photo) get colours worked out from their 20 x 16 ones
 by `coats` in its `FINE` entry. `fine/cat.gray.folded.png` is the same cat
-with folded ears, drawn from it by `python3 Tools/sprites.py fold`; touch it
+with folded ears, drawn from it by `python3 .droppykit/Tools/sprites.py fold`; touch it
 up by hand after if you like, and fold again only when the gray one changes.
 Pets you drew stay 20 x 16.
 
@@ -103,10 +103,10 @@ Pets you drew stay 20 x 16.
 - 18 cells of 40 x 40, the same frames in the same order; each frame is
   40 x 32 at the bottom of its cell (the cat's carried ones 32 x 40 from the left).
 - Colours, hat and collar spots, eye boxes and headphone spots go in its
-  entry in `FINE` (`Tools/sprites.py`). Hats, collars and the laptop are
+  entry in `FINE` (`.droppykit/Tools/sprites.py`). Hats, collars and the laptop are
   the 20 x 16 art drawn 2x; glasses ring the eye boxes; headphones are
-  `FINE_HEADPHONES`. No Swift to write: `python3 Tools/sprites.py swift`
+  `FINE_HEADPHONES`. No Swift to write: `python3 .droppykit/Tools/sprites.py swift`
   also writes `Sources/Pixpaw/CatSprites.fine.generated.swift`, and
-  `Tools/fine-art-check.swift` checks every spot lands on the head inside the frame,
+  `.droppykit/Tools/fine-art-check.swift` checks every spot lands on the head inside the frame,
   every coat has a colour for every letter, and folded ears change only the ears.
-- `python3 Tools/sprites.py fine out.png` previews every finer look in every coat.
+- `python3 .droppykit/Tools/sprites.py fine out.png` previews every finer look in every coat.

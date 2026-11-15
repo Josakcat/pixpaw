@@ -46,7 +46,7 @@ enum CatCoat: String, CaseIterable, Identifiable, Codable {
     @MainActor var isDark: Bool { (swatch.usingColorSpace(.sRGB)?.brightnessComponent ?? 1) < 0.45 }
 }
 
-/// A built-in pet's colourway, after a real animal (Tools/sprites.py
+/// A built-in pet's colourway, after a real animal (.droppykit/Tools/sprites.py
 /// `PET_COATS`): new colours on the same pixels. The first is the pet's own
 /// look and the default. The cat has `CatCoat`; a pet you drew, its own colours.
 struct PetCoat: Identifiable, Hashable {
@@ -119,6 +119,10 @@ enum PetKind: String, CaseIterable, Identifiable, Codable {
     /// Whose sounds, words, ways of moving and home it has: its own, or for a
     /// pet you drew, the character you said it acts like.
     @MainActor var actsLike: PetKind { isOwn ? OwnPets.pet(self)?.actsLike ?? .cat : self }
+
+    /// The look its decorations are drawn as (`HomeDecor.artKey(for:)`): the
+    /// kind it acts like, marked for a pet you drew, whose cushion stays the cat's.
+    @MainActor var decorLook: String { isOwn ? RestSpot.ownPrefix + actsLike.rawValue : rawValue }
 
     /// Flies (or, for the shark, swims through the air) wherever it likes,
     /// whatever the walking setting says.
@@ -366,6 +370,22 @@ final class CatSprites {
     /// coat, ears folded), so a pet on screen knows to draw itself again.
     private(set) var version = 0
 
+    /// Drops every picture with a decoration in it, after the framed
+    /// picture changed (`FramedPicture`).
+    func forgetDecor() {
+        cache = cache.filter { !$0.key.hasPrefix("home") && !$0.key.hasPrefix("decor") }
+        version += 1
+    }
+
+    /// The decorations' art, with the framed picture you dropped on the widget.
+    static func decorArt(fine: Bool) -> [String: [String]] {
+        let art = fine ? FineArt.decor : CatArt.decor
+        guard let picture = FramedPicture.art else { return art }
+        var all = art
+        all[HomeDecor.picture.rawValue] = fine ? picture.fine : picture.classic
+        return all
+    }
+
     func forgetDrawings() {
         cache.removeAll()
         fineCoats.removeAll()
@@ -382,7 +402,7 @@ final class CatSprites {
     /// coat its light outline (`isNearBlack`); off inside its home.
     func image(_ frame: CatFrame, coat: CatCoat, hat: CatAccessory? = nil, collar: CatAccessory? = nil, glasses: CatAccessory? = nil,
                headphones: Bool = false, costume: String? = nil, kind: PetKind = .cat, swing: Int = 0, laptop: Bool = false,
-               fine: Bool = false, friend: Bool = false, rim: Bool = true) -> CGImage? {
+               fine: Bool = false, friend: Bool = false, rim: Bool = true, rest: RestPose? = nil) -> CGImage? {
         let fineLook = fine ? fineLook(kind, coat: coat) : nil
         let petCoat = self.petCoat(kind, friend: friend)
         let art = fineLook.map { "\($0).\(frame.rawValue)" } ?? kind.artKey(frame)
@@ -397,12 +417,13 @@ final class CatSprites {
         // Glasses only on whoever they fit (not a pet you drew or the dragon), eyes in view.
         let wearer = Wearer(isOwn: kind.isOwn, hasNeck: kind.wearsCollars, looksLike: kind.actsLike.rawValue)
         let glasses = glasses.flatMap { $0.fits(wearer) ? $0 : nil }
-        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(glasses?.rawValue ?? "-").\(headphones).\(swing).\(laptop).\(factor).\(petCoat?.id ?? "-").\(rim)"
+        let key = "\(kind.rawValue).\(coat.rawValue).\(frame.rawValue).\(hat ?? "-").\(collar?.rawValue ?? "-").\(glasses?.rawValue ?? "-").\(headphones).\(swing).\(laptop).\(factor).\(petCoat?.id ?? "-").\(rim).\(rest.map { "\($0.style)" } ?? "-")"
         if let hit = cache[key] { return hit }
         // Finer art has its folded ears drawn.
         let folded = foldedEars && kind == .cat && fineLook == nil
         guard let rows = (fineLook == nil ? CatArt.frames[art] ?? OwnPets.frames[art] : FineArt.frames[art]).map({ folded ? Self.fold($0) : $0 })
-                .map({ swing == 0 ? $0 : Self.swing($0, by: swing * factor) }),
+                .map({ swing == 0 ? $0 : Self.swing($0, by: swing * factor) })
+                .map({ rows in rest.map { RestSpot.reshaped(rows, $0.reshape, factor: factor) } ?? rows }),
               let palette = fineLook.flatMap({ finePalette($0, kind: kind, coat: coat, petCoat: petCoat) })
                 ?? (kind.isOwn ? OwnPets.colours[kind] : kind.hasCoats ? coat.palette : petCoat?.palette ?? CatArt.coats[kind.rawValue]) else { return nil }
         // A pet you drew wears its hat on top of its head, and no collar.
@@ -474,6 +495,9 @@ final class CatSprites {
         for pixel in overlay where pixel.y + pad < grid.count {
             grid[pixel.y + pad][pixel.x] = pixel.rgb
         }
+        // On its resting spot: its lowest row on the image's bottom, and what
+        // is down in the nest or the water left out.
+        if let rest { grid = RestSpot.sunk(grid, hiding: rest.hiddenRows(factor: factor)) }
         if rim, Self.isNearBlack(kind, coat: coat, petCoat: petCoat) { grid = Self.rim(grid) }
         let image = Self.render(grid)
         cache[key] = image
@@ -575,12 +599,16 @@ final class CatSprites {
     /// there) and the doormat lies in front of the doorway, where a pet with
     /// a doorway on the floor naps on it, drawn over the home.
     /// Each thing is drawn as the pet's own version (`HomeDecor.artKey(for:)`).
-    func home(_ kind: PetKind, occupied: Bool, fine: Bool = false, decor: HomeDecorSet = HomeDecorSet()) -> CGImage? {
+    /// `lampLit`: the floor lamp's shade glows (at night); `mailUp`: the
+    /// mailbox's flag is up for a letter, otherwise it lies down.
+    func home(_ kind: PetKind, occupied: Bool, fine: Bool = false, decor: HomeDecorSet = HomeDecorSet(),
+              lampLit: Bool = false, mailUp: Bool = false, leaving: String? = nil) -> CGImage? {
         // Keyed on what decides the art: the look the home and each thing are
         // drawn as (a pet you drew acting like a dog is the dog's), not the pet.
-        let look = kind.actsLike.rawValue
-        let things = HomeDecor.Spot.allCases.map { decor[$0].map { $0.artKey(for: look) } ?? "-" }.joined(separator: ",")
-        let key = "home.\(fine ? "fine." : "")\(look).\(occupied).\(things)"
+        let look = kind.actsLike.rawValue, thingsLook = kind.decorLook
+        let things = HomeDecor.Spot.allCases.map { decor[$0].map { Self.decorKey($0, look: thingsLook, lampLit: lampLit, mailUp: mailUp) } ?? "-" }
+            .joined(separator: ",")
+        let key = "home.\(fine ? "fine." : "")\(look).\(occupied).\(things).\(leaving ?? "-")"
         if let hit = cache[key] { return hit }
         guard let rows = (fine ? FineArt.homes : CatArt.homes)[look] else { return nil }
         let colors = fine ? FineArt.homeColors : CatArt.homeColors
@@ -590,31 +618,48 @@ final class CatSprites {
             cache[key] = image
             return image
         }
-        let art = fine ? FineArt.decor : CatArt.decor
+        let art = Self.decorArt(fine: fine)
         let grid = fine ? FineArt.scale : 1
         let slot = CatArt.decorSlotWidth * grid
         let layout = HomeDecorLayout(decor, slot: slot)
         let width = home.first?.count ?? 0, height = home.count
         var picture = [[UInt32?]](repeating: [UInt32?](repeating: nil, count: layout.width(home: width)), count: height)
         func paste(_ item: HomeDecor, x: Int) {
-            guard let rows = art[item.artKey(for: look)] ?? art[item.rawValue] else { return }
+            let name = Self.decorKey(item, look: thingsLook, lampLit: lampLit, mailUp: mailUp)
+            guard let rows = art[name] ?? art[item.artKey(for: thingsLook)] ?? art[item.rawValue] else { return }
             let top = height - rows.count
+            // A lit lamp: its shade glows warm.
+            let glow: [Character: Character] = name == "lamp.lit" ? (fine ? ["w": "v", "W": "y", "H": "n"] : ["w": "y", "W": "Y"]) : [:]
             for (dy, row) in rows.enumerated() {
                 for (dx, letter) in row.enumerated() {
                     let px = x + dx, py = top + dy
-                    guard let colour = colors[letter], py >= 0, px >= 0, px < picture[py].count else { continue }
+                    guard let colour = colors[glow[letter] ?? letter], py >= 0, px >= 0, px < picture[py].count else { continue }
                     picture[py][px] = colour
                 }
             }
         }
-        for spot in [HomeDecor.Spot.left, .right] {
-            guard let item = decor[spot], let itemWidth = (art[item.artKey(for: look)] ?? art[item.rawValue])?.first?.count else { continue }
-            paste(item, x: layout.sideX(spot, itemWidth: itemWidth, home: width, slot: slot, gap: grid))
+        for spot in [HomeDecor.Spot.left, .right, .outer] {
+            guard let item = decor[spot], let itemWidth = (art[item.artKey(for: thingsLook)] ?? art[item.rawValue])?.first?.count else { continue }
+            let x = layout.sideX(spot, itemWidth: itemWidth, home: width, slot: slot, gap: grid)
+            paste(item, x: x)
+            // Left by the resting spot (the chicken's egg): on the floor at its
+            // outer edge, away from the home, where the pet on it doesn't cover it.
+            if item == .cushion, let leaving, let left = art[leaving] {
+                let eggWidth = left.first?.count ?? 0, top = height - left.count
+                let start = spot == .left ? x - 2 * grid : x + itemWidth - eggWidth + 2 * grid
+                for (dy, row) in left.enumerated() {
+                    for (dx, letter) in row.enumerated() {
+                        let px = start + dx, py = top + dy
+                        guard let colour = colors[letter], py >= 0, py < height, px >= 0, px < picture[py].count else { continue }
+                        picture[py][px] = colour
+                    }
+                }
+            }
         }
         for (y, row) in home.enumerated() {
             for (x, colour) in row.enumerated() where colour != nil { picture[y][layout.left + x] = colour }
         }
-        if let rug = decor.front, let rugWidth = (art[rug.artKey(for: look)] ?? art[rug.rawValue])?.first?.count,
+        if let rug = decor.front, let rugWidth = (art[rug.artKey(for: thingsLook)] ?? art[rug.rawValue])?.first?.count,
            let spot = CatArt.homeSpots[look] {
             paste(rug, x: layout.frontX(itemWidth: rugWidth, spotX: spot.0 * grid, frameWidth: CatArt.width * grid))
         }
@@ -623,12 +668,31 @@ final class CatSprites {
         return image
     }
 
+    /// The picture a thing is drawn as beside the home: the pet's own
+    /// version; the plain mailbox with its flag down unless a letter waits;
+    /// the plain floor lamp lit ("lamp.lit", its shade recoloured) at night.
+    static func decorKey(_ item: HomeDecor, look: String, lampLit: Bool, mailUp: Bool) -> String {
+        let name = item.artKey(for: look)
+        switch name {
+        case "mailbox" where !mailUp: return "mailbox.down"
+        case "lamp" where lampLit: return "lamp.lit"
+        default: return name
+        }
+    }
+
+    /// A thing's size beside the home, in its art's pixels (HD: twice the grid).
+    func decorSize(_ item: HomeDecor, fine: Bool, look: String) -> (width: Int, height: Int)? {
+        let art = Self.decorArt(fine: fine)
+        guard let rows = art[item.artKey(for: look)] ?? art[item.rawValue], let first = rows.first else { return nil }
+        return (first.count, rows.count)
+    }
+
     /// One decoration on its own (a row's picture), as `look`'s version (`PetKind.actsLike`).
     func decor(_ item: HomeDecor, fine: Bool, look: String? = nil) -> CGImage? {
         let name = item.artKey(for: look)
         let key = "decor.\(fine ? "fine." : "")\(name)"
         if let hit = cache[key] { return hit }
-        let art = fine ? FineArt.decor : CatArt.decor
+        let art = Self.decorArt(fine: fine)
         guard let rows = art[name] ?? art[item.rawValue] else { return nil }
         let image = Self.render(rows, palette: fine ? FineArt.homeColors : CatArt.homeColors)
         cache[key] = image

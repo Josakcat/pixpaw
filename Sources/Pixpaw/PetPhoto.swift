@@ -50,7 +50,7 @@ enum PetPhoto {
         }
 
         // The caption on the floor, and a small mark in the corner.
-        let caption = "\(cat.kind.title) · \(days) \(days == 1 ? "day" : "days") together"
+        let caption = "\(cat.title) · \(days) \(days == 1 ? "day" : "days") together"
         draw(caption, size: 40, weight: .bold, color: NSColor(rgb: 0x4A3420), centredAt: CGPoint(x: CGFloat(width) / 2, y: 70))
         draw("Pixpaw", size: 22, weight: .semibold, color: NSColor(rgb: 0x4A3420).withAlphaComponent(0.55),
              centredAt: CGPoint(x: CGFloat(width) - 70, y: 28))

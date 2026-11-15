@@ -22,10 +22,29 @@ import IOKit.pwr_mgt
 enum CatWords {
     static let hungry = "I'm hungry!"
     static let full = "So full. Thanks!"
+    static let bowlsEmpty = "My bowls are empty. A refill later?"
+    static let bowlsFilled = "Full bowls! Thank you."
+    /// By the things beside its home: a book from the shelf, the lamp at night.
+    static let reading = ["Just one more page…", "A good book.", "Reading…"]
+    static let underLamp = ["Cozy light.", "Nice and warm."]
     static let caught = "Got it!"
     static func focusing(until end: Date) -> CatLine {
         CatLine(text: "Focus time · ", symbol: "timer", until: end)
     }
+    /// Body doubling: the task went up on the sign.
+    static func focusOn(_ task: String) -> CatLine {
+        CatLine(text: "I'll work alongside you on \(task).", symbol: "pencil.and.list.clipboard", seconds: 4)
+    }
+    /// Done: the task finished, a star for it.
+    static func focusTaskDone(_ task: String) -> CatLine {
+        CatLine(text: "\(task): done! Nice work.", symbol: "star.fill", seconds: 4)
+    }
+    /// Not yet: no penalty, a kind word.
+    static let focusNotYet = [
+        CatLine(text: "That's okay. You showed up, and it'll keep.", symbol: "heart.fill", seconds: 4),
+        CatLine(text: "Some things take more than one go. Next round?", symbol: "heart.fill", seconds: 4),
+        CatLine(text: "Progress counts too. Proud of you.", symbol: "heart.fill", seconds: 4),
+    ]
     static func focusDone(minutes: Int) -> CatLine {
         CatLine(text: "Time for a break! \(minutes) minutes of focus done.", symbol: "cup.and.saucer.fill", seconds: 5)
     }
@@ -41,9 +60,10 @@ enum CatWords {
         CatLine(text: "Back to it! Round \(round) of 4.", symbol: "timer", seconds: 4)
     }
     static let pomodoroDone = CatLine(text: "That's a full Pomodoro. Great work!", symbol: "star.fill", seconds: 5)
-    /// Somewhere distracting during a focus session.
+    /// Somewhere distracting during a focus session. An invitation, never a
+    /// telling-off: wandering off is normal and coming back is the win.
     static func backToWork(minutesLeft: Int) -> CatLine {
-        let ask = ["Back to work?", "Psst… focus time!", "Is this part of the plan?", "I'm still focusing… are you?"].randomElement()!
+        let ask = ["Back to it when you're ready?", "Psst… focus time!", "I'm keeping your spot.", "Want to pick it back up?"].randomElement()!
         return CatLine(text: minutesLeft > 0 ? "\(ask) \(minutesLeft) min left." : ask, symbol: "eyes", seconds: 5)
     }
     /// A note's time is up.
@@ -101,6 +121,7 @@ enum CatWords {
     static func summingUp(_ by: String) -> CatLine {
         CatLine(text: by.isEmpty ? "Writing it up…" : "Writing it up with \(by)…", symbol: "text.append", seconds: 4)
     }
+    static let todayNothingYet = CatLine(text: "Nothing counted yet today. Early days!", symbol: "sun.horizon")
     static let notesReady = CatLine(text: "Meeting notes are on the shelf!", symbol: "doc.text.fill", seconds: 5)
     static let notesNotShelved = CatLine(text: "Notes saved in Documents › Pixpaw Meetings, but I couldn't reach your shelf.", symbol: "exclamationmark.triangle.fill", seconds: 6)
     static let notesWithoutSummary = CatLine(text: "The summary didn't come, but the transcript is on the shelf.", symbol: "doc.text", seconds: 6)
@@ -127,6 +148,16 @@ enum CatWords {
     static let treat = ["Yum!", "Crunchy!", "More, please?"]
     static let gift = "I brought you something!"
     static let giftTaken = ["You like it?", "It's for you!", "I found it myself!"]
+    /// Brought after something finished: a find, not the daily gift.
+    static func found(_ reason: FindReason) -> String {
+        switch reason {
+        case .focus: "I found this while you were focusing!"
+        case .agent: "Look what turned up while that ran!"
+        }
+    }
+    static let findTaken = ["One for the collection!", "Found it all by myself!", "A little treasure!"]
+    /// Every so many finds, a decoration for the home ("a floor lamp").
+    static func foundDecor(_ thing: String) -> String { "I found \(thing) for our home!" }
     /// Shaken about while carried.
     static let dizzy = ["Whoa…", "The room is spinning!", "Everything's wobbly…"]
     /// The Mac working hard, or running hot.
@@ -1188,15 +1219,17 @@ final class HeadphonesWatcher {
 // MARK: - Quiet
 
 /// Notices when the cat should keep its mouth shut: a call (a microphone or
-/// camera in use by any app), a screen being shared, or a display mirrored to
-/// a projector. Reads device and window state every two seconds; none of it
-/// needs a permission, and nothing is recorded.
+/// camera in use by any app), a screen being shared, a display mirrored to
+/// a projector, or the app in front filling a whole display (full screen, a
+/// slideshow being presented, a film). Reads device and window state every
+/// two seconds; none of it needs a permission, and nothing is recorded.
 @MainActor
 final class QuietWatcher {
     enum Reason: String {
         case call = "in a call"
         case sharing = "sharing the screen"
         case mirroring = "mirroring the display"
+        case fullScreen = "in full screen"
     }
 
     private var timer: Timer?
@@ -1258,6 +1291,7 @@ final class QuietWatcher {
         let reason: Reason? = (zoomSharing || sharingBarIsUp()) ? .sharing
             : (Self.isMicrophoneInUse() || Self.isCameraInUse()) ? .call
             : (watchesMirroring && Self.isMirroring()) ? .mirroring
+            : Self.frontAppFillsADisplay() ? .fullScreen
             : nil
         guard reason != last else { return }
         last = reason
@@ -1352,6 +1386,28 @@ final class QuietWatcher {
         }
     }
 
+    /// The app in front has a window covering a whole display: a full-screen
+    /// app, Keynote or PowerPoint presenting, a film. The pet's own panel
+    /// already stays out of full-screen spaces; this keeps its sounds and
+    /// bubbles from coming through too. Window bounds and owners need no
+    /// permission (only titles do).
+    private static func frontAppFillsADisplay() -> Bool {
+        guard let front = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return false }
+        var ids = [CGDirectDisplayID](repeating: 0, count: 8)
+        var count: UInt32 = 0
+        CGGetActiveDisplayList(8, &ids, &count)
+        let displays = ids.prefix(Int(count)).map { CGDisplayBounds($0) }
+        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let windows: [FullScreenRule.Window] = info.compactMap { window in
+            guard let pid = window[kCGWindowOwnerPID as String] as? Int32,
+                  let dict = window[kCGWindowBounds as String] as? NSDictionary,
+                  let bounds = CGRect(dictionaryRepresentation: dict) else { return nil }
+            return FullScreenRule.Window(pid: pid, layer: window[kCGWindowLayer as String] as? Int ?? 0,
+                                         alpha: window[kCGWindowAlpha as String] as? Double ?? 1, bounds: bounds)
+        }
+        return FullScreenRule.fills(windows, front: front, own: ProcessInfo.processInfo.processIdentifier, displays: displays)
+    }
+
     private static func isMirroring() -> Bool {
         var displays = [CGDirectDisplayID](repeating: 0, count: 8)
         var count: UInt32 = 0
@@ -1401,6 +1457,9 @@ final class ReminderCoach {
     var reminders: [Reminder]
     /// Whether the cat may talk right now (not quiet, not focusing).
     var canRemind: () -> Bool = { true }
+    /// One of yours that came due while you were away; nil keeps it waiting
+    /// for you to come back, as before.
+    var onMissed: ((Reminder) -> Void)?
     private let onRemind: (Reminder) -> Void
     private var timer: Timer?
     private var started = Date()
@@ -1429,6 +1488,18 @@ final class ReminderCoach {
         lastShown = [:]
     }
 
+    /// "Later" on the break card: the reminder comes back in `minutes`,
+    /// not a whole round later.
+    func snooze(_ id: String, minutes: Int) {
+        guard let reminder = reminders.first(where: { $0.id == id }) else { return }
+        let back = max(0, TimeInterval(max(1, reminder.minutes) * 60) - TimeInterval(minutes * 60))
+        if reminder.isYours {
+            lastShown[id] = Date().addingTimeInterval(-back)
+        } else {
+            active[id] = back
+        }
+    }
+
     private func check() {
         guard let anyInput = CGEventType(rawValue: ~0) else { return }
         let idle = CGEventSource.secondsSinceLastEventType(.combinedSessionState, eventType: anyInput)
@@ -1438,6 +1509,15 @@ final class ReminderCoach {
                 active[reminder.id] = 0
             } else if idle < 120 {
                 active[reminder.id, default: 0] += Self.tick
+            }
+        }
+        // Yours run on the clock: one that comes due while you're away is
+        // handed on to read later (Droppy's notification stack), if anyone takes it.
+        if idle >= 120, let onMissed {
+            for reminder in reminders where reminder.isOn && reminder.isYours
+                && now.timeIntervalSince(lastShown[reminder.id] ?? started) >= TimeInterval(max(1, reminder.minutes) * 60) {
+                lastShown[reminder.id] = now
+                onMissed(reminder)
             }
         }
         guard idle < 120, now.timeIntervalSince(lastAny) >= Self.spacing, canRemind() else { return }

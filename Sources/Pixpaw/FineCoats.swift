@@ -4,7 +4,7 @@
 //
 //  The cat's finer art is drawn once, as the gray tabby; every other coat,
 //  the one from a photo too, wears it in colours worked out from its 20 x 16
-//  ones by `FineArt.coatMix` (see `coats` in Tools/sprites.py).
+//  ones by `FineArt.coatMix` (see `coats` in .droppykit/Tools/sprites.py).
 //
 
 /// One finer colour from a 20 x 16 coat's: its `from` colour times `times`,

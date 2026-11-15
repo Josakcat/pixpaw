@@ -5,7 +5,7 @@
 //  A coding agent asking you something (may Claude run this command? which
 //  of these did you mean?): your pet comes over, says it, and holds up the
 //  choices on a card over its head; a click answers. The agent's hook
-//  (Tools/agent-hooks/pixpaw-ask.py) leaves the question in a file, opens
+//  (.droppykit/Tools/agent-hooks/pixpaw-ask.py) leaves the question in a file, opens
 //  `ask?id=…`, and waits for the answer file the click writes. Nothing is
 //  answered unless you click; ignored, the agent asks you as usual.
 //  While the card is up, Option-1 to Option-4 pick an answer and Option-0
@@ -38,6 +38,20 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
     /// Whether the hook takes a typed answer: "answer" (your own answer to
     /// its question) or "instead" (no, and what to do instead).
     var typed: String?
+    /// The pet's own question (a focus session's "Still on it?"), never a
+    /// hook's: no file, no Option keys, Not now instead of handing it back.
+    var fromPet: Bool?
+    /// The pet's own question's placeholder for its field.
+    var prompt: String?
+    /// The pet's own question that you asked for (a session you started):
+    /// its field takes the keyboard at once, so Return confirms.
+    var focusesField: Bool?
+
+    /// A question of the pet's own, held up on the same card.
+    static func pet(id: String, title: String, symbolTitle: String, options: [String], prompt: String? = nil, focusesField: Bool = false) -> AgentAsk {
+        AgentAsk(id: id, agent: symbolTitle, title: title, detail: nil, place: nil, options: options, spoken: nil,
+                 typed: prompt == nil ? nil : "answer", fromPet: true, prompt: prompt, focusesField: focusesField)
+    }
 
     /// Where questions and answers pass between the hook and the pet.
     static let folder = FileManager.default.urls(for: .applicationSupportDirectory, in: .userDomainMask)[0]
@@ -64,6 +78,10 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
         ask.place = ask.place.map { String($0.prefix(40)) }
         ask.spoken = ask.spoken.map { String($0.prefix(160)) }
         if !["answer", "instead"].contains(ask.typed ?? "") { ask.typed = nil }
+        // Only the pet asks its own questions.
+        ask.fromPet = nil
+        ask.prompt = nil
+        ask.focusesField = nil
         ask.options = Array(ask.options.map { String($0.prefix(40)) }.filter { !$0.isEmpty }.prefix(4))
         // Allowed for good, a risky one would never be asked about again.
         if ask.risk != nil { ask.options.removeAll { $0 == "Always allow" } }
@@ -112,11 +130,12 @@ struct AgentAsk: Decodable, Equatable, Identifiable {
 
     /// Writes the answer for the hook to pick up.
     func answer(_ choice: String) {
+        guard fromPet != true else { return }
         try? choice.write(to: answerFile, atomically: true, encoding: .utf8)
     }
 
     /// Whether the hook still waits; gone when the agent stopped asking.
-    var isOpen: Bool { FileManager.default.fileExists(atPath: file.path) }
+    var isOpen: Bool { fromPet == true || FileManager.default.fileExists(atPath: file.path) }
 }
 
 /// The card over the pet's head while an agent asks.
@@ -136,6 +155,12 @@ final class AskCard {
     func show(_ ask: AgentAsk?, answer: @escaping (String) -> Void) {
         self.ask = ask
         guard let ask else { return close() }
+        // The pet's own: clicks only, its field the keyboard only if asked for or clicked.
+        if ask.fromPet == true {
+            keys.release()
+            show(ask, keys: [], answer: answer)
+            return
+        }
         guard ask.risk != nil else { return show(ask, keys: holdKeys(for: ask, answer: answer), answer: answer) }
         // Read before it can be allowed from the keyboard: a click still can.
         keys.release()
@@ -185,7 +210,12 @@ final class AskCard {
             origin.y = min(origin.y, area.maxY - size.height)
         }
         panel.moveOrigin(to: origin)
-        if !panel.isVisible { panel.orderFrontRegardless() }
+        if !panel.isVisible {
+            panel.orderFrontRegardless()
+            // A question you asked for (a focus session you just started):
+            // Return confirms without a click first.
+            if ask?.focusesField == true { panel.makeKey() }
+        }
     }
 
     func close() {
@@ -213,11 +243,12 @@ struct AskCardView: View {
 
     private static let warning = Color(red: 0.75, green: 0.15, blue: 0.12)
     @State private var typing = ""
+    @FocusState private var fieldFocused: Bool
 
     var body: some View {
         let risk = ask.risk
         VStack(alignment: .leading, spacing: 6) {
-            Label(ask.place.map { "\(ask.agent) · \($0)" } ?? ask.agent, systemImage: "hand.raised.fill")
+            Label(ask.place.map { "\(ask.agent) · \($0)" } ?? ask.agent, systemImage: ask.fromPet == true ? "timer" : "hand.raised.fill")
                 .font(.system(size: 11, weight: .semibold, design: .rounded))
                 .foregroundStyle(Color(white: 0.35))
             if let risk {
@@ -242,42 +273,44 @@ struct AskCardView: View {
             }
             // One row of capsules while every answer fits whole; otherwise a
             // list, each answer on its own full-width row that wraps.
-            ViewThatFits(in: .horizontal) {
-                HStack(spacing: 6) {
-                    ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
-                        Button { answer(option) } label: {
-                            HStack(spacing: 4) {
-                                Text(option)
-                                if keys.contains(index + 1) {
-                                    Text("⌥\(index + 1)").opacity(0.6)
+            if !ask.options.isEmpty {
+                ViewThatFits(in: .horizontal) {
+                    HStack(spacing: 6) {
+                        ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
+                            Button { answer(option) } label: {
+                                HStack(spacing: 4) {
+                                    Text(option)
+                                    if keys.contains(index + 1) {
+                                        Text("⌥\(index + 1)").opacity(0.6)
+                                    }
                                 }
                             }
+                            .buttonStyle(style(index, option, row: false))
+                            .accessibilityLabel(option)
                         }
-                        .buttonStyle(style(index, option, row: false))
-                        .accessibilityLabel(option)
                     }
-                }
-                VStack(alignment: .leading, spacing: 4) {
-                    ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
-                        Button { answer(option) } label: {
-                            HStack(alignment: .firstTextBaseline, spacing: 6) {
-                                Text(option)
-                                    .fixedSize(horizontal: false, vertical: true)
-                                    .frame(maxWidth: .infinity, alignment: .leading)
-                                if keys.contains(index + 1) {
-                                    Text("⌥\(index + 1)").opacity(0.6)
+                    VStack(alignment: .leading, spacing: 4) {
+                        ForEach(Array(ask.options.enumerated()), id: \.offset) { index, option in
+                            Button { answer(option) } label: {
+                                HStack(alignment: .firstTextBaseline, spacing: 6) {
+                                    Text(option)
+                                        .fixedSize(horizontal: false, vertical: true)
+                                        .frame(maxWidth: .infinity, alignment: .leading)
+                                    if keys.contains(index + 1) {
+                                        Text("⌥\(index + 1)").opacity(0.6)
+                                    }
                                 }
                             }
+                            .buttonStyle(style(index, option, row: true))
+                            .accessibilityLabel(option)
                         }
-                        .buttonStyle(style(index, option, row: true))
-                        .accessibilityLabel(option)
                     }
                 }
             }
             if let typed = ask.typed {
                 HStack(spacing: 4) {
                     TextField("Answer", text: $typing,
-                              prompt: Text(typed == "instead" ? "Or tell \(ask.agent) what to do instead" : "Or type your own answer")
+                              prompt: Text(ask.prompt ?? (typed == "instead" ? "Or tell \(ask.agent) what to do instead" : "Or type your own answer"))
                                 .foregroundStyle(Color(white: 0.5)))
                         .textFieldStyle(.plain)
                         .foregroundStyle(Color(white: 0.1))
@@ -285,6 +318,7 @@ struct AskCardView: View {
                         .padding(.horizontal, 7)
                         .padding(.vertical, 4)
                         .background(RoundedRectangle(cornerRadius: 6, style: .continuous).fill(Color(white: 0.93)))
+                        .focused($fieldFocused)
                         .onSubmit(send)
                     Button(action: send) {
                         Image(systemName: "arrow.up.circle.fill").font(.system(size: 17))
@@ -295,10 +329,13 @@ struct AskCardView: View {
                     .accessibilityLabel("Send")
                 }
             }
-            Button(keys.contains(0) ? "Answer in \(ask.agent) instead  ⌥0" : "Answer in \(ask.agent) instead") { answer(AgentAsk.skip) }
-                .buttonStyle(.plain)
-                .font(.system(size: 11, weight: .medium, design: .rounded))
-                .foregroundStyle(Color(white: 0.45))
+            // The pet's own question: Skip only under a field with no buttons.
+            if ask.fromPet != true || ask.options.isEmpty {
+                Button(ask.fromPet == true ? "Skip" : keys.contains(0) ? "Answer in \(ask.agent) instead  ⌥0" : "Answer in \(ask.agent) instead") { answer(AgentAsk.skip) }
+                    .buttonStyle(.plain)
+                    .font(.system(size: 11, weight: .medium, design: .rounded))
+                    .foregroundStyle(Color(white: 0.45))
+            }
         }
         .foregroundStyle(Color(white: 0.1))
         .frame(width: 250, alignment: .leading)
@@ -310,6 +347,7 @@ struct AskCardView: View {
         .padding(2)
         .fixedSize()
         .onChange(of: ask.id) { typing = "" }
+        .onAppear { if ask.focusesField == true { fieldFocused = true } }
         // A white card in dark mode too, its field and caret included.
         .environment(\.colorScheme, .light)
         .accessibilityElement(children: .contain)

@@ -182,6 +182,12 @@ final class CodexRollouts: @unchecked Sendable {
         return events
     }
 
+    /// The sessions followed now, for the guests in the home (Guests.swift),
+    /// each by its log's file name. On the same queue as `poll`.
+    func guests() -> [GuestSeen] {
+        logs.values.map { GuestSeen(id: $0.file.lastPathComponent, agent: "Codex", busy: $0.busy, modified: $0.modified) }
+    }
+
     /// Today's folder: a new session is a new file in it.
     private static func watchedRoots(now: Date) -> [URL] {
         var calendar = Calendar(identifier: .gregorian)

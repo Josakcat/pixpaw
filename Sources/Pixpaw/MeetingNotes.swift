@@ -132,19 +132,35 @@ enum MeetingProblem: LocalizedError {
 /// Speech to words for one voice, as long as the meeting runs. Apple's
 /// recognizer takes about a minute at a time, so a new request starts at
 /// each pause in the talk (or every 50 seconds), and each one's last words
-/// are kept as a line.
+/// are kept as a line. The audio goes straight on into the new request; the
+/// old one is only told the audio has ended, and its line is kept when its
+/// final words come back, so nothing said at the cut is lost. Stop does the
+/// same (`finish`): the last request is ended, not cancelled, and its words
+/// are waited for, up to `SpeechWords.wait`.
 @MainActor
 final class RollingTranscriber {
     let you: Bool
     private let recognizer: SFSpeechRecognizer
     private let feed = AudioFeed()
-    private var task: SFSpeechRecognitionTask?
-    private var partial = ""
-    private var segmentStarted = Date()
+    /// One request and what it has made out so far.
+    @MainActor private final class Segment {
+        let started = Date()
+        var text = ""
+        var task: SFSpeechRecognitionTask?
+        var done = false
+        /// When a cut segment stops waiting for its final words.
+        var giveUpAt: Date?
+    }
+    private var current: Segment?
+    private var closing: [Segment] = []
     private var heardAt: Date?
     private let startedAt: Date
     private var timer: Timer?
+    /// Stopping: when it began, and who gets the lines once the last words are in.
+    private var draining: (since: Date, done: ([MeetingLine]) -> Void)?
     private(set) var lines: [MeetingLine] = []
+    /// Words the recognizer should expect (the meeting's title), read at each new request.
+    var expecting: (() -> [String])?
     /// What it's making out now, for the pet to show.
     var hearing: ((String) -> Void)?
     /// Each line as it's kept, for the live transcript.
@@ -169,55 +185,146 @@ final class RollingTranscriber {
         }
     }
 
-    func stop() {
-        timer?.invalidate()
-        timer = nil
-        keep()
-        feed.swap(nil)?.endAudio()
-        task?.cancel()
-        task = nil
+    /// Anything heard yet: a line kept, or words still being made out.
+    var heardAnything: Bool {
+        !lines.isEmpty || ([current].compactMap { $0 } + closing).contains { !$0.text.isEmpty }
     }
 
+    /// Stop, keeping the last words: no more audio goes in, the request
+    /// still open is ended (`endAudio`, not cancelled) like a cut one, and
+    /// `done` gets every line on main once each has sent its final words,
+    /// or `SpeechWords.wait` seconds on, whichever is first. Nothing waits
+    /// on main meanwhile; `cancel` still ends it at once.
+    func finish(_ done: @escaping ([MeetingLine]) -> Void) {
+        guard draining == nil else { return }
+        hearing = nil
+        feed.swap(nil)?.endAudio()
+        if let current, !current.done { closing.append(current) }
+        current = nil
+        let now = Date()
+        let latest = now.addingTimeInterval(SpeechWords.wait)
+        for segment in closing { segment.giveUpAt = min(segment.giveUpAt ?? latest, latest) }
+        draining = (now, done)
+        if timer == nil {
+            timer = Timer.scheduledTimer(withTimeInterval: 0.5, repeats: true) { [weak self] _ in
+                MainActor.assumeIsolated { self?.tick() }
+            }
+        }
+        drainIfDone()
+    }
+
+    /// Stops at once: what each request made out so far is kept, nothing
+    /// waits (`deactivate`). A `finish` under way gets its lines now.
+    func cancel() {
+        timer?.invalidate()
+        timer = nil
+        feed.swap(nil)?.endAudio()
+        for segment in closing + [current].compactMap({ $0 }) {
+            finish(segment)
+            segment.task?.cancel()
+            segment.task = nil
+        }
+        closing = []
+        current = nil
+        if let done = draining?.done {
+            draining = nil
+            done(lines)
+        }
+    }
+
+    /// A `finish` is over once no request is left open, or time is up.
+    private func drainIfDone() {
+        guard let draining else { return }
+        let now = Date()
+        guard SpeechWords.doneWaiting(open: closing.count, stoppedAt: draining.since.timeIntervalSinceReferenceDate,
+                                      now: now.timeIntervalSinceReferenceDate) else { return }
+        for segment in closing {
+            finish(segment)
+            segment.task?.cancel()
+            segment.task = nil
+        }
+        closing = []
+        timer?.invalidate()
+        timer = nil
+        self.draining = nil
+        draining.done(lines)
+    }
+
+    /// A new request takes the audio from here on; the one before is ended,
+    /// not cancelled, and waits a few seconds for its last words.
     private func next() {
         let request = SFSpeechAudioBufferRecognitionRequest()
         request.requiresOnDeviceRecognition = true
         request.shouldReportPartialResults = true
         request.addsPunctuation = true
         request.taskHint = .dictation
+        if let words = expecting?(), !words.isEmpty { request.contextualStrings = words }
+        let segment = Segment()
         feed.swap(request)?.endAudio()
-        task?.cancel()
-        partial = ""
+        if let old = current, !old.done {
+            old.giveUpAt = Date().addingTimeInterval(SpeechWords.wait)
+            closing.append(old)
+        }
+        current = segment
         heardAt = nil
-        segmentStarted = Date()
-        let started = segmentStarted
-        task = recognizer.recognitionTask(with: request) { @Sendable [weak self] result, _ in
-            guard let text = result?.bestTranscription.formattedString else { return }
+        segment.task = recognizer.recognitionTask(with: request) { @Sendable [weak self, weak segment] result, error in
+            let text = result?.bestTranscription.formattedString
+            let ended = error != nil || result?.isFinal == true
             DispatchQueue.main.async {
                 MainActor.assumeIsolated {
-                    guard let self, self.segmentStarted == started, text != self.partial else { return }
-                    self.partial = text
-                    self.heardAt = Date()
-                    self.hearing?(text)
+                    guard let self, let segment, !segment.done else { return }
+                    if let text, case let words = SpeechWords.after(segment.text, text), words != segment.text {
+                        segment.text = words
+                        if segment === self.current {
+                            self.heardAt = Date()
+                            self.hearing?(text)
+                        }
+                    }
+                    if ended { self.ended(segment) }
                 }
             }
         }
     }
 
-    private func keep() {
-        let text = partial.trimmingCharacters(in: .whitespacesAndNewlines)
+    /// The recognizer finished a request: a cut one's line is kept; the
+    /// current one has stopped listening, so a new request takes over
+    /// (straight away, or by `tick` if it ended within two seconds, so a
+    /// recognizer that keeps failing isn't restarted in a loop).
+    private func ended(_ segment: Segment) {
+        finish(segment)
+        segment.task = nil
+        closing.removeAll { $0 === segment }
+        if segment === current, Date().timeIntervalSince(segment.started) >= 2 { next() }
+        drainIfDone()
+    }
+
+    private func finish(_ segment: Segment) {
+        guard !segment.done else { return }
+        segment.done = true
+        let text = segment.text.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !text.isEmpty else { return }
-        let line = MeetingLine(at: segmentStarted.timeIntervalSince(startedAt), you: you, text: text)
+        let line = MeetingLine(at: segment.started.timeIntervalSince(startedAt), you: you, text: text)
         lines.append(line)
-        partial = ""
         kept?(line)
     }
 
     /// A pause of a second and a half ends the line; so does a long one.
     private func tick() {
         let now = Date()
+        for segment in closing where (segment.giveUpAt ?? now) <= now {
+            finish(segment)
+            segment.task?.cancel()
+            segment.task = nil
+        }
+        closing.removeAll { $0.done }
+        guard let current else { return drainIfDone() }
+        let age = now.timeIntervalSince(current.started)
+        if current.done {
+            if age >= 2 { next() }
+            return
+        }
         let paused = heardAt.map { now.timeIntervalSince($0) >= 1.5 } ?? false
-        guard (paused && !partial.isEmpty) || now.timeIntervalSince(segmentStarted) >= 50 else { return }
-        keep()
+        guard (paused && !current.text.isEmpty) || age >= 50 else { return }
         next()
     }
 }
@@ -247,6 +354,47 @@ final class AudioFeed: @unchecked Sendable {
         lock.lock()
         defer { lock.unlock() }
         request?.appendAudioSampleBuffer(sample)
+    }
+
+    private var level = SpeechLevel()
+    private var mono: AVAudioFormat?
+
+    /// Speech as the recognizer hears it best: the first channel only (a
+    /// voice-processed or many-channel microphone puts the voice there, and
+    /// a mix with silent channels would make it quieter), lifted by
+    /// `SpeechLevel`. Anything that isn't plain float audio goes in as it is.
+    func appendSpeech(_ buffer: AVAudioPCMBuffer) {
+        let format = buffer.format
+        let count = Int(buffer.frameLength)
+        guard format.commonFormat == .pcmFormatFloat32, !format.isInterleaved, count > 0,
+              let source = buffer.floatChannelData else { return append(buffer) }
+        lock.lock()
+        defer { lock.unlock() }
+        if mono?.sampleRate != format.sampleRate {
+            mono = AVAudioFormat(commonFormat: .pcmFormatFloat32, sampleRate: format.sampleRate, channels: 1, interleaved: false)
+        }
+        guard let mono, let out = AVAudioPCMBuffer(pcmFormat: mono, frameCapacity: buffer.frameLength),
+              let target = out.floatChannelData else {
+            request?.append(buffer)
+            return
+        }
+        out.frameLength = buffer.frameLength
+        target[0].update(from: source[0], count: count)
+        level.apply(target[0], count: count, sampleRate: format.sampleRate)
+        request?.append(out)
+    }
+
+    /// The Mac's sound, the same way.
+    func appendSpeech(_ sample: CMSampleBuffer) {
+        let frames = sample.numSamples
+        guard frames > 0, let description = sample.formatDescription,
+              case let format = AVAudioFormat(cmAudioFormatDescription: description),
+              let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frames)),
+              CMSampleBufferCopyPCMDataIntoAudioBufferList(sample, at: 0, frameCount: Int32(frames),
+                                                           into: buffer.mutableAudioBufferList) == noErr
+        else { return append(sample) }
+        buffer.frameLength = AVAudioFrameCount(frames)
+        appendSpeech(buffer)
     }
 }
 
@@ -293,7 +441,7 @@ final class SystemAudio: NSObject, SCStreamOutput, SCStreamDelegate, @unchecked 
 
     func stream(_ stream: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
         guard type == .audio, sampleBuffer.isValid else { return }
-        feed.append(sampleBuffer)
+        feed.appendSpeech(sampleBuffer)
     }
 
     /// Stopped from outside: Stop Sharing in the menu bar, or the system.
@@ -334,16 +482,24 @@ final class MeetingRecorder {
         if source.hearsMicrophone {
             let mine = try RollingTranscriber(language: language, you: true, startedAt: startedAt)
             let input = engine.inputNode
-            let format = input.outputFormat(forBus: 0)
-            guard format.sampleRate > 0, format.channelCount > 0 else { throw MeetingProblem.noMicrophone }
+            // Voice processing: Apple's gain control and noise suppression, and
+            // the call's own sound taken out of the microphone so it isn't
+            // written down as you. Other sound is ducked as little as it can be.
+            // If the microphone can't do it, it listens as before.
+            do {
+                try input.setVoiceProcessingEnabled(true)
+                input.voiceProcessingOtherAudioDuckingConfiguration =
+                    AVAudioVoiceProcessingOtherAudioDuckingConfiguration(enableAdvancedDucking: false, duckingLevel: .min)
+            } catch {
+                try? input.setVoiceProcessingEnabled(false)
+            }
             let feed = mine.input
-            // Called on the audio threads: @Sendable, so not tied to the main actor
-            // (Swift checks, and stops Droppy, when a main-actor closure runs there).
-            input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in feed.append(buffer) }
-            engine.prepare()
-            do { try engine.start() } catch {
-                input.removeTap(onBus: 0)
-                throw MeetingProblem.noMicrophone
+            do { try listen(input, into: feed) } catch {
+                // Not with voice processing: once more without it.
+                guard input.isVoiceProcessingEnabled else { throw MeetingProblem.noMicrophone }
+                if engine.isRunning { engine.stop() }
+                try? input.setVoiceProcessingEnabled(false)
+                try listen(input, into: feed)
             }
             listen(to: mine)
             mine.start()
@@ -366,26 +522,85 @@ final class MeetingRecorder {
         }
     }
 
+    /// Taps the microphone in the format it has now (voice processing
+    /// changes it) and starts the engine; undone if it doesn't start.
+    private func listen(_ input: AVAudioInputNode, into feed: AudioFeed) throws {
+        let format = input.outputFormat(forBus: 0)
+        guard format.sampleRate > 0, format.channelCount > 0 else { throw MeetingProblem.noMicrophone }
+        // Called on the audio threads: @Sendable, so not tied to the main actor
+        // (Swift checks, and stops Droppy, when a main-actor closure runs there).
+        input.installTap(onBus: 0, bufferSize: 4096, format: format) { @Sendable buffer, _ in feed.appendSpeech(buffer) }
+        engine.prepare()
+        do { try engine.start() } catch {
+            input.removeTap(onBus: 0)
+            throw MeetingProblem.noMicrophone
+        }
+    }
+
     private func listen(to transcriber: RollingTranscriber) {
         let you = transcriber.you
+        transcriber.expecting = { [weak self] in Self.expected(in: self?.title) }
         transcriber.hearing = { [weak self] text in self?.onHearing?(you, text) }
         transcriber.kept = { [weak self] line in self?.onLine?(line) }
     }
 
-    /// Stops listening; everything said, in order. The Mac's sound stops
-    /// a moment later: wait for `stopped` before relying on it.
-    func stop() -> [MeetingLine] {
-        if hearsMicrophone {
+    /// Anything heard yet, on either side.
+    var heardAnything: Bool { (mine?.heardAnything ?? false) || (theirs?.heardAnything ?? false) }
+
+    /// Stops listening and keeps the last words: the microphone and the
+    /// Mac's sound stop at once, then both sides' last requests are ended
+    /// together and waited for (up to `SpeechWords.wait`). Everything said,
+    /// in order. Main is never blocked; the live transcript hears no more.
+    func finish() async -> [MeetingLine] {
+        onHearing = nil
+        onLine = nil
+        stopListening()
+        let sides = [mine, theirs].compactMap { $0 }
+        var lines: [MeetingLine] = []
+        var left = sides.count
+        if left > 0 {
+            await withCheckedContinuation { (done: CheckedContinuation<Void, Never>) in
+                for side in sides {
+                    side.finish { got in
+                        lines += got
+                        left -= 1
+                        if left == 0 { done.resume() }
+                    }
+                }
+            }
+        }
+        return lines.sorted { $0.at < $1.at }
+    }
+
+    /// Stops at once, nothing waited for (`deactivate`); everything said so
+    /// far, in order. A `finish` under way returns now too.
+    func cancel() -> [MeetingLine] {
+        stopListening()
+        mine?.cancel()
+        theirs?.cancel()
+        return ((mine?.lines ?? []) + (theirs?.lines ?? [])).sorted { $0.at < $1.at }
+    }
+
+    /// The microphone and the Mac's sound stop; the Mac's sound a moment
+    /// later: wait for `stopped` before relying on it.
+    private func stopListening() {
+        if hearsMicrophone, engine.isRunning || engine.inputNode.isVoiceProcessingEnabled {
             if engine.isRunning { engine.stop() }
             engine.inputNode.removeTap(onBus: 0)
+            if engine.inputNode.isVoiceProcessingEnabled { try? engine.inputNode.setVoiceProcessingEnabled(false) }
         }
-        mine?.stop()
-        theirs?.stop()
         if let system {
             self.system = nil
             stopped = Task { await system.stop() }
         }
-        return ((mine?.lines ?? []) + (theirs?.lines ?? [])).sorted { $0.at < $1.at }
+    }
+
+    /// The meeting's title and its longer words (names, product words) for
+    /// the recognizer to expect.
+    nonisolated static func expected(in title: String?) -> [String] {
+        guard let title = title?.trimmingCharacters(in: .whitespacesAndNewlines), !title.isEmpty else { return [] }
+        let words = title.split(whereSeparator: { !$0.isLetter && !$0.isNumber }).map(String.init).filter { $0.count >= 3 }
+        return Array(([title] + words).prefix(20))
     }
 
     /// The Mac's sound being stopped, if it was heard.

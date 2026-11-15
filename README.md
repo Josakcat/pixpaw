@@ -42,16 +42,26 @@ your desktop and talks to you. A Droplet for
 - Its home comes out for naps, with a puff of dust, and folds away a minute
   after it wakes (× to put it away sooner, or keep it out in Settings → Home).
 - Home decorations that fit each pet (a cat's fish dish, a hamster's wheel): eight things to set beside the home, bought with stars you've earned (Decorate in its menu, or Settings → Home).
+- Its own bowls: with the bowls placed by its home, a hungry pet walks over and eats by itself (they hold 3 meals; Fill the bowls under Care in its menu; turn it off in Settings → Home).
   In a call, or late at night once you've been away, it goes home by itself.
 - Says good morning the first time it sees you each morning, with your first event of the day.
 - Celebrates your birthday with confetti and a party hat.
+- Give it a name (Settings → Name, or "Give me a name" on its first day); its
+  card, VoiceOver and the lock screen use it.
 - From midnight to 5 am it wears a nightcap and, once a night, tells you it's late.
 - Strikes a pose when you take a screenshot.
+- In its own words (off by default): Apple Intelligence on your Mac rewrites what your pet says from its mood, the time and what just finished, now and then; the usual line when the model is busy, slow or not there. Nothing leaves the Mac. Not for Thai yet (Apple's model doesn't support it). Settings → What it tells you.
 - Stroke it with the pointer to pet it; shake it about and it lands dizzy; throw it and it bounces off the screen's edges.
 - Climbs the sides of the screen now and then, and types along at its laptop while you type.
 - Treats, a little gift for you once a day, and a photo or a five-second GIF of your pet to keep or share.
 - Festival hats, and Loy Krathong and Chinese New Year among the festivals.
 - The shelf widget counts your days together, pets, meals and games.
+- The shelf widget shows hunger, energy and mood as rings and a line of today with
+  your pet (fed, petted, played), in Droppy's own widget style.
+- Drop a file on the shelf widget: a PNG becomes a coat in its colours or a tiny
+  framed picture beside the home; anything else is a snack worth a star. The
+  file is only read, never moved or changed.
+  file is only read, never moved or changed.
 - On Droppy's lock screen: what you'll want to know when you come back. An agent that needs you, the focus or break clock with its ring, a long command, how your agents got on, or else what your pet is up to.
 - A gauge in the menu bar as full as the emptiest window of your coding agents' plans (a raised hand while one needs you). Click it for Claude Code's, Antigravity's and Codex's five hours and week, each with a bar that turns amber at 20% and red at 10% and when it resets (and, at your pace, when it runs dry if that comes first: the five hours by the last hour, the week by the last day), and what your agents are up to. A question your agent asks on your pet's card can be answered from there too. Each AI has a section of its own, in its own color and mark, Antigravity with a line per model group. The same is a page of the shelf widget, AI Usage left: click the gauge at its top. Read from what the status line, the Antigravity plugin and the hooks save on this Mac; turn it off under Settings → AI agents.
 - Six coats, and every built-in pet drawn in finer 40 × 32 pixels on the desktop (Settings → Pixel size → Chunky (classic) brings back the original look; the notch keeps the classic pixels), and an optional friend of any kind that sits with it, plays tag, and plays rock, paper, scissors for make-believe coins. Each has a character of its own: competitive, loves a bet, playful, sleepy, calm or thrifty.
@@ -79,7 +89,7 @@ your desktop and talks to you. A Droplet for
 - Sums a meeting up your way: after Stop, tell it how (“action items for me”, “in Thai”) or press Enter for the usual notes; it remembers your last three.
 - Or your own cat: choose a photo of it and Pixpaw paints the cat in its
   colours (fur, stripes or patches, white, eyes), read on your Mac and only
-  the colours kept. Folded ears too, for a Scottish Fold.
+  the colours kept (Settings → Advanced). Folded ears too, for a Scottish Fold.
 - Or draw your own: bring in a PNG from any pixel editor (one 20 × 20
   sitting pose is enough) under Settings → Your own pets, and pick which
   character it acts like. Give it sounds of its own if you like. Up to
@@ -87,13 +97,18 @@ your desktop and talks to you. A Droplet for
 - Wears headphones while yours are connected.
 
 **Talks in a speech bubble**
-- Mac notifications, and calendar events two minutes ahead (it comes over to tell you; click it to join the Zoom, Meet or Teams call).
+- Mac notifications (off for a new install, since Droppy shows them too; turn on under Settings → What it tells you), and calendar events two minutes ahead (it comes over to tell you; click it to join the Zoom, Meet or Teams call).
 - Song changes in Apple Music and Spotify (and it stops to dance on every new song). It dances to anything else playing too: YouTube in your browser, a video, another player.
 - Claude Code and Codex finishing or needing you, with the plan usage left. While one works, your pet codes along at its laptop.
 - The volume, headphones connecting, the battery (and it gets sleepy below 20%), downloads.
 - A busy Mac: working flat out or running hot, it hurries about with a bead of sweat.
 - Welcome back: it runs over to say hello when you come back after a while away.
-- Goes quiet during calls and screen sharing, and optionally while mirroring.
+- What's new: after an update (never a fresh install) it tells you, once, in one bubble.
+- Keyboard shortcuts: every one is set on Droppy's Shortcuts page (Settings → Keyboard shortcuts takes you there), and the Friend and Festivals pages keep their on/off switch in Droppy's toolbar.
+- Goes quiet during calls, screen sharing and when the app in front is full screen or presenting, and optionally while mirroring.
+- Things it finds: after a focus round or an agent run finishes, your pet sometimes brings something it found (up to 3 a day, +2 stars each, and now and then a decoration for its home). Nothing runs out or expires.
+- Battery saver (off until you turn it on): on battery or in Low Power Mode your pet stays put and draws at 30 frames a second; Settings shows how much CPU it takes.
+- Read later: saved meeting notes, and while you're away an agent done or needing you, a reminder you missed or the day's gift, go to Droppy's notifications instead of a bubble nobody sees (held back in calls and screen shares).
 
 **Looks after you**
 - Drink water: it comes over to remind you, every 45 minutes to begin with.
@@ -103,20 +118,50 @@ your desktop and talks to you. A Droplet for
 - Your own reminders ("Take a pill", "Check the oven"), up to five, every 15
   minutes to every 3 hours.
 - Each reminder has its own timer and switch, counts only while you're at the
-  Mac, and waits until a call or a focus session is over.
+  Mac, and waits until a call or a focus session is over (Droppy's Pomodoro
+  too, when you start it from your pet).
+- Break cards: each reminder also comes up as Droppy's HUD card with
+  *Stretched* (or *Done*) and *Later*, which brings it back in 10 minutes.
 - Focus sessions: it works along with you at its own little laptop, with a
-  countdown over its head and beside the notch. Pomodoro runs four rounds with
+  countdown over its head and beside the notch (a countdown row on Droppy's
+  own compact clock, which ticks only while it's on screen). Pomodoro runs four rounds with
   breaks in between, and it nudges you back if you wander off to YouTube.
+- Body doubling: a session you start asks what you're working on and holds it
+  up on its sign, checks in once halfway (clicks only, never in a call) and
+  asks at the end: Done earns a star, Not yet just a kind word.
+- End-of-day recap (off by default): once a day, at a pause after the time you
+  usually stop, one line of focus sessions, tasks done, agent runs, notes and
+  stars (counts only, on this Mac); *Today so far* in its menu any time.
+- Days together: each day at your Mac with your pet counts once; a day off only
+  pauses it, it never goes back to zero. Backup in Settings, Wardrobe: home,
+  wardrobe, stars and stats in one file to save and load (it asks first).
+- Pixpaw Wrapped (off by default): when a new week or month starts it adds up
+  the last one (focus, tasks, agent runs, notes, stars, days together); *So
+  far* in its menu. At 28 days together the home grows a far-right spot.
+- Droppy's own HUD and sound: an agent done or stuck and the late-night nudge
+  come up as Droppy's HUD strip, and focus done plays Droppy's success sound
+  (only with your Droppy sounds on).
 - Lofi: Play lofi puts on Lofi Girl's radio on YouTube, her playlist in
   Spotify or Apple Music, or a link of your own, and your pet studies along in
   its headphones. It can start with each focus session and, in Spotify or Music, pause for breaks.
 
 **Little extras**
+- AI apps (off by default): turn on *Let AI apps talk to your pet* (Settings ›
+  AI agents) and Droppy's MCP, and Claude, Cursor or Codex can have it say a
+  short line (`droplet_pixpaw_say`), add a to-do to its sign
+  (`droplet_pixpaw_add_note`) or ask how it's doing (`droplet_pixpaw_status`).
+  Plain text, no links, a line every 10 s at most.
 - Happiness stars (petting, meals, play, catches, stretches; up to 30 a day)
   unlock pixel hats, glasses and collars, and at 500 a home of its own. A
   headset, a pencil, a tie, a name badge and a sprout are earned by working
   together (focus rounds, notes done, bugs caught, days together, a streak).
   The Wardrobe page shows what's worn and how far each locked thing is.
+- Playroom: Playroom… in its menu (under Look) turns Droppy's whole shelf into one room to throw its toys, dress it up and
+  arrange its home, instead of three trips through the menu.
+- Guests in the home: while the home is out, each Claude Code or Codex session
+  your pet follows (hooks, or the logs with that switch on) sends one of the
+  other pets to sit in front of it, at a laptop, with a "?" when it needs you,
+  or pleased when it's done. Characters only, no status panel.
 - A hunger meter and a food bowl.
 - Synthesised sounds (meow, purr, buzz, bark, squeak and more); no sound files. Pets you draw can bring sounds of their own.
 - A shelf widget with its mood, stars, coats and quick controls.
@@ -126,6 +171,8 @@ your desktop and talks to you. A Droplet for
 
 | | |
 |---|---|
+| ![Your pet at a glance](Assets/Screenshot-44.png) | ![Its own bowls](Assets/Screenshot-45.png) |
+| ![Guests while agents work](Assets/Screenshot-46.png) | |
 | ![Pixpaw](Assets/Screenshot-36.png) | ![Thirteen pets, or your own](Assets/Screenshot-37.png) |
 | ![Fire in the speech bubble, in HD](Assets/Screenshot-38.png) | ![Fine or chunky pixels](Assets/Screenshot-39.png) |
 | ![Your pet's card](Assets/Screenshot-40.png) | ![Decorations that fit your pet](Assets/Screenshot-41.png) |
@@ -195,17 +242,18 @@ with *Claude Code: ask the claude command* on (Settings → AI agents; off until
 command (a `get_usage` request: no prompt, nothing billed, no settings or
 hooks loaded) every five minutes while Claude is at work.
 
-Agents report through `Tools/agent-hooks/pixpaw-agent.sh <name> <working|done|waiting|error> [text]`,
+Agents report through `.droppykit/Tools/agent-hooks/pixpaw-agent.sh <name> <working|done|waiting|error> [text]`,
 which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
-(set `PIXPAW_SCHEME=droppy` for Droppy itself).
+(set `PIXPAW_SCHEME=droppy` for Droppy itself). The hooks used to be under
+`Tools/agent-hooks`; Finder hides `.droppykit`, so press ⌘⇧. to see it.
 
 - **Claude Code**: hooks in `~/.claude/settings.json`: `UserPromptSubmit` →
   `pixpaw-agent.sh Claude working`, `Stop` → `… done`, `Notification` →
-  `… waiting`. For the usage left, set `Tools/agent-hooks/claude-statusline.sh`
+  `… waiting`. For the usage left, set `.droppykit/Tools/agent-hooks/claude-statusline.sh`
   as the `statusLine` command: Claude Code only hands its rate limits to a
   status line, which saves them for the Stop hook to read.
 - **Antigravity** (the app, the IDE and the `agy` CLI): install the Pixpaw
-  plugin once, `agy plugin install /path/to/Tools/agent-hooks/antigravity`,
+  plugin once, `agy plugin install /path/to/.droppykit/Tools/agent-hooks/antigravity`,
   and restart Antigravity. It says when a turn starts, finishes (with the plan
   usage left for the models in use, from `agy -p /usage`) or fails, puts
   what it's working on on the tag at your pet's side, and brings your
@@ -213,7 +261,7 @@ which opens `droppy-playground://droplet/pixpaw/agent?…` in the background
   Its hooks print nothing, so Antigravity decides about every tool exactly as
   it would without them. Answering Antigravity from the pet's card isn't
   there yet: a hook can't yet let a command through for you.
-- **Codex**: `notify = ["/path/to/Tools/agent-hooks/codex-notify.sh"]` in
+- **Codex**: `notify = ["/path/to/.droppykit/Tools/agent-hooks/codex-notify.sh"]` in
   `~/.codex/config.toml`. It passes the event on to `PIXPAW_CODEX_NEXT`, or to
   Codex Computer Use's notifier when that is installed, so an existing
   `notify` keeps working.
@@ -244,7 +292,7 @@ command's first words.
 ```json
 "PreToolUse": [{"matcher": "Edit|MultiEdit|Write|NotebookEdit|Read|Bash|Grep|Glob|WebFetch|WebSearch|Task|Agent",
   "hooks": [{"type": "command", "timeout": 5,
-  "command": "PIXPAW_SCHEME=droppy /path/to/Tools/agent-hooks/pixpaw-agent.sh Claude tool"}]}]
+  "command": "PIXPAW_SCHEME=droppy /path/to/.droppykit/Tools/agent-hooks/pixpaw-agent.sh Claude tool"}]}]
 ```
 
 **Long commands and helpers.** With two more hooks your pet waits with a
@@ -255,19 +303,18 @@ pass on only which call it was and whether it worked, never its output.
 
 ```json
 "PostToolUse": [{"matcher": "Bash", "hooks": [{"type": "command", "timeout": 5,
-  "command": "PIXPAW_SCHEME=droppy /path/to/Tools/agent-hooks/pixpaw-agent.sh Claude tool-done"}]}],
+  "command": "PIXPAW_SCHEME=droppy /path/to/.droppykit/Tools/agent-hooks/pixpaw-agent.sh Claude tool-done"}]}],
 "PostToolUseFailure": [{"matcher": "Bash", "hooks": [{"type": "command", "timeout": 5,
-  "command": "PIXPAW_SCHEME=droppy /path/to/Tools/agent-hooks/pixpaw-agent.sh Claude tool-done"}]}],
+  "command": "PIXPAW_SCHEME=droppy /path/to/.droppykit/Tools/agent-hooks/pixpaw-agent.sh Claude tool-done"}]}],
 "SubagentStart": [{"hooks": [{"type": "command", "timeout": 5,
-  "command": "PIXPAW_SCHEME=droppy /path/to/Tools/agent-hooks/pixpaw-agent.sh Claude helper"}]}],
+  "command": "PIXPAW_SCHEME=droppy /path/to/.droppykit/Tools/agent-hooks/pixpaw-agent.sh Claude helper"}]}],
 "SubagentStop": [{"hooks": [{"type": "command", "timeout": 5,
-  "command": "PIXPAW_SCHEME=droppy /path/to/Tools/agent-hooks/pixpaw-agent.sh Claude helper"}]}]
+  "command": "PIXPAW_SCHEME=droppy /path/to/.droppykit/Tools/agent-hooks/pixpaw-agent.sh Claude helper"}]}]
 ```
 
 The Antigravity plugin does the same by itself.
 
-**CI after a push.** Turn on *Wait for CI after a push* (Settings → AI agents →
-While they work) and when your agent runs `git push` to GitHub, the `PreToolUse`
+**CI after a push.** Turn on *Wait for CI after a push* (Settings → Advanced) and when your agent runs `git push` to GitHub, the `PreToolUse`
 hook (or the Antigravity plugin) passes on the repository and branch
 ("owner/app@main"). Your pet then asks GitHub's own `gh` command, signed in as
 you, every 20 seconds how that push's Actions runs are doing: green, it jumps
@@ -285,7 +332,7 @@ keeping it on its sign. For failures, add `StopFailure` →
 `pixpaw-agent.sh Claude error`. Scheduled tasks in the cloud never run on your
 Mac, so they can't reach it.
 
-**Answer from your pet.** With `Tools/agent-hooks/pixpaw-ask.py` as a Claude Code
+**Answer from your pet.** With `.droppykit/Tools/agent-hooks/pixpaw-ask.py` as a Claude Code
 hook, a permission prompt (run this command? edit this file?) or a question with
 a few answers comes to your pet: it holds up the choices on a
 card (it doesn't read them aloud), and the one you click goes back to Claude. When the pet isn't out, you're
@@ -303,9 +350,9 @@ also has a field for your own words: your answer to a question, like Claude's
 
 ```json
 "PermissionRequest": [{"hooks": [{"type": "command", "timeout": 120,
-  "command": "PIXPAW_SCHEME=droppy python3 /path/to/Tools/agent-hooks/pixpaw-ask.py"}]}],
+  "command": "PIXPAW_SCHEME=droppy python3 /path/to/.droppykit/Tools/agent-hooks/pixpaw-ask.py"}]}],
 "PreToolUse": [{"matcher": "AskUserQuestion", "hooks": [{"type": "command", "timeout": 120,
-  "command": "PIXPAW_SCHEME=droppy python3 /path/to/Tools/agent-hooks/pixpaw-ask.py"}]}]
+  "command": "PIXPAW_SCHEME=droppy python3 /path/to/.droppykit/Tools/agent-hooks/pixpaw-ask.py"}]}]
 ```
 
 ## Links for scripts and Shortcuts
@@ -321,15 +368,39 @@ also has a field for your own words: your answer to a question, like Claude's
 
 Every character is a PNG sprite sheet in `Art/`, ready to open in any pixel
 editor; [Art/README.md](Art/README.md) has the layout and the colours.
-`Tools/sprites.py` reads the sheets, keeps the effects, hats and headphones as
-small text grids, previews it all (`python3 Tools/sprites.py preview out.png`,
+`.droppykit/Tools/sprites.py` reads the sheets, keeps the effects, hats and headphones as
+small text grids, previews it all (`python3 .droppykit/Tools/sprites.py preview out.png`,
 `… wear out.png`) and writes `Sources/Pixpaw/CatSprites.generated.swift`
-(`python3 Tools/sprites.py swift`).
-`Tools/store-art.swift` draws the screenshots and the creator avatar from
+(`python3 .droppykit/Tools/sprites.py swift`).
+`.droppykit/Tools/store-art.swift` draws the screenshots and the creator avatar from
 the same sprites.
 
 The droplet's Store icon is designed by Droppy; `Pixpaw.icon` here is only
 for local builds.
+
+## Sounds
+
+The voices are synthesised in `CatSounds.swift`, except these recordings in
+`Assets/Sounds/`, trimmed and levelled from freesound.org. All are CC0 (public
+domain), so no credit is required, but here it is, with thanks:
+
+- `cat-call.m4a`: [https://freesound.org/people/PolterKaist/sounds/795848/](https://freesound.org/people/PolterKaist/sounds/795848/) by PolterKaist
+- `cat-purr.m4a`: [https://freesound.org/people/fthgurdy/sounds/528949/](https://freesound.org/people/fthgurdy/sounds/528949/) by fthgurdy
+- `dog-call.m4a`: [https://freesound.org/people/kwahmah_02/sounds/277058/](https://freesound.org/people/kwahmah_02/sounds/277058/) by kwahmah_02
+- `bee-call.m4a`: [https://freesound.org/people/JonCon_Library/sounds/481647/](https://freesound.org/people/JonCon_Library/sounds/481647/) by JonCon_Library
+- `parrot-call.m4a`: [https://freesound.org/people/TheKingOfGeeks360/sounds/871376/](https://freesound.org/people/TheKingOfGeeks360/sounds/871376/) by TheKingOfGeeks360
+- `dino-call.m4a`: [https://freesound.org/people/tahirahg1991/sounds/420466/](https://freesound.org/people/tahirahg1991/sounds/420466/) by tahirahg1991
+- `dragon-call.m4a`: [https://freesound.org/people/bevibeldesign/sounds/315824/](https://freesound.org/people/bevibeldesign/sounds/315824/) by bevibeldesign
+- `hamster-call.m4a`: [https://freesound.org/people/Breviceps/sounds/445958/](https://freesound.org/people/Breviceps/sounds/445958/) by Breviceps
+- `chicken-call.m4a`: [https://freesound.org/people/JarredGibb/sounds/233097/](https://freesound.org/people/JarredGibb/sounds/233097/) by JarredGibb
+- `giraffe-call.m4a`: [https://freesound.org/people/TheKingOfGeeks360/sounds/852641/](https://freesound.org/people/TheKingOfGeeks360/sounds/852641/) by TheKingOfGeeks360
+- `hippo-call.m4a`: [https://freesound.org/people/TheKingOfGeeks360/sounds/842313/](https://freesound.org/people/TheKingOfGeeks360/sounds/842313/) by TheKingOfGeeks360
+- `rabbit-call.m4a`: [https://freesound.org/people/lucyve/sounds/205576/](https://freesound.org/people/lucyve/sounds/205576/) by lucyve
+- `shark-call.m4a`: [https://freesound.org/people/Jofae/sounds/353067/](https://freesound.org/people/Jofae/sounds/353067/) by Jofae
+- `pig-call.m4a`: [https://freesound.org/people/qubodup/sounds/442906/](https://freesound.org/people/qubodup/sounds/442906/) by qubodup
+- `all-chew.m4a`: [https://freesound.org/people/FaKexxChaos/sounds/700418/](https://freesound.org/people/FaKexxChaos/sounds/700418/) by FaKexxChaos
+
+Any sound that is missing or won't play falls back to the synthesised one.
 
 ## Licence
 

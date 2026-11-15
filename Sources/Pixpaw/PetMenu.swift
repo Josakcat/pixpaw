@@ -7,7 +7,7 @@
 //  ⋯ button) is built from it item by item, and the card takes its six
 //  big buttons and the Right now line off the top and shows the rest in
 //  the same groups, in the same order, so the two can't drift apart. Pure
-//  functions, checked on their own (Tools/pet-menu-check.swift).
+//  functions, checked on their own (.droppykit/Tools/pet-menu-check.swift).
 //
 
 import Foundation
@@ -15,10 +15,11 @@ import Foundation
 /// What an item does: the name of the pet view's action for it.
 enum PetMenuAction: String, CaseIterable {
     case talk, ask, droppyTool = "droppyTool:", runSuggestion = "runSuggestion:"
-    case feed, treat, nap, wake, playGame = "playGame:", playHands, stopPlaying
-    case focus, stretch, lofi, pauseLofi, askSign, dropSign
-    case meetingNotes, showTranscript, openNotes, putHomeAway, placeDecor = "placeDecor:", buyDecor = "buyDecor:"
+    case feed, treat, fillBowls, pickUpPresent, nap, wake, playGame = "playGame:", playHands, stopPlaying
+    case focus, stretch, lofi, pauseLofi, askSign, dropSign, todaySoFar = "todaySoFar:"
+    case meetingNotes, showTranscript, openNotes, bringHomeOut, putHomeAway, placeDecor = "placeDecor:", buyDecor = "buyDecor:"
     case photo, recordGIF, capturePage, wearItem = "wearItem:", openWardrobe, setColour = "setColour:", setPixels = "setPixels:"
+    case openPlayroom
     case openSettings
 }
 
@@ -111,10 +112,16 @@ struct PetMenuState {
     /// Droppy's tools in the Ask me submenu.
     var droppy: [Choice] = []
     var hungry = false
+    /// A present (the daily gift or a find) waits on the floor.
+    var present = false
+    /// Its own bowls stand by the home and aren't full.
+    var fillBowls = false
     var asleep = false
     /// The home comes out for naps.
     var home = false
     var homeOut = false
+    /// The agents' guests waiting in front of the home (Guests.swift).
+    var guests = 0
     /// Home decorations: one row each, in price order.
     struct Decor: Equatable {
         let title: String
@@ -138,6 +145,8 @@ struct PetMenuState {
     var lofiOn = false
     var lofi: String?
     var note = false
+    /// Pixpaw Wrapped is on: the day, the week and the month so far.
+    var wrapped = false
     /// Join the next meeting, through Droppy, when none is offered up top.
     var join = false
     var todaysMeetings = false
@@ -158,6 +167,8 @@ struct PetMenuState {
     var hasFineArt = false
     /// The menu is the friend's: Pixel size changes both pets.
     var isFriend = false
+    /// Droppy's shelf can hold the playroom (Playroom.swift).
+    var playroom = false
 }
 
 enum PetMenu {
@@ -191,6 +202,10 @@ enum PetMenu {
         groups.append(PetMenuGroup(title: "Ask me", items: ask))
 
         var care = [item("Feed", "fork.knife", .feed, badge: state.hungry ? "Hungry" : nil), item("Give a treat", "fish", .treat)]
+        // Its own bowls sit with the food you give it.
+        if state.fillBowls { care.append(item("Fill the bowls", "takeoutbag.and.cup.and.straw", .fillBowls)) }
+        // What it left on the floor sits with the care it gets back.
+        if state.present { care.append(item("Pick up the present", "gift", .pickUpPresent)) }
         if !state.home { care.append(state.asleep ? item("Wake up", "sun.max", .wake) : item("Nap", "moon.zzz", .nap)) }
         // Only the games this one plays, its own toy first.
         var toys = state.games.map { item($0.title, $0.symbol, .playGame, represented: $0.id) }
@@ -215,6 +230,13 @@ enum PetMenu {
         work.append(state.lofiOn ? item("Pause lofi", "pause.circle", .pauseLofi) : item("Play lofi", "headphones", .lofi, badge: state.lofi))
         work.append(item("Add a note…", "signpost.right", .askSign))
         if state.note { work.append(item("Done with this note", "checkmark.circle", .dropSign)) }
+        // The day so far closes the work group: what got done.
+        // With Wrapped on, the week and the month so far sit beside it.
+        work.append(state.wrapped
+            ? submenu("So far", "sun.horizon", [item("Today", "sun.horizon", .todaySoFar, represented: "day"),
+                                                item("This week", "calendar", .todaySoFar, represented: "week"),
+                                                item("This month", "calendar", .todaySoFar, represented: "month")])
+            : item("Today so far", "sun.horizon", .todaySoFar))
         groups.append(PetMenuGroup(title: "Work", items: work))
 
         // Meetings: joining one, today's list, and the pet's notes of one.
@@ -229,11 +251,14 @@ enum PetMenu {
         }
         if !meetings.isEmpty { groups.append(PetMenuGroup(title: "Meetings", items: meetings)) }
 
-        // Home: the nap that brings it out, and putting it away.
+        // Home: the nap that brings it out, bringing it out without one, and putting it away.
         if state.home {
             var home = [state.asleep ? item("Wake up", "sun.max", .wake) : item("Nap", "house", .nap)]
             if let decorate = decorate(state) { home.append(decorate) }
-            if state.homeOut { home.append(item("Put the home away", "house.slash", .putHomeAway)) }
+            // Guests sit in front of it only while it's out: the count says who's there.
+            let guests = state.guests == 0 ? nil : state.guests == 1 ? "1 guest" : "\(state.guests) guests"
+            home.append(state.homeOut ? item("Put the home away", "house.slash", .putHomeAway, badge: guests)
+                        : item("Bring the home out", "house.fill", .bringHomeOut, badge: guests))
             groups.append(PetMenuGroup(title: "Home", items: home))
         }
 
@@ -251,7 +276,8 @@ enum PetMenu {
         }
         let wardrobe = submenu("Wardrobe", "tshirt", badge: "\(state.stars) ★",
                                places + [.separator, PetMenuEntry(title: "Open Wardrobe…", action: .openWardrobe)])
-        // How it looks together: its colour beside what it wears.
+        // How it looks together: its colour beside what it wears, and the
+        // playroom first, where toys, clothes and the home sit side by side.
         var look = [wardrobe]
         if !state.colours.isEmpty {
             look.insert(submenu("Colour", "paintpalette", state.colours.map {
@@ -264,6 +290,7 @@ enum PetMenu {
             if state.isFriend { sizes += [.separator, PetMenuEntry(title: "For both pets", enabled: false)] }
             look.append(submenu("Pixel size", "square.grid.3x3", sizes))
         }
+        if state.playroom { look.insert(item("Playroom…", "teddybear", .openPlayroom), at: 0) }
         groups.append(PetMenuGroup(title: "Look", items: look))
         groups.append(PetMenuGroup(title: nil, items: [submenu("Capture", "camera", captures)]))
         // Always last: the way to everything else, in Droppy's Settings.
@@ -273,12 +300,13 @@ enum PetMenu {
 }
 
 extension PetMenu {
-    /// Decorate ▸ Left / Right / Doormat (what's yours to put there), then
+    /// Decorate ▸ Left / Right / Far right (a grown home) / Doormat (what's yours to put there), then
     /// Buy ▸ each one not yours yet; one more click on it to spend the stars.
     static func decorate(_ state: PetMenuState) -> PetMenuEntry? {
         guard !state.decor.isEmpty else { return nil }
         var items: [PetMenuEntry] = []
         for (spot, title, symbol) in [("left", "Left", "arrow.left.to.line"), ("right", "Right", "arrow.right.to.line"),
+                                      ("outer", "Far right", "arrow.right.to.line.compact"),
                                       ("front", "Doormat", "rectangle.bottomhalf.filled")] {
             let fitting = state.decor.filter { $0.owned && $0.spots.contains(spot) }
             guard !fitting.isEmpty else { continue }
@@ -365,6 +393,20 @@ struct PetCardLayout {
         case .pauseLofi: "Pause lofi"
         case .askSign: "Note"
         default: entry.title.count <= 10 ? entry.title : String(entry.title.prefix(while: { $0 != " " }))
+        }
+    }
+
+    /// Where the wide card puts a group of `groups`.
+    enum Slot: Equatable { case rightNow, column, bar }
+
+    /// Right now's rows under its line, beside the big buttons; Ask me
+    /// (Droppy), Look, Capture and Settings as chips in the bottom bar;
+    /// every other group, by its title, as rows in the right column.
+    static func slot(_ title: String?) -> Slot {
+        switch title {
+        case "Right now": .rightNow
+        case nil, "Ask me", "Look": .bar
+        default: .column
         }
     }
 
