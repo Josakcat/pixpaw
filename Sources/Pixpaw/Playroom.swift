@@ -274,6 +274,7 @@ struct PlayroomView: View {
                 choice(state.asleep ? "Wake up" : "Nap", state.asleep ? .wake : .nap)
             }
             ForEach([("left", "Left", "arrow.left.to.line"), ("right", "Right", "arrow.right.to.line"),
+                     ("outer", "Far right", "arrow.right.to.line.compact"),
                      ("front", "Doormat", "rectangle.bottomhalf.filled")], id: \.0) { spot, title, symbol in
                 let fitting = state.decor.filter { $0.owned && $0.spots.contains(spot) }
                 if !fitting.isEmpty {

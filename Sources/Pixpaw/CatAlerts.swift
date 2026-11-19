@@ -1288,10 +1288,12 @@ final class QuietWatcher {
     var watchesMirroring = true
 
     func check() {
-        let reason: Reason? = (zoomSharing || sharingBarIsUp()) ? .sharing
+        // One window list a check, shared by the sharing bar and full screen.
+        lazy var windows = Self.windowList()
+        let reason: Reason? = (zoomSharing || sharingBarIsUp(windows)) ? .sharing
             : (Self.isMicrophoneInUse() || Self.isCameraInUse()) ? .call
             : (watchesMirroring && Self.isMirroring()) ? .mirroring
-            : Self.frontAppFillsADisplay() ? .fullScreen
+            : Self.frontAppFillsADisplay(windows) ? .fullScreen
             : nil
         guard reason != last else { return }
         last = reason
@@ -1369,10 +1371,14 @@ final class QuietWatcher {
     private static let sharingTitles = ["is sharing your screen", "is sharing a window", "is sharing this tab",
                                         "sharing control bar", "you're sharing", "you are sharing", "stop sharing"]
 
-    private func sharingBarIsUp() -> Bool {
+    private static func windowList() -> [[String: Any]] {
+        CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+    }
+
+    private func sharingBarIsUp(_ info: @autoclosure () -> [[String: Any]]) -> Bool {
         if titlesReadable == false { return false }
         let ownPID = ProcessInfo.processInfo.processIdentifier
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
+        let info = info()
         if titlesReadable == nil {
             // Any other app's window with a title means titles come through.
             titlesReadable = info.contains {
@@ -1391,14 +1397,13 @@ final class QuietWatcher {
     /// already stays out of full-screen spaces; this keeps its sounds and
     /// bubbles from coming through too. Window bounds and owners need no
     /// permission (only titles do).
-    private static func frontAppFillsADisplay() -> Bool {
+    private static func frontAppFillsADisplay(_ info: @autoclosure () -> [[String: Any]]) -> Bool {
         guard let front = NSWorkspace.shared.frontmostApplication?.processIdentifier else { return false }
         var ids = [CGDirectDisplayID](repeating: 0, count: 8)
         var count: UInt32 = 0
         CGGetActiveDisplayList(8, &ids, &count)
         let displays = ids.prefix(Int(count)).map { CGDisplayBounds($0) }
-        let info = CGWindowListCopyWindowInfo([.optionOnScreenOnly, .excludeDesktopElements], kCGNullWindowID) as? [[String: Any]] ?? []
-        let windows: [FullScreenRule.Window] = info.compactMap { window in
+        let windows: [FullScreenRule.Window] = info().compactMap { window in
             guard let pid = window[kCGWindowOwnerPID as String] as? Int32,
                   let dict = window[kCGWindowBounds as String] as? NSDictionary,
                   let bounds = CGRect(dictionaryRepresentation: dict) else { return nil }
@@ -1590,13 +1595,17 @@ final class HeatWatcher {
         onChange(next)
     }
 
+    /// The host port, asked for once: each mach_host_self() adds a send
+    /// right that would otherwise need its own mach_port_deallocate.
+    private static let host = mach_host_self()
+
     /// Ticks every processor has spent busy, and in all, since startup.
     private static func ticks() -> (busy: UInt64, total: UInt64)? {
         var info = host_cpu_load_info()
         var count = mach_msg_type_number_t(MemoryLayout<host_cpu_load_info_data_t>.size / MemoryLayout<integer_t>.size)
         let result = withUnsafeMutablePointer(to: &info) {
             $0.withMemoryRebound(to: integer_t.self, capacity: Int(count)) {
-                host_statistics(mach_host_self(), HOST_CPU_LOAD_INFO, $0, &count)
+                host_statistics(host, HOST_CPU_LOAD_INFO, $0, &count)
             }
         }
         guard result == KERN_SUCCESS else { return nil }

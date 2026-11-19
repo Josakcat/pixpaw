@@ -460,6 +460,8 @@ final class CatController: ObservableObject {
     private var bowlClearsAt: Date?
     private var timer: Timer?
     private var observers: [NSObjectProtocol] = []
+    private var occlusionObserver: NSObjectProtocol?
+    private var screensAsleep = false
 
     /// Bottom-left of the cat's feet box, in screen coordinates: where the
     /// logic, which steps 12 times a second, has the cat.
@@ -472,6 +474,8 @@ final class CatController: ObservableObject {
     private var stepAt: CFTimeInterval = 0
     /// When the display link last drew; if it goes quiet, the loop draws.
     private var lastDisplayFrame: CFTimeInterval = 0
+    /// The display link was rebuilt and has not delivered a frame since.
+    private var relinked = false
     private var catView: CatView?
     /// Where the pet is on screen, for a panel to open over it.
     var screenFrame: CGRect? { panel?.frame }
@@ -550,10 +554,39 @@ final class CatController: ObservableObject {
         var frames: [CGImage]? = nil
         /// The game it was put out for, to draw it again in another pixel size.
         var game: PetGame? = nil
+        /// A snowball (Christmas): rolls like the yarn, grows as it goes,
+        /// takes a click to kick it, and ends up in a snowman.
+        var snow = false
     }
     private var toy: Toy?
     private var swatTicks = 0
     var toyKind: ToyKind? { toy?.kind }
+    /// Christmas is up (its Santa hat on): snowballs to roll.
+    var snowOut: Bool { festivalHat == .santaHat }
+    /// A snowball it finished rolling, at the middle of its bottom edge on screen.
+    var onSnowball: ((CGPoint) -> Void)?
+    /// New Year or your birthday (party hat on): fireworks to light.
+    var fireworkOut: Bool { festivalHat == .partyHat }
+    /// A firework it lit, from the middle of its window on screen, bursting in its own picture.
+    var onFirework: ((CGPoint, CGImage?) -> Void)?
+    /// The festival on screen now, if any (Loy Krathong and Songkran have no hat to tell by).
+    var festivalShowing: (() -> Festival?)?
+    /// Its part in that festival: a krathong to float, or water to splash.
+    var festivalAction: (title: String, symbol: String, line: CatLine)? {
+        switch festivalShowing?() {
+        case .loyKrathong: ("Float a krathong", "moon.stars.fill", CatLine(text: "I made a wish!", symbol: "sparkles", seconds: 3))
+        case .songkran: ("Splash", "drop.fill", CatLine(text: "Splash!", symbol: "drop.fill", seconds: 2))
+        case .halloween: ("Boo!", "theatermasks.fill", CatLine(text: "Boo!", symbol: "moon.stars.fill", seconds: 2))
+        case .chineseNewYear: ("Red envelope", "envelope.fill", CatLine(text: "Gong xi fa cai!", symbol: "sparkles", seconds: 3))
+        case .valentines: ("Love letter", "envelope.fill", CatLine(text: "Love you!", symbol: "heart.fill", seconds: 3))
+        case .birthday: ("Make a wish", "birthday.cake.fill", CatLine(text: "Make a wish!", symbol: "birthday.cake.fill", seconds: 3))
+        default: nil
+        }
+    }
+    /// It did its festival part, at the middle of its window on screen.
+    var onFestivalAct: ((CGPoint) -> Void)?
+    /// How big a snowball starts, and grows to, against its picture.
+    private static let snowballScales: ClosedRange<CGFloat> = 0.7...2.0
 
     /// Something to stalk and pounce on: a dragged file, the teaser or the laser.
     private var hasPrey: Bool { (isDraggingFile && pouncesOnDrags && !acceptsDrop) || (toy.map { $0.kind != .yarn } ?? false) }
@@ -1111,10 +1144,10 @@ final class CatController: ObservableObject {
         let center = NSWorkspace.shared.notificationCenter
         observers = [
             center.addObserver(forName: NSWorkspace.screensDidSleepNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.timer?.fireDate = .distantFuture }
+                MainActor.assumeIsolated { self?.screensAsleep = true; self?.pauseStepsWhileUnseen() }
             },
             center.addObserver(forName: NSWorkspace.screensDidWakeNotification, object: nil, queue: .main) { [weak self] _ in
-                MainActor.assumeIsolated { self?.timer?.fireDate = Date() }
+                MainActor.assumeIsolated { self?.screensAsleep = false; self?.pauseStepsWhileUnseen() }
             },
             // A wake that never reports its screens would leave the cat frozen.
             center.addObserver(forName: NSWorkspace.didWakeNotification, object: nil, queue: .main) { [weak self] _ in
@@ -1124,6 +1157,25 @@ final class CatController: ObservableObject {
                 MainActor.assumeIsolated { self?.resumeIfStalled() }
             },
         ]
+        // Behind a full-screen app, another window or on another Space the
+        // step loop stops too, and starts again once the pet can be seen.
+        occlusionObserver = NotificationCenter.default.addObserver(
+            forName: NSWindow.didChangeOcclusionStateNotification, object: panel, queue: .main
+        ) { [weak self] _ in
+            MainActor.assumeIsolated { self?.pauseStepsWhileUnseen() }
+        }
+    }
+
+    /// The step loop runs only while the screens are awake and the pet's
+    /// panel is on screen and not covered.
+    private func pauseStepsWhileUnseen() {
+        guard let timer else { return }
+        let seen = panel.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        if screensAsleep || !seen {
+            timer.fireDate = .distantFuture
+        } else if timer.fireDate > Date().addingTimeInterval(1) {
+            timer.fireDate = Date()
+        }
     }
 
     func hide() {
@@ -1131,6 +1183,8 @@ final class CatController: ObservableObject {
         timer = nil
         observers.forEach { NSWorkspace.shared.notificationCenter.removeObserver($0) }
         observers = []
+        if let occlusionObserver { NotificationCenter.default.removeObserver(occlusionObserver) }
+        occlusionObserver = nil
         catView?.stopDisplayLink()
         catView = nil
         sign.place(paw: nil)
@@ -1162,8 +1216,9 @@ final class CatController: ObservableObject {
 
     /// Restarts the loop if it was paused for sleeping screens that are awake.
     func resumeIfStalled() {
-        guard let timer, timer.fireDate > Date().addingTimeInterval(1), CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
-        timer.fireDate = Date()
+        guard timer != nil, CGDisplayIsAsleep(CGMainDisplayID()) == 0 else { return }
+        screensAsleep = false
+        pauseStepsWhileUnseen()
     }
 
     /// Sends the cat running to the pointer, wherever it is; a sleeping cat
@@ -2143,14 +2198,21 @@ final class CatController: ObservableObject {
         glideFrom = before
         stepAt = CACurrentMediaTime()
         let moving = before != position || toy != nil
-        if moving, CACurrentMediaTime() - lastDisplayFrame > 0.25, catView?.displayLinkPaused == false {
-            // The display link stopped delivering (its window was hidden):
-            // draw from here at the loop's pace, and give it a fresh link.
+        let visible = panel.map { $0.isVisible && $0.occlusionState.contains(.visible) } ?? false
+        if moving, !visible {
+            // Hidden or covered: the display link delivers nothing, so keep it
+            // paused and draw at the loop's pace instead of rebuilding it.
+            catView?.displayLinkPaused = true
+            render(position)
+            if let toy { toy.panel.setFrameOrigin(toy.position) }
+        } else if moving, !relinked, CACurrentMediaTime() - lastDisplayFrame > 0.25, catView?.displayLinkPaused == false {
+            // Visible but the link stopped delivering: rebuild it once, not per step.
             render(position)
             if let toy { toy.panel.setFrameOrigin(toy.position) }
             catView?.stopDisplayLink()
             catView?.startDisplayLink()
             catView?.displayLinkPaused = false
+            relinked = true
             lastDisplayFrame = CACurrentMediaTime()
         } else if moving {
             catView?.displayLinkPaused = false
@@ -2162,6 +2224,7 @@ final class CatController: ObservableObject {
     /// One display refresh: the window's place between the last two steps.
     fileprivate func displayFrame() {
         lastDisplayFrame = CACurrentMediaTime()
+        relinked = false
         let t = min(1, (CACurrentMediaTime() - stepAt) * Self.fps)
         render(CGPoint(
             x: glideFrom.x + (position.x - glideFrom.x) * t,
@@ -2648,6 +2711,12 @@ final class CatController: ObservableObject {
         }
         // Hungry, with its own bowls by the home: over to eat by itself.
         if goToBowlsIfHungry() { return }
+        // Christmas: now and then a snowball to roll, for the snowman.
+        if snowOut, !isFriend, toy == nil, Int.random(in: 0..<6) == 0 { return playSnowball() }
+        // New Year or birthday: now and then a firework.
+        if fireworkOut, !isFriend, toy == nil, Int.random(in: 0..<6) == 0 { return lightFirework() }
+        // A festival with a part for it (a krathong, a splash, Boo, a red envelope, a letter, a wish): now and then.
+        if festivalAction != nil, !isFriend, toy == nil, Int.random(in: 0..<6) == 0 { return festivalAct() }
         // Idle by its home: now and then off to use something beside it.
         if let item = decorToUse(), useDecor(item, clicked: false) { return }
         // With a buddy around: a third of the time go and sit with it, now
@@ -2936,7 +3005,28 @@ final class CatController: ObservableObject {
     /// Puts a toy out. The yarn ball (or a toy that rolls like it) drops onto
     /// the floor in front of the pet; the teaser and the laser dot (and toys
     /// played like them) go with the pointer until playtime is over.
-    private func play(_ kind: ToyKind, look game: PetGame) {
+    /// Rolls a snowball about while Christmas is up (Play menu, or by itself).
+    func playSnowball() {
+        guard snowOut, !isFriend else { return }
+        play(.yarn, look: .yarn, snow: true)
+    }
+
+    /// Lights a firework while the party hat is on (Play menu, or by itself).
+    func lightFirework() {
+        guard fireworkOut, !isFriend, let panel else { return }
+        enter(.happy)
+        onFirework?(CGPoint(x: panel.frame.midX, y: panel.frame.midY), CatSprites.shared.image(.happy, coat: coat, kind: kind, rim: false))
+    }
+
+    /// Floats a krathong or splashes water, for the festival that's up (Play menu, or by itself).
+    func festivalAct() {
+        guard let action = festivalAction, !isFriend, let panel else { return }
+        enter(.happy)
+        say(action.line)
+        onFestivalAct?(CGPoint(x: panel.frame.midX, y: panel.frame.midY))
+    }
+
+    private func play(_ kind: ToyKind, look game: PetGame, snow: Bool = false) {
         resumeIfStalled()
         guard panel != nil else { return }
         endPlay(quietly: true)
@@ -2948,16 +3038,18 @@ final class CatController: ObservableObject {
         case .teaser: .teaser
         case .laser: .laser
         }
-        let frames = ToyArt.frames(game, fine: drawsFine)
-        guard let image = frames?.first ?? CatSprites.shared.image(rows, fine: drawsFine) else { return }
-        let pixel = CatSprites.shared.pixelSize(self.kind, coat: coat)
+        let frames = snow ? nil : ToyArt.frames(game, fine: drawsFine)
+        guard let image = snow ? CatSprites.shared.image(.snowball) : frames?.first ?? CatSprites.shared.image(rows, fine: drawsFine) else { return }
+        let pixel = CatSprites.shared.pixelSize(self.kind, coat: coat) * (snow ? Self.snowballScales.upperBound : 1)
         let size = CGSize(width: CGFloat(image.width) * pixel, height: CGFloat(image.height) * pixel)
         let toyPanel = CatPanel(contentRect: CGRect(origin: .zero, size: size))
-        toyPanel.ignoresMouseEvents = true
-        let view = NSView(frame: CGRect(origin: .zero, size: size))
+        // A snowball takes a click (a kick); other toys let clicks through.
+        toyPanel.ignoresMouseEvents = !snow
+        let view = snow ? KickView(frame: CGRect(origin: .zero, size: size)) : NSView(frame: CGRect(origin: .zero, size: size))
+        (view as? KickView)?.onDown = { [weak self] point in self?.kickSnowball(fromLeft: point.x < size.width / 2) }
         view.wantsLayer = true
         let layer = CALayer()
-        layer.frame = view.bounds
+        layer.frame = snow ? Self.snowballFrame(in: size, scale: Self.snowballScales.lowerBound) : view.bounds
         layer.magnificationFilter = .nearest
         layer.contents = image
         layer.actions = ["contents": NSNull(), "transform": NSNull()]
@@ -2985,7 +3077,7 @@ final class CatController: ObservableObject {
         }
         toyPanel.setFrameOrigin(start)
         toyPanel.orderFrontRegardless()
-        toy = Toy(kind: kind, panel: toyPanel, layer: layer, size: size, position: start, from: start, frames: frames, game: game)
+        toy = Toy(kind: kind, panel: toyPanel, layer: layer, size: size, position: start, from: start, frames: frames, game: game, snow: snow)
         catView?.displayLinkPaused = false
         if mood.isIdle || mood == .happy || mood == .sleeping || mood == .chasing {
             enter(.sitting)
@@ -3006,8 +3098,24 @@ final class CatController: ObservableObject {
         }
     }
 
+    /// The snowball's picture at `scale` of its own size: centred, on the
+    /// bottom of its (largest-size) panel.
+    private static func snowballFrame(in size: CGSize, scale: CGFloat) -> CGRect {
+        let side = size.width * scale / snowballScales.upperBound
+        return CGRect(x: (size.width - side) / 2, y: 0, width: side, height: side)
+    }
+
+    /// A click on the snowball sends it rolling away from the click.
+    private func kickSnowball(fromLeft: Bool) {
+        guard var ball = toy, ball.snow else { return }
+        ball.velocity = CGVector(dx: fromLeft ? 520 : -520, dy: 240)
+        toy = ball
+        if mood.isIdle || mood == .happy { enter(.playing) }
+    }
+
     private func endPlay(quietly: Bool) {
         guard let toy else { return }
+        if toy.snow, !quietly { onSnowball?(CGPoint(x: toy.position.x + toy.size.width / 2, y: toy.position.y)) }
         toy.panel.orderOut(nil)
         toy.panel.close()
         self.toy = nil
@@ -3058,10 +3166,17 @@ final class CatController: ObservableObject {
                 toy.velocity.dx = -abs(toy.velocity.dx) * 0.7
             }
             if abs(toy.velocity.dx) < 4 { toy.velocity.dx = 0 }
-            // Turn a quarter each time the ball rolls its own width.
             toy.rolled += abs(toy.position.x - toy.from.x)
-            let turn = Int(toy.rolled / (toy.size.width / 2)) % 2
-            toy.layer.contents = toy.frames.map { $0[turn % $0.count] } ?? CatSprites.shared.image(turn == 0 ? .yarn1 : .yarn2, fine: drawsFine)
+            if toy.snow {
+                // Picks up snow as it rolls: full size after 900 points.
+                let range = Self.snowballScales
+                let scale = min(range.upperBound, range.lowerBound + toy.rolled / 900 * (range.upperBound - range.lowerBound))
+                toy.layer.frame = Self.snowballFrame(in: toy.size, scale: scale)
+            } else {
+                // Turn a quarter each time the ball rolls its own width.
+                let turn = Int(toy.rolled / (toy.size.width / 2)) % 2
+                toy.layer.contents = toy.frames.map { $0[turn % $0.count] } ?? CatSprites.shared.image(turn == 0 ? .yarn1 : .yarn2, fine: drawsFine)
+            }
         case .teaser, .laser:
             // Keeps up with the pointer; between steps the display link
             // moves it with the pointer.
@@ -4713,6 +4828,9 @@ final class CatView: NSView {
                 }
             }
             state.games = controller.kind.actsLike.games.map { .init(title: $0.title, symbol: $0.symbol, id: $0.rawValue) }
+                + (controller.snowOut ? [.init(title: "Snowball", symbol: "snowflake", id: "snowball")] : [])
+                + (controller.fireworkOut ? [.init(title: "Firework", symbol: "sparkles", id: "firework")] : [])
+                + (controller.festivalAction.map { [.init(title: $0.title, symbol: $0.symbol, id: "festival")] } ?? [])
             state.friend = controller.buddy != nil
             state.playing = controller.toyKind != nil || controller.fetching
             state.droppyFocus = controller.droppyFocusing?() ?? false
@@ -4809,6 +4927,9 @@ final class CatView: NSView {
         MainActor.assumeIsolated { _ = controller?.buy(item) }
     }
     @objc fileprivate func playGame(_ sender: NSMenuItem) {
+        if sender.representedObject as? String == "snowball" { return MainActor.assumeIsolated { controller?.playSnowball() } }
+        if sender.representedObject as? String == "firework" { return MainActor.assumeIsolated { controller?.lightFirework() } }
+        if sender.representedObject as? String == "festival" { return MainActor.assumeIsolated { controller?.festivalAct() } }
         guard let game = (sender.representedObject as? String).flatMap(PetGame.init(rawValue:)) else { return }
         MainActor.assumeIsolated { controller?.play(game) }
     }
@@ -4876,4 +4997,11 @@ extension PetMenuAction {
         case .openSettings: #selector(CatView.openSettings)
         }
     }
+}
+
+/// The snowball's view: a click on it is a kick (`onDown`, in its own points).
+final class KickView: NSView {
+    var onDown: ((CGPoint) -> Void)?
+    override func acceptsFirstMouse(for event: NSEvent?) -> Bool { true }
+    override func mouseDown(with event: NSEvent) { onDown?(convert(event.locationInWindow, from: nil)) }
 }

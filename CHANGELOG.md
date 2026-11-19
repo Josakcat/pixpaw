@@ -2,6 +2,49 @@
 
 ## [Unreleased]
 
+## [2.3.0] - 2026-11-19
+
+### Added
+- Every festival is bigger, and your pet joins in from Play (or by itself):
+- Christmas: layered snow, a snowbank with a snowman, fairy lights, snow on your windows. Pet: rolls snowballs (click to kick); three make a snowman.
+- New Year: coloured fireworks, fireworks shaped like the pets, a midnight countdown. Pet: lights fireworks in its own shape.
+- Loy Krathong: moon, stars and a river above the Dock. Pet: floats a krathong with a wish.
+- Songkran: petals, a rippling puddle, pets in water-gun fights. Pet: splashes water.
+- Halloween: jack-o'-lanterns in fog, bats, cobwebs, pets as ghosts. Pet: says Boo.
+- Chinese New Year: firecrackers, blossoms, a dragon dance. Pet: red envelopes of gold coins.
+- Valentine's Day: rose petals, pets meeting under a big heart. Pet: sends love letters.
+- Your birthday: balloons, bunting, a cake, pets on balloons. Pet: fireworks, and blows out the candles.
+
+### Fixed
+- Festivals: fireworks burst every time; hearts, lanterns and confetti show (they flew off screen); Loy Krathong floats above the Dock.
+
+## [2.2.2] - 2026-11-16
+
+### Added
+- Its own bowls: a hungry pet walks to the bowls by its home and eats by itself. Fill them under Care.
+- Playroom (pet's menu): one room on the shelf to throw toys, dress your pet up and arrange its home.
+- Guests: each Claude Code or Codex session your pet follows sends another pet to sit at a laptop by the home, with a "?" when it needs you.
+- Name your pet; Settings opens on your live pet in its outfit.
+- The cushion, bowls, plant, lamp, books and mailbox by the home get used, and after a focus round or agent run it sometimes finds you something.
+- Body doubling: focus asks what you're on, checks in halfway and stars it when done.
+- Days together (a day off never resets it), and Backup keeps the home, wardrobe, stars and stats in one file.
+- Drop a file on the shelf widget: a PNG becomes a coat or a framed picture, anything else a snack.
+- Off until you turn them on: Pixpaw Wrapped, an end-of-day recap, AI apps talking to your pet through Droppy's MCP, and In its own words (Apple Intelligence, on your Mac only).
+- Battery saver (opt-in): on battery or in Low Power Mode your pet stays put.
+
+### Changed
+- The shelf widget in Droppy's own style: named Food, Energy and Mood rings in solid colours, today with your pet, and your days together beside another widget.
+- Breaks, agents done or stuck and the late-night nudge use Droppy's HUD; the focus clock is a countdown on Droppy's compact clock.
+- Your pet keeps quiet while the front app is full screen or presenting.
+- Each pet rests on its own spot: dog bed, nest, the dragon's hoard and more.
+- Notification bubbles start off on new installs (Droppy shows them too).
+- Needs Droppy 16.2.1 or later.
+
+### Fixed
+- A hidden or covered pet pauses its clocks and leaks no system port; port checks left the main thread.
+- Meeting notes hear quiet speech and keep your last words.
+- A pet on its resting spot no longer floats when the home moves; Settings text fields are left-aligned; Playroom has the far-right spot.
+
 ## [2.2.0] - 2026-11-15
 
 ### Added

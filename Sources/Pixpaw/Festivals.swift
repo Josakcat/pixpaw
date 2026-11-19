@@ -151,11 +151,28 @@ enum Festival: String, CaseIterable, Identifiable {
 final class FestivalOverlay {
     private(set) var showing: Festival?
     private var panels: [NSPanel] = []
+    /// Christmas: snow on the tops of your windows, read every 2 s off the main thread (Winter.swift).
+    private var windowSnow: WindowSnow?
+    /// Christmas: each screen's panel and where its snowbank's top is, for
+    /// the snowmen your pet builds (`addSnowball`).
+    var grounds: [(frame: CGRect, layer: CALayer, y: CGFloat)] = []
+    var snowballs = 0
+    var snowmen: [CALayer] = []
+    /// Where the snowman being built stands: which screen, and how far along it.
+    var snowmanSpot: (ground: Int, x: CGFloat)?
+    /// New Year: the next step of the midnight countdown, and the pet's fireworks in the air (NewYear.swift).
+    var countdown: DispatchWorkItem?
+    var petFireworks: [CALayer] = []
+    /// Repeating shows: New Year's animal fireworks, Songkran's water fights, Halloween's ghost pets, Chinese New Year's dragon dance, Valentine's couples, birthday balloon rides.
+    var animalTimer: DispatchSourceTimer?
+    /// Loy Krathong: the krathongs your pet floated (Water.swift).
+    var floated: [CALayer] = []
 
     func show(_ festival: Festival) {
         guard festival != showing else { return }
         hide()
         showing = festival
+        var hosts: [(CGRect, CALayer)] = []
         for screen in NSScreen.screens {
             let panel = NSPanel(contentRect: screen.frame, styleMask: [.borderless, .nonactivatingPanel],
                                 backing: .buffered, defer: false)
@@ -172,14 +189,42 @@ final class FestivalOverlay {
             view.wantsLayer = true
             panel.contentView = view
             if let layer = view.layer {
-                Self.decorate(layer, for: festival, size: screen.frame.size)
+                Self.decorate(layer, for: festival, size: screen.frame.size, floor: screen.visibleFrame.minY - screen.frame.minY,
+                              top: screen.frame.maxY - screen.visibleFrame.maxY)
+                hosts.append((screen.frame, layer))
+                grounds.append((screen.frame, layer, screen.visibleFrame.minY - screen.frame.minY + Self.snowbankHeight - 6))
             }
             panel.orderFrontRegardless()
             panels.append(panel)
         }
+        if festival == .christmas, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            windowSnow = WindowSnow(hosts: hosts)
+            windowSnow?.start()
+        }
+        if festival == .newYear, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
+            scheduleCountdown()
+            startAnimalFireworks()
+        }
+        if festival == .songkran, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { startWaterFights() }
+        if festival == .halloween, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { startGhostPets() }
+        if festival == .chineseNewYear, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { startDragonDances() }
+        if festival == .valentines, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { startCouples() }
+        if festival == .birthday, !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion { startBalloonRides() }
     }
 
     func hide() {
+        windowSnow?.stop()
+        windowSnow = nil
+        countdown?.cancel()
+        countdown = nil
+        petFireworks = []
+        floated = []
+        animalTimer?.cancel()
+        animalTimer = nil
+        grounds = []
+        snowballs = 0
+        snowmen = []
+        snowmanSpot = nil
         panels.forEach { $0.orderOut(nil) }
         panels = []
         showing = nil
@@ -194,7 +239,7 @@ final class FestivalOverlay {
 
     // MARK: Decorations
 
-    private static func decorate(_ layer: CALayer, for festival: Festival, size: CGSize) {
+    private static func decorate(_ layer: CALayer, for festival: Festival, size: CGSize, floor: CGFloat, top: CGFloat) {
         // Reduce Motion: nothing falls, drifts or bursts. The pet's festival
         // hat stays on, and one still prop stands in the corner.
         if NSWorkspace.shared.accessibilityDisplayShouldReduceMotion {
@@ -202,17 +247,15 @@ final class FestivalOverlay {
             return
         }
         switch festival {
-        case .halloween: ghosts(in: layer, size: size)
-        case .newYear: fireworks(in: layer, size: size)
+        case .halloween: halloweenNight(in: layer, size: size, floor: floor, top: top)
+        case .newYear: fireworks(in: layer, size: size, floor: floor)
         case .christmas:
-            layer.addSublayer(falling(size: size, image: square(4, 0xFFFFFF), birthRate: 3, speed: 38, sway: 6, alpha: 0.9))
-            layer.addSublayer(falling(size: size, image: square(6, 0xF4F8FF), birthRate: 1.2, speed: 30, sway: 8, alpha: 0.8))
-        case .songkran:
-            layer.addSublayer(falling(size: size, image: rect(3, 8, 0x8FC3FF), birthRate: 5, speed: 300, sway: 0, alpha: 0.7))
-        case .valentines: hearts(in: layer, size: size)
-        case .birthday: confetti(in: layer, size: size)
-        case .loyKrathong: krathongs(in: layer, size: size)
-        case .chineseNewYear: redLanterns(in: layer, size: size)
+            winter(in: layer, size: size, floor: floor, top: top)
+        case .songkran: songkranSplash(in: layer, size: size, floor: floor)
+        case .valentines: valentineDay(in: layer, size: size, floor: floor)
+        case .birthday: birthdayParty(in: layer, size: size, floor: floor, top: top)
+        case .loyKrathong: loyKrathongNight(in: layer, size: size, floor: floor, top: top)
+        case .chineseNewYear: lunarNewYear(in: layer, size: size, floor: floor, top: top)
         }
     }
 
@@ -224,7 +267,8 @@ final class FestivalOverlay {
         case .valentines: image = CatSprites.shared.image(.heart)
         case .loyKrathong: image = CatSprites.shared.image(.krathong)
         case .chineseNewYear: image = CatSprites.shared.image(.redLantern)
-        case .newYear, .christmas, .songkran, .birthday: image = nil
+        case .christmas: image = CatSprites.shared.image(.snowman)
+        case .newYear, .songkran, .birthday: image = nil
         }
         guard let image else { return }
         let sprite = CALayer()
@@ -238,7 +282,7 @@ final class FestivalOverlay {
 
     /// Ghosts drifting across the screen on wavy paths, at different
     /// heights and speeds, fading in and out a little.
-    private static func ghosts(in layer: CALayer, size: CGSize) {
+    static func ghosts(in layer: CALayer, size: CGSize) {
         guard let ghost = CatSprites.shared.image(.ghost) else { return }
         for index in 0..<4 {
             let sprite = CALayer()
@@ -280,54 +324,12 @@ final class FestivalOverlay {
         }
     }
 
-    /// Rockets go up from the bottom and burst into pixel sparks.
-    private static func fireworks(in layer: CALayer, size: CGSize) {
-        let emitter = CAEmitterLayer()
-        emitter.frame = CGRect(origin: .zero, size: size)
-        emitter.emitterPosition = CGPoint(x: size.width / 2, y: 0)
-        emitter.emitterSize = CGSize(width: size.width * 0.8, height: 1)
-        emitter.emitterShape = .line
-        emitter.renderMode = .additive
+    // Emitter angles: .pi sends a particle up the screen and 0 down; ±.pi/2
+    // go sideways (checked on screen, 2026-11-18).
 
-        let spark = CAEmitterCell()
-        spark.contents = square(4, 0xFFFFFF)
-        spark.birthRate = 700
-        spark.lifetime = 1.6
-        spark.velocity = 150
-        spark.velocityRange = 40
-        spark.emissionRange = .pi * 2
-        spark.yAcceleration = -90
-        spark.alphaSpeed = -0.6
-        spark.color = NSColor(srgbRed: 1, green: 0.7, blue: 0.5, alpha: 1).cgColor
-        spark.redRange = 0.6
-        spark.greenRange = 0.8
-        spark.blueRange = 0.9
-
-        let burst = CAEmitterCell()
-        burst.birthRate = 1
-        burst.beginTime = 1.15
-        burst.duration = 0.1
-        burst.lifetime = 0.1
-        burst.velocity = 0
-        burst.emitterCells = [spark]
-
-        let rocket = CAEmitterCell()
-        rocket.contents = square(3, 0xFFF2C0)
-        rocket.birthRate = 0.8
-        rocket.lifetime = 1.25
-        rocket.velocity = 560
-        rocket.velocityRange = 120
-        rocket.emissionLongitude = .pi / 2
-        rocket.emissionRange = .pi / 14
-        rocket.yAcceleration = -160
-        rocket.emitterCells = [burst]
-
-        emitter.emitterCells = [rocket]
-        layer.addSublayer(emitter)
-    }
 
     /// Pixel hearts drifting up from the bottom and fading.
-    private static func hearts(in layer: CALayer, size: CGSize) {
+    static func hearts(in layer: CALayer, size: CGSize) {
         guard let heart = CatSprites.shared.image(.heart).flatMap({ scaled($0, by: 3) }) else { return }
         let emitter = CAEmitterLayer()
         emitter.frame = CGRect(origin: .zero, size: size)
@@ -340,7 +342,7 @@ final class FestivalOverlay {
         cell.lifetime = 16
         cell.velocity = 70
         cell.velocityRange = 25
-        cell.emissionLongitude = .pi / 2
+        cell.emissionLongitude = .pi
         cell.emissionRange = .pi / 14
         cell.alphaSpeed = -0.05
         cell.scaleRange = 0.3
@@ -350,7 +352,7 @@ final class FestivalOverlay {
 
     /// Krathongs floating slowly along the bottom of the screen, candles lit,
     /// and sky lanterns drifting up and away.
-    private static func krathongs(in layer: CALayer, size: CGSize) {
+    static func krathongs(in layer: CALayer, size: CGSize, floor: CGFloat) {
         if let krathong = CatSprites.shared.image(.krathong) {
             for index in 0..<3 {
                 let sprite = CALayer()
@@ -359,7 +361,8 @@ final class FestivalOverlay {
                 sprite.magnificationFilter = .nearest
                 sprite.bounds = CGRect(x: 0, y: 0, width: CGFloat(krathong.width) * scale, height: CGFloat(krathong.height) * scale)
                 let path = CGMutablePath()
-                let baseY = CGFloat([34, 22, 48][index])
+                // On the water just above the Dock (`floor`: its height, 0 when hidden).
+                let baseY = floor + CGFloat([34, 22, 48][index])
                 path.move(to: CGPoint(x: -60, y: baseY))
                 for step in 1...30 {
                     let t = CGFloat(step) / 30
@@ -387,7 +390,7 @@ final class FestivalOverlay {
         cell.lifetime = Float(size.height / 28) + 4
         cell.velocity = 28
         cell.velocityRange = 8
-        cell.emissionLongitude = .pi / 2
+        cell.emissionLongitude = .pi
         cell.emissionRange = .pi / 16
         cell.xAcceleration = 2
         cell.alphaSpeed = -0.02
@@ -398,7 +401,7 @@ final class FestivalOverlay {
 
     /// Red lanterns hanging along the top edge, each swaying on its string,
     /// and a few gold sparks drifting down.
-    private static func redLanterns(in layer: CALayer, size: CGSize) {
+    static func redLanterns(in layer: CALayer, size: CGSize) {
         if let lantern = CatSprites.shared.image(.redLantern) {
             let count = 6
             for index in 0..<count {
@@ -426,7 +429,7 @@ final class FestivalOverlay {
     }
 
     /// Paper confetti in party colours, tumbling down from the top edge.
-    private static func confetti(in layer: CALayer, size: CGSize) {
+    static func confetti(in layer: CALayer, size: CGSize) {
         let emitter = CAEmitterLayer()
         emitter.frame = CGRect(origin: .zero, size: size)
         emitter.emitterPosition = CGPoint(x: size.width / 2, y: size.height + 10)
@@ -439,7 +442,7 @@ final class FestivalOverlay {
             cell.lifetime = Float(size.height / 60) + 3
             cell.velocity = 70
             cell.velocityRange = 25
-            cell.emissionLongitude = -.pi / 2
+            cell.emissionLongitude = 0
             cell.emissionRange = .pi / 8
             cell.spin = 2
             cell.spinRange = 6
@@ -450,7 +453,7 @@ final class FestivalOverlay {
     }
 
     /// Something falling from the top edge: snow, or water drops.
-    private static func falling(size: CGSize, image: CGImage?, birthRate: Float, speed: CGFloat,
+    static func falling(size: CGSize, image: CGImage?, birthRate: Float, speed: CGFloat,
                                 sway: CGFloat, alpha: Float) -> CAEmitterLayer {
         let emitter = CAEmitterLayer()
         emitter.frame = CGRect(origin: .zero, size: size)
@@ -463,7 +466,7 @@ final class FestivalOverlay {
         cell.lifetime = Float(size.height / speed) + 2
         cell.velocity = speed
         cell.velocityRange = speed * 0.3
-        cell.emissionLongitude = -.pi / 2
+        cell.emissionLongitude = 0
         cell.emissionRange = sway > 0 ? .pi / 10 : 0
         cell.xAcceleration = sway
         cell.alphaRange = 0.2
@@ -474,9 +477,9 @@ final class FestivalOverlay {
 
     // MARK: Pixels
 
-    private static func square(_ side: Int, _ rgb: UInt32) -> CGImage? { rect(side, side, rgb) }
+    static func square(_ side: Int, _ rgb: UInt32) -> CGImage? { rect(side, side, rgb) }
 
-    private static func rect(_ width: Int, _ height: Int, _ rgb: UInt32) -> CGImage? {
+    static func rect(_ width: Int, _ height: Int, _ rgb: UInt32) -> CGImage? {
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,
                                       bitmapInfo: CGImageAlphaInfo.premultipliedLast.rawValue) else { return nil }
@@ -486,7 +489,7 @@ final class FestivalOverlay {
     }
 
     /// A sprite blown up with hard edges, for a particle (which would blur it).
-    private static func scaled(_ image: CGImage, by factor: Int) -> CGImage? {
+    static func scaled(_ image: CGImage, by factor: Int) -> CGImage? {
         let width = image.width * factor, height = image.height * factor
         guard let context = CGContext(data: nil, width: width, height: height, bitsPerComponent: 8, bytesPerRow: 0,
                                       space: CGColorSpace(name: CGColorSpace.sRGB)!,

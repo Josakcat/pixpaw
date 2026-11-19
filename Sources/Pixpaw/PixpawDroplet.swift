@@ -312,6 +312,11 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private var serverWatch: (ports: [Int], since: Date)?
     @Published private(set) var localServer: Int?
     private var serverCheckedAt = Date.distantPast
+    /// Knocking on ports waits up to 100 ms each, so it runs off the main
+    /// thread; deactivate() bumps the epoch so a late answer is dropped.
+    private static let serverQueue = DispatchQueue(label: "app.pixpaw.local-server", qos: .utility)
+    private var serverEpoch = 0
+    private var serverKnocking = false
     /// The little helpers out on an agent's errand, by the agent's own id.
     private var helpers: [String: HelperPet] = [:]
     /// Bugs from failed tests and builds, by the command ("npm test").
@@ -647,6 +652,10 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
                       placed: HomeDecorSet(saved: prefs.value(forKey: Key.homeDecor, default: ""), owned: decorOwned))
         cat.onPersist = { [weak self] in self?.persist() }
         cat.onPhoto = { [weak self] in self?.takePhoto() }
+        cat.onSnowball = { [weak self] point in self?.festivals.addSnowball(at: point) }
+        cat.onFirework = { [weak self] point, shape in self?.festivals.launchFirework(from: point, shape: shape) }
+        cat.festivalShowing = { [weak self] in self?.festivals.showing }
+        cat.onFestivalAct = { [weak self] point in self?.festivals.festivalAct(at: point) }
         cat.onCapturePage = { [weak self] in self?.captureByHand() }
         cat.droppyTools = { [weak self] in self?.droppyMenuTools ?? [] }
         askUses = prefs.value(forKey: Key.askUses, as: [String: Int].self) ?? [:]
@@ -1082,6 +1091,8 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
         commands = []
         serverWatch = nil
         localServer = nil
+        serverEpoch += 1
+        serverKnocking = false
         agents = [:]
         guestSessions = []
         refreshKeepAwake()
@@ -3794,27 +3805,48 @@ public final class PixpawDroplet: NSObject, ObservableObject, Droplet {
     private func watchServer(_ list: String) {
         let ports = list.split(separator: ",").prefix(8).compactMap { Int($0) }.filter { (1...65535).contains($0) }
         guard !ports.isEmpty else { return }
-        let fresh = ports.count == 1 ? ports : ports.filter { !LocalServer.isListening($0) }
-        guard !fresh.isEmpty else { return }
-        serverWatch = (fresh, Date())
-        serverCheckedAt = .distantPast
+        let epoch = serverEpoch
+        Self.serverQueue.async {
+            let fresh = ports.count == 1 ? ports : ports.filter { !LocalServer.isListening($0) }
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.serverEpoch == epoch, !fresh.isEmpty else { return }
+                    self.serverWatch = (fresh, Date())
+                    self.serverCheckedAt = .distantPast
+                }
+            }
+        }
     }
 
     /// Every two seconds: has the server come up (it says so once), and is
-    /// the one in the menu still there?
+    /// the one in the menu still there? The knocking runs off the main thread.
     private func tickServer() {
-        guard Date().timeIntervalSince(serverCheckedAt) >= 2, localServer != nil || serverWatch != nil else { return }
+        guard !serverKnocking, Date().timeIntervalSince(serverCheckedAt) >= 2, localServer != nil || serverWatch != nil else { return }
         serverCheckedAt = Date()
-        if let port = localServer, !LocalServer.isListening(port) { localServer = nil }
-        guard let watch = serverWatch else { return }
-        // A server that hasn't come up in three minutes isn't coming.
-        guard Date().timeIntervalSince(watch.since) < 180 else { return serverWatch = nil }
-        guard let port = watch.ports.first(where: LocalServer.isListening) else { return }
-        serverWatch = nil
-        guard port != localServer else { return }
-        localServer = port
-        serverUpAt = Date()
-        if tellsAgents, cat?.chatty == true { cat?.say(CatLine(text: CatWords.serverUp(port), symbol: "safari")) }
+        serverKnocking = true
+        let shown = localServer, watch = serverWatch, epoch = serverEpoch
+        Self.serverQueue.async {
+            let shownGone = shown.map { !LocalServer.isListening($0) } ?? false
+            // A server that hasn't come up in three minutes isn't coming.
+            let expired = watch.map { Date().timeIntervalSince($0.since) >= 180 } ?? false
+            let up = expired ? nil : watch?.ports.first(where: LocalServer.isListening)
+            DispatchQueue.main.async { [weak self] in
+                MainActor.assumeIsolated {
+                    guard let self, self.serverEpoch == epoch else { return }
+                    self.serverKnocking = false
+                    if shownGone, self.localServer == shown { self.localServer = nil }
+                    // A newer watch started meanwhile: leave it to the next tick.
+                    guard let watch, self.serverWatch?.since == watch.since else { return }
+                    if expired { return self.serverWatch = nil }
+                    guard let port = up else { return }
+                    self.serverWatch = nil
+                    guard port != self.localServer else { return }
+                    self.localServer = port
+                    self.serverUpAt = Date()
+                    if self.tellsAgents, self.cat?.chatty == true { self.cat?.say(CatLine(text: CatWords.serverUp(port), symbol: "safari")) }
+                }
+            }
+        }
     }
 
     func openLocalServer() {
@@ -5299,18 +5331,18 @@ extension PixpawDroplet: ShelfWidgetCompositionProviding {
                 title: "Pixpaw",
                 systemImage: "pawprint.fill",
                 // Content heights; Droppy adds its own insets. Alone: header
-                // (34), the pet and its lines (about 78), the rings beside
-                // today's moments (60), the control row (34) and three 8pt
+                // (34), the pet and its lines (about 78), the rings and their
+                // names beside today's moments (74), the control row (34) and three 8pt
                 // gaps. In a row: the header, the pet and its days together.
                 layoutTraits: ShelfWidgetLayoutTraits(
                     // Alone: Droppy's header row and its gap to the pet, the pet
-                    // and its lines (about 94 laid out), the rings beside
-                    // today's moments (60), the control row, with 8pt gaps.
+                    // and its lines (about 94 laid out), the rings and their names
+                    // beside today's moments (74), the control row, with 8pt gaps.
                     // Content only: Droppy adds the insets its clip needs.
                     single: ShelfWidgetModeSize(
                         width: 420,
                         contentHeight: DroppyWidgetMetrics.single.headerHeight + DroppyWidgetMetrics.single.sectionSpacing
-                            + 94 + DroppySpacing.sm + 60 + DroppySpacing.sm + DroppyWidgetMetrics.single.controlRowHeight
+                            + 94 + DroppySpacing.sm + 74 + DroppySpacing.sm + DroppyWidgetMetrics.single.controlRowHeight
                     ),
                     // In a row: the header, the pet and its days together, the
                     // same room a row had before the composition.
@@ -6055,7 +6087,7 @@ private struct PixpawWidget: View {
             let energy = PetGauges.energy(today, now: Self.minute(of: date), asleep: cat.mood == .sleeping)
             let mood = PetGauges.mood(today)
             HStack(spacing: DroppySpacing.sm) {
-                ring(fullness, tint: cat.isHungry ? .orange : .green, symbol: "fork.knife", name: "Fullness")
+                ring(fullness, tint: cat.isHungry ? .orange : .green, symbol: "fork.knife", name: "Food")
                 ring(energy, tint: .yellow, symbol: "bolt.fill", name: "Energy")
                 ring(mood, tint: .pink, symbol: "heart.fill", name: "Mood")
             }
@@ -6063,9 +6095,25 @@ private struct PixpawWidget: View {
     }
 
     private func ring(_ value: Double, tint: Color, symbol: String, name: String) -> some View {
-        ShelfWidgetRing(progress: value, tint: tint, systemImage: symbol)
-            .help("\(name) \(Int(value * 100))%")
-            .accessibilityElement()
+        // Droppy's arc in one solid colour (no fading tail), so what is full and
+        // what is left read apart at a glance; its name under it.
+        let metrics = DroppyWidgetMetrics.single
+        return VStack(spacing: 2) {
+            ZStack {
+                DroppyRingArc(progress: value, lineWidth: metrics.ringLineWidth, track: tint.opacity(0.2), start: tint, end: tint)
+                Image(systemName: symbol)
+                    .font(.system(size: metrics.ringGlyphSize, weight: .semibold))
+                    .foregroundStyle(tint)
+                    .symbolRenderingMode(.monochrome)
+            }
+            .frame(width: metrics.ringDiameter, height: metrics.ringDiameter)
+            Text(name)
+                .font(.system(size: 10, weight: .semibold))
+                .foregroundStyle(AdaptiveColors.notchSurfaceSecondaryText)
+                .lineLimit(1)
+                .fixedSize()
+        }
+            .accessibilityElement(children: .ignore)
             .accessibilityLabel("\(name) \(Int(value * 100)) percent")
     }
 

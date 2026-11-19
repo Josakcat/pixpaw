@@ -7,10 +7,11 @@
 //  buzz, the parrot's squawk, the dinosaur's rawr, the dog's bark, the
 //  hamster's squeak, the chicken's bawk, the giraffe's hum, the hippo's
 //  honk, the rabbit's thump, the shark's chomp and the pig's oink. Made from sine waves and noise in
-//  code. Where Pixpaw ships a recorded voice (CC0 recordings in
+//  code. The GitHub build also ships recorded voices (CC0 recordings in
 //  Assets/Sounds, credited in README.md: every pet's call, the cat's purr and
-//  the chew) that plays instead, the synthesised one behind it in case the
-//  file is missing or won't decode. Pets you draw yourself can bring sounds
+//  the chew) that play instead. The Store build has no Assets/Sounds (its
+//  checks take images only), so there each lookup misses once and the
+//  synthesised voice plays, as it does for a file that won't decode. Pets you draw yourself can bring sounds
 //  of their own (OwnPets.swift).
 //
 //  What to play is decided here, on the main actor; making a voice's samples,
@@ -170,9 +171,10 @@ final class CatSounds {
 
     // MARK: Recordings
 
-    /// A recorded sound from the droplet's bundle, found and decoded the
-    /// first time it plays, on the sound queue, never on the main thread. One
-    /// that is missing or won't decode plays the synthesised `fallback`.
+    /// A recorded sound from the droplet's bundle (GitHub build only), found
+    /// and decoded the first time it plays, on the sound queue, never on the
+    /// main thread, and kept. One that is missing (the Store build) or won't
+    /// decode plays the synthesised `fallback`.
     /// Played a little faster or slower each time, so repeats differ.
     private nonisolated static func recorded(_ name: String, else fallback: SoundClip?) -> SoundClip {
         SoundClip(varies: true) {

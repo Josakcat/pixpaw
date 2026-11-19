@@ -165,12 +165,17 @@ your desktop and talks to you. A Droplet for
 - A hunger meter and a food bowl.
 - Synthesised sounds (meow, purr, buzz, bark, squeak and more); no sound files. Pets you draw can bring sounds of their own.
 - A shelf widget with its mood, stars, coats and quick controls.
-- Festival decorations on the real dates only: ghosts on Halloween, fireworks
-  at New Year, snow at Christmas, water drops for Songkran, hearts on
-  Valentine's Day. Each can be switched off in Settings.
+- Festival decorations on the real dates only, and your pet joins in from
+  Play: snow, a snowman and snowballs at Christmas; fireworks shaped like the
+  pets and a midnight countdown at New Year; a moonlit river and krathongs for
+  Loy Krathong; water-gun fights for Songkran; jack-o'-lanterns and ghost pets
+  on Halloween; a dragon dance and red envelopes for Chinese New Year; couples
+  under a big heart on Valentine's Day; balloons and a cake on your birthday.
+  Each can be switched off in Settings.
 
 | | |
 |---|---|
+| ![Every festival, bigger](Assets/Screenshot-47.png) | ![Ghost pets, a dragon dance, couples, balloons](Assets/Screenshot-48.png) |
 | ![Your pet at a glance](Assets/Screenshot-44.png) | ![Its own bowls](Assets/Screenshot-45.png) |
 | ![Guests while agents work](Assets/Screenshot-46.png) | |
 | ![Pixpaw](Assets/Screenshot-36.png) | ![Thirteen pets, or your own](Assets/Screenshot-37.png) |
@@ -380,8 +385,9 @@ for local builds.
 
 ## Sounds
 
-The voices are synthesised in `CatSounds.swift`, except these recordings in
-`Assets/Sounds/`, trimmed and levelled from freesound.org. All are CC0 (public
+The voices are synthesised in `CatSounds.swift`. This GitHub build also
+plays these recordings in `Assets/Sounds/`, trimmed and levelled from
+freesound.org (the Store build leaves them out: its checks take images only). All are CC0 (public
 domain), so no credit is required, but here it is, with thanks:
 
 - `cat-call.m4a`: [https://freesound.org/people/PolterKaist/sounds/795848/](https://freesound.org/people/PolterKaist/sounds/795848/) by PolterKaist

@@ -1189,6 +1189,77 @@ canvas(Int(W), Int(H), "Screenshot-46.png") { ctx in
     }
 }
 
+// 47 and 48. Festivals (2.3): real captures of each festival (festival-shots/,
+// taken over a black backdrop with the menu bar and Dock cropped off), four a shot.
+/// A Store frame in the Night terminal theme (as pixpaw-extras' frame.swift):
+/// near-black, a black SF title over an accent bar, a Menlo subtitle and the version pill.
+func nightStoreFrame(_ ctx: CGContext, title: String, subtitle: String, accent: UInt32) {
+    ctx.setFillColor(rgb(0x0B0B10).cgColor)
+    ctx.fill(CGRect(x: 0, y: 0, width: W, height: H))
+    let titleFont = NSFont.systemFont(ofSize: 64, weight: .black)
+    (title as NSString).draw(at: CGPoint(x: 80, y: 52), withAttributes: [.font: titleFont, .foregroundColor: NSColor.white])
+    let titleWidth = (title as NSString).size(withAttributes: [.font: titleFont]).width
+    ctx.addPath(CGPath(roundedRect: CGRect(x: 80, y: 144, width: min(titleWidth, 420), height: 6), cornerWidth: 3, cornerHeight: 3, transform: nil))
+    ctx.setFillColor(rgb(accent).cgColor)
+    ctx.fillPath()
+    (subtitle as NSString).draw(at: CGPoint(x: 80, y: 162), withAttributes: [.font: NSFont(name: "Menlo", size: 30) ?? .monospacedSystemFont(ofSize: 30, weight: .regular),
+                                                                             .foregroundColor: NSColor(white: 1, alpha: 0.78)])
+    let pillFont = NSFont(name: "Menlo-Bold", size: 18) ?? .monospacedSystemFont(ofSize: 18, weight: .bold)
+    let pill = "pixpaw 2.3" as NSString, size = pill.size(withAttributes: [.font: pillFont])
+    let rect = CGRect(x: W - 80 - size.width - 28, y: H - 46, width: size.width + 28, height: 32)
+    ctx.addPath(CGPath(roundedRect: rect, cornerWidth: 16, cornerHeight: 16, transform: nil))
+    ctx.setFillColor(rgb(0x3DF5A8, 0.14).cgColor)
+    ctx.fillPath()
+    pill.draw(at: CGPoint(x: rect.minX + 14, y: rect.minY + (32 - size.height) / 2), withAttributes: [.font: pillFont, .foregroundColor: rgb(0x3DF5A8)])
+}
+
+func festivalTiles(_ ctx: CGContext, _ tiles: [(String, String, CGRect)]) {
+    let tileH: CGFloat = 340, tileW = (tileH * 1600 / 948).rounded(), gap: CGFloat = 24
+    let left = (W - tileW * 2 - gap) / 2, top: CGFloat = 230
+    for (i, tile) in tiles.enumerated() {
+        let rect = CGRect(x: left + CGFloat(i % 2) * (tileW + gap), y: top + CGFloat(i / 2) * (tileH + gap), width: tileW, height: tileH)
+        ctx.saveGState()
+        let path = CGPath(roundedRect: rect, cornerWidth: 18, cornerHeight: 18, transform: nil)
+        ctx.addPath(path)
+        ctx.clip()
+        ctx.setFillColor(rgb(0x0B0B10).cgColor)
+        ctx.fill(rect)
+        // tile.2: the part to show, top-left origin in the 1600 x 948 capture.
+        let crop = CGRect(x: tile.2.minX, y: 948 - tile.2.maxY, width: tile.2.width, height: tile.2.height)
+        NSImage(contentsOfFile: ".droppykit/Tools/festival-shots/\(tile.0).png")?
+            .draw(in: rect, from: crop, operation: .sourceOver, fraction: 1, respectFlipped: true, hints: nil)
+        ctx.restoreGState()
+        ctx.addPath(path)
+        ctx.setStrokeColor(rgb(0x1B1B24).cgColor)
+        ctx.setLineWidth(4)
+        ctx.strokePath()
+        let caption = tile.1 as NSString
+        let attrs: [NSAttributedString.Key: Any] = [.font: NSFont(name: "Menlo-Bold", size: 20) ?? .monospacedSystemFont(ofSize: 20, weight: .bold), .foregroundColor: NSColor.white]
+        let size = caption.size(withAttributes: attrs)
+        let pill = CGRect(x: rect.minX + 14, y: rect.minY + 14, width: size.width + 24, height: size.height + 10)
+        ctx.addPath(CGPath(roundedRect: pill, cornerWidth: pill.height / 2, cornerHeight: pill.height / 2, transform: nil))
+        ctx.setFillColor(rgb(0x1B1B24, 0.9).cgColor)
+        ctx.fillPath()
+        caption.draw(at: CGPoint(x: pill.minX + 12, y: pill.minY + 5), withAttributes: attrs)
+    }
+}
+
+canvas(Int(W), Int(H), "Screenshot-47.png") { ctx in
+    nightStoreFrame(ctx, title: "Every festival, bigger", subtitle: "> on the real dates, and your pet joins in", accent: 0x3DF5A8)
+    festivalTiles(ctx, [("christmas", "Christmas · snowballs make a snowman", CGRect(x: 700, y: 415, width: 900, height: 533)),
+                        ("newYear", "New Year · fireworks shaped like the pets", CGRect(x: 420, y: 170, width: 1040, height: 616)),
+                        ("loyKrathong", "Loy Krathong · moon, river and krathongs", CGRect(x: 0, y: 0, width: 1600, height: 948)),
+                        ("songkran", "Songkran · water-gun fights", CGRect(x: 560, y: 593, width: 600, height: 355))])
+}
+
+canvas(Int(W), Int(H), "Screenshot-48.png") { ctx in
+    nightStoreFrame(ctx, title: "Your pet joins in", subtitle: "> ghost pets, a dragon dance, couples, balloons", accent: 0xFF6FA8)
+    festivalTiles(ctx, [("halloween", "Halloween · pets dressed as ghosts", CGRect(x: 600, y: 356, width: 1000, height: 592)),
+                        ("chineseNewYear", "Chinese New Year · dragon dance", CGRect(x: 300, y: 356, width: 1000, height: 592)),
+                        ("valentines", "Valentine's Day · a heart for two", CGRect(x: 330, y: 415, width: 900, height: 533)),
+                        ("birthday", "Your birthday · balloons and cake", CGRect(x: 600, y: 356, width: 1000, height: 592))])
+}
+
 // The creator avatar: the cat's face, big, on Droppy blue. Square, unrounded.
 canvas(512, 512, "Creator.png") { ctx in
     ctx.setFillColor(rgb(0x4446F4).cgColor)

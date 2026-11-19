@@ -254,7 +254,7 @@ enum CatFrame: String, CaseIterable {
 }
 
 enum CatEffect: String {
-    case heart, zzz, fish, note, code, sweat, ghost, bowl, bowlEmpty, treat, krathong, skyLantern, redLantern, giftFlower, giftBone, giftBall, giftFeather, yarn1, yarn2, teaser, laser, dizzy1, dizzy2, dizzy3
+    case heart, zzz, fish, note, code, sweat, ghost, bowl, bowlEmpty, treat, krathong, skyLantern, redLantern, snowman, snowball, giftFlower, giftBone, giftBall, giftFeather, yarn1, yarn2, teaser, laser, dizzy1, dizzy2, dizzy3
 }
 
 @MainActor

@@ -65,6 +65,35 @@ EFFECTS = {
         ".aaa.",
         "..n..",
     ],
+    # Christmas: a snowman in a top hat and red scarf, by the Dock.
+    "snowman": [
+        "....ooooo....",
+        "....ooooo....",
+        "...ooooooo...",
+        "...GGGGGGG...",
+        "...GGoGoGG...",
+        "...GGGaaaG...",
+        "....GGGGG....",
+        "...RRRRRRR...",
+        "d.GGGGGGRGG.d",
+        ".dGGGGoGGGGd.",
+        "..GGGGoGGGG..",
+        ".GGGGGGGGGGG.",
+        ".GGGGGoGGGGG.",
+        ".zGGGGGGGGGz.",
+        "..zzGGGGGzz..",
+    ],
+    # Christmas: a snowball the pet rolls (it grows as it goes).
+    "snowball": [
+        "..hhhh..",
+        ".hGGGGh.",
+        "hGGGGGGh",
+        "hGGGGGGh",
+        "hGGGGGzh",
+        "hGGGGzzh",
+        ".hzzzzh.",
+        "..hhhh..",
+    ],
     # Chinese New Year: a red lantern on its string.
     "redLantern": [
         "...d...",
